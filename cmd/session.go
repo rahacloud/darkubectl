@@ -19,6 +19,7 @@ const (
 	defaultContainer = "main"
 	flagPod          = "pod"
 	flagContainer    = "container"
+	flagDebug        = "debug"
 	ioBufferSize     = 32 * 1024
 )
 
@@ -37,6 +38,7 @@ func podFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{Name: flagPod, Usage: "pod name (default: auto-detect from app state)"},
 		&cli.StringFlag{Name: flagContainer, Aliases: []string{"c"}, Value: defaultContainer, Usage: "container name"},
+		&cli.BoolFlag{Name: flagDebug, Usage: "log every websocket frame to stderr (protocol discovery)"},
 	}
 }
 
@@ -111,6 +113,7 @@ func dialExec(ctx context.Context, cmd *cli.Command, nameOrID string) (*execTarg
 		AppID:       app.ID,
 		PodName:     pod,
 		Container:   container,
+		Debug:       cmd.Bool(flagDebug),
 	})
 	if err != nil {
 		return nil, err

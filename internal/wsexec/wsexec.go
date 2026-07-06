@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/coder/websocket"
@@ -36,11 +37,19 @@ type Options struct {
 	AppID       string
 	PodName     string
 	Container   string
+	Debug       bool // log every frame to stderr (protocol discovery)
 }
 
 // Session is a live exec websocket connection.
 type Session struct {
-	conn *websocket.Conn
+	conn  *websocket.Conn
+	debug bool
+}
+
+func (s *Session) logf(format string, args ...any) {
+	if s.debug {
+		fmt.Fprintf(os.Stderr, "[wsexec] "+format+"\n", args...)
+	}
 }
 
 // Dial opens the exec websocket for the given options.
@@ -64,7 +73,9 @@ func Dial(ctx context.Context, opts Options) (*Session, error) {
 	}
 	// Terminal streams can be large and long-lived.
 	conn.SetReadLimit(-1)
-	return &Session{conn: conn}, nil
+	s := &Session{conn: conn, debug: opts.Debug}
+	s.logf("connected: negotiated subprotocol=%q", conn.Subprotocol())
+	return s, nil
 }
 
 func buildURL(opts Options) (string, error) {
@@ -88,14 +99,17 @@ func buildURL(opts Options) (string, error) {
 func (s *Session) Read(ctx context.Context) ([]byte, error) {
 	typ, data, err := s.conn.Read(ctx)
 	if err != nil {
+		s.logf("read end: %v", err)
 		return nil, err //nolint:wrapcheck // callers switch on websocket.CloseStatus
 	}
+	s.logf("recv [%s] %d bytes: %q", typ, len(data), data)
 	return decodeOutput(typ, data), nil
 }
 
 // SendInput writes terminal input (keystrokes / a command).
 func (s *Session) SendInput(ctx context.Context, p []byte) error {
 	typ, data := encodeInput(p)
+	s.logf("send input [%s] %d bytes: %q", typ, len(data), data)
 	if err := s.conn.Write(ctx, typ, data); err != nil {
 		return fmt.Errorf("send input: %w", err)
 	}
@@ -108,6 +122,7 @@ func (s *Session) SendResize(ctx context.Context, cols, rows int) error {
 	if !ok {
 		return nil
 	}
+	s.logf("send resize [%s]: %q", typ, data)
 	if err := s.conn.Write(ctx, typ, data); err != nil {
 		return fmt.Errorf("send resize: %w", err)
 	}
