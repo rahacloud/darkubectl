@@ -96,12 +96,8 @@ export DARKUBE_ACCESS_TOKEN=<jwt>             # a ready access token (used verba
 ```
 
 The account API key **cannot** open a pod terminal — the exec websocket
-(`wss://…/ws/aexec/`) requires the JWT.
-
-> Note: the exec websocket **frame protocol** (how stdin/stdout/resize are
-> encoded) and the exact 2FA request shape are provisional in this build —
-> marked `TODO(protocol)` in `internal/wsexec` and `internal/auth` — pending
-> confirmation against a captured session.
+(`wss://…/ws/aexec/`) requires the JWT. The terminal/exec feature is still
+experimental (its wire protocol is being confirmed).
 
 Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`,
 `yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
@@ -110,14 +106,9 @@ Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`,
 
 ```sh
 go build ./...
+go test -race ./...
 golangci-lint run ./...
 ```
 
-The codebase is layered:
-
-- `internal/client` — Darkube API client (built on [resty](https://resty.dev)).
-- `internal/config` — layered config loading (file + env) via [koanf](https://github.com/knadh/koanf).
-- `internal/output` — table / JSON / YAML rendering and the colorized
-  ([lipgloss](https://github.com/charmbracelet/lipgloss)) describe view.
-- `internal/tui` — interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) viewers.
-- `cmd` — the [urfave/cli](https://cli.urfave.org) command tree.
+Architecture, the reverse-engineered API/auth details, and contributor
+conventions live in [`CLAUDE.md`](CLAUDE.md).
