@@ -1,5 +1,9 @@
 # darkubectl
 
+<p align="center">
+  <img src="assets/darkubectl.jpg" alt="darkubectl" width="480">
+</p>
+
 Kubectl-like access to the Hamravesh [Darkube](https://darkube.app) platform.
 
 `darkubectl` talks to the Hamravesh API (`https://api.hamravesh.com`) to list and
