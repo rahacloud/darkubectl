@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# Built CLI binary
+/darkubectl
+
 # Test binary, built with `go test -c`
 *.test
 
