@@ -51,6 +51,11 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
   - `GET /api/v2/darkube/apps/?limit=&offset=&fields=` — list; `GET/PATCH/DELETE
     /api/v2/darkube/apps/<uuid>/` for one app.
   - `GET /api/v1/darkube/plans/` (global), `.../certificates/`.
+  - `POST /api/v1/darkube/apps/` — **create** (v1, not v2). Body needs `svc`
+    `{type,ports}`, `custom_config`, `builder`, `ssl_challenge_type`,
+    `organization` (numeric id, from an app's v1 detail), `namespace` (int),
+    `plan`. Requires JWT (user context); the Api-key 500s. See
+    `client.buildCreatePayload`.
   - `POST /api/v1/token/` — `{email,password}` + TOTP → `{access,refresh}`.
   - `POST /api/v1/token/refresh/` — `{refresh}` → `{access}`.
   - `wss://api.hamravesh.com/ws/aexec/?app_id=&pod_name=&container_name=` with
@@ -82,12 +87,9 @@ Confirmed against a live session:
   login are different principals with different per-app access, so the login is
   the full-access path.
 
-Still unknown:
-
-- **App create request** — `POST /api/v2/darkube/apps/` returns 500 for *every*
-  body (even `{}`), with both Api-key and JWT, so it is not the create request
-  the console uses. `client.buildCreatePayload` and the endpoint both need a
-  captured console "create app" request (method, URL, headers, body).
+All the reverse-engineered surfaces are now confirmed. `create app` requires the
+JWT (the Api-key lacks the user context and 500s); its numeric `organization`
+field is resolved from an existing app's v1 detail (`client.OrganizationID`).
 
 ## Conventions
 

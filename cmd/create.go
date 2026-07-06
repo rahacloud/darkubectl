@@ -30,9 +30,7 @@ type appSpec struct {
 	Namespace string `yaml:"namespace"` // project name or id
 	Plan      string `yaml:"plan"`      // plan name, code name, or id
 	Image     string `yaml:"image"`     // repo:tag
-	Port      int    `yaml:"port"`
 	Replicas  int    `yaml:"replicas"`
-	EnableSSL bool   `yaml:"ssl"`
 	Command   string `yaml:"command"` // entrypoint override
 	Args      string `yaml:"args"`
 }
@@ -58,11 +56,9 @@ func newCreateAppCommand() *cli.Command {
 			&cli.StringFlag{Name: "namespace", Aliases: []string{"ns"}, Usage: "namespace (project) name or id"},
 			&cli.StringFlag{Name: "plan", Usage: "plan name, code name, or id"},
 			&cli.StringFlag{Name: "image", Usage: "docker image (repo:tag)"},
-			&cli.IntFlag{Name: "port", Usage: "container port"},
 			&cli.IntFlag{Name: flagReplicas, Value: 1, Usage: "replica count"},
 			&cli.StringFlag{Name: "command", Usage: "container command (entrypoint override)"},
 			&cli.StringFlag{Name: "args", Usage: "container args"},
-			&cli.BoolFlag{Name: "enable-ssl", Usage: "enable SSL"},
 			&cli.BoolFlag{Name: flagInteractive, Aliases: []string{"i"}, Usage: "prompt for each field"},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
@@ -92,6 +88,10 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	orgID, err := c.OrganizationID(ctx)
+	if err != nil {
+		return err
+	}
 	repo, tag := splitImage(spec.Image)
 
 	fmt.Fprintf(os.Stderr, "About to create app %q in tenant %q: namespace=%s plan=%s image=%s:%s replicas=%d\n",
@@ -101,16 +101,15 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	_, err = c.CreateApp(ctx, client.CreateAppInput{
-		Name:        spec.Name,
-		NamespaceID: nsID,
-		PlanID:      planID,
-		ImageRepo:   repo,
-		ImageTag:    tag,
-		Port:        spec.Port,
-		Replicas:    spec.Replicas,
-		EnableSSL:   spec.EnableSSL,
-		Command:     spec.Command,
-		Args:        spec.Args,
+		Name:           spec.Name,
+		NamespaceID:    nsID,
+		OrganizationID: orgID,
+		PlanID:         planID,
+		ImageRepo:      repo,
+		ImageTag:       tag,
+		Command:        spec.Command,
+		Args:           spec.Args,
+		Replicas:       spec.Replicas,
 	})
 	if err != nil {
 		return err
@@ -139,9 +138,7 @@ func gatherAppSpec(cmd *cli.Command) (appSpec, error) {
 		Namespace: cmd.String("namespace"),
 		Plan:      cmd.String("plan"),
 		Image:     cmd.String("image"),
-		Port:      cmd.Int("port"),
 		Replicas:  cmd.Int(flagReplicas),
-		EnableSSL: cmd.Bool("enable-ssl"),
 		Command:   cmd.String("command"),
 		Args:      cmd.String("args"),
 	}, nil
@@ -183,17 +180,9 @@ func promptAppSpec() (appSpec, error) {
 	if s.Command, err = prompt("Command (entrypoint override, blank for image default): "); err != nil {
 		return s, err
 	}
-	if s.Port, err = promptInt("Container port (blank for none): ", 0); err != nil {
-		return s, err
-	}
 	if s.Replicas, err = promptInt("Replicas [1]: ", 1); err != nil {
 		return s, err
 	}
-	ssl, err := prompt("Enable SSL? [y/N]: ")
-	if err != nil {
-		return s, err
-	}
-	s.EnableSSL = isYes(ssl)
 	return s, nil
 }
 
@@ -210,15 +199,6 @@ func promptInt(label string, def int) (int, error) {
 		return 0, fmt.Errorf("invalid number %q: %w", raw, err)
 	}
 	return n, nil
-}
-
-func isYes(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "y", "yes":
-		return true
-	default:
-		return false
-	}
 }
 
 // resolveNamespaceID maps a namespace name or numeric id to its id.
