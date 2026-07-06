@@ -57,6 +57,10 @@ linters:
       - path: (^|/)internal/client/
         linters:
           - tagliatelle
+      # Test files legitimately repeat small string literals (fixture keys).
+      - path: _test\.go
+        linters:
+          - goconst
 
 formatters:
   enable:
