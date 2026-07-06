@@ -77,16 +77,17 @@ Confirmed against a live session:
   binary frames prefixed with a 1-byte channel id (0 stdin, 1 stdout, 2 stderr,
   3 exit-status → ends the session, 4 resize as `{"Width","Height"}`). See the
   channel constants in `internal/wsexec`.
+- **REST `Bearer` auth** — `Authorization: Bearer <jwt>` works for the whole REST
+  API (the `ip` claim is not enforced for REST). The Api-key and the Console
+  login are different principals with different per-app access, so the login is
+  the full-access path.
 
-Still unverified:
+Still unknown:
 
-- **REST accepting `Bearer`** — the console uses JWT for REST, so it is
-  high-confidence, but the scheme name (`Bearer` vs `JWT`) is set in one place:
-  `client.BearerToken` in `internal/client/client.go`. Test by unsetting the
-  Api-key after `darkubectl login` and running a read command.
-- **App create payload** — `client.buildCreatePayload` is a best guess; the POST
-  endpoint 500s on wrong/partial bodies, so it needs a captured console create
-  request to confirm field names (namespace/plan id vs object, image fields).
+- **App create request** — `POST /api/v2/darkube/apps/` returns 500 for *every*
+  body (even `{}`), with both Api-key and JWT, so it is not the create request
+  the console uses. `client.buildCreatePayload` and the endpoint both need a
+  captured console "create app" request (method, URL, headers, body).
 
 ## Conventions
 
