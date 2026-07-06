@@ -23,7 +23,7 @@ go build -o darkubectl .
 Authentication uses a Hamravesh **account API key** plus an active **tenant**
 (organization). Every request is sent as:
 
-```
+```text
 Authorization: Api-key <token>
 X-Organization: <tenant-slug>
 ```
@@ -38,12 +38,12 @@ darkubectl config use-tenant <org-slug>     # e.g. rahacloud
 Config is stored at `~/.darkube/config.yaml` (override with `$DARKUBE_CONFIG`).
 Values can also be supplied via environment or flags, which take precedence:
 
-| Setting  | Flag          | Environment      | Config key       |
-| -------- | ------------- | ---------------- | ---------------- |
-| Token    | `--token`     | `DARKUBE_TOKEN`  | `token`          |
-| Tenant   | `--org`/`-n`  | `DARKUBE_ORG`    | `current-tenant` |
-| Base URL | `--base-url`  | `DARKUBE_BASE_URL` | `base-url`     |
-| Config   | `--config`    | `DARKUBE_CONFIG` | —                |
+| Setting  | Flag         | Environment        | Config key       |
+| -------- | ------------ | ------------------ | ---------------- |
+| Token    | `--token`    | `DARKUBE_TOKEN`    | `token`          |
+| Tenant   | `--org`/`-n` | `DARKUBE_ORG`      | `current-tenant` |
+| Base URL | `--base-url` | `DARKUBE_BASE_URL` | `base-url`       |
+| Config   | `--config`   | `DARKUBE_CONFIG`   | —                |
 
 ## Usage
 

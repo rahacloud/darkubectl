@@ -1,0 +1,6 @@
+{
+  "default": true,
+  // Long URLs in links and comments inside copy-paste code blocks make a hard
+  // line-length limit impractical, and wrapping them adds spurious line breaks.
+  "MD013": false
+}
