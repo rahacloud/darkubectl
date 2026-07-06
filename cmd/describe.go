@@ -2,11 +2,19 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"github.com/rahacloud/darkubectl/internal/output"
+	"github.com/rahacloud/darkubectl/internal/tui"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/term"
 )
+
+const flagInteractive = "interactive"
+
+// errNotATerminal is returned when -i is requested but stdout is not a TTY.
+var errNotATerminal = errors.New("--interactive requires an interactive terminal (stdout is not a TTY)")
 
 func newDescribeCommand() *cli.Command {
 	return &cli.Command{
@@ -18,7 +26,14 @@ func newDescribeCommand() *cli.Command {
 				Aliases:   []string{aliasApp},
 				Usage:     "Show the full detail of an app",
 				ArgsUsage: argRefUsage,
-				Action:    describeAppAction,
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    flagInteractive,
+						Aliases: []string{"i"},
+						Usage:   "open an interactive, scrollable, searchable viewer",
+					},
+				},
+				Action: describeAppAction,
 			},
 		},
 	}
@@ -47,14 +62,26 @@ func describeAppAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	// describe defaults to YAML (rich object); a flat table isn't meaningful here.
-	if format == output.Table || format == output.Wide {
-		format = output.YAML
-	}
-	if format == output.Name {
-		_, err := os.Stdout.WriteString(app.ID + "\n")
+	// Explicit machine formats pass through unchanged.
+	switch format {
+	case output.JSON, output.YAML:
+		_, err = output.Structured(os.Stdout, format, raw)
 		return err
+	case output.Name:
+		_, err = os.Stdout.WriteString(app.ID + "\n")
+		return err
+	case output.Table, output.Wide:
+		// default describe view (colorized / interactive) handled below
 	}
-	_, err = output.Structured(os.Stdout, format, raw)
-	return err
+
+	title := "app/" + app.Name
+	rows := output.FlattenObject(raw)
+
+	if cmd.Bool(flagInteractive) {
+		if !term.IsTerminal(int(os.Stdout.Fd())) {
+			return errNotATerminal
+		}
+		return tui.RunDescribe(title, rows)
+	}
+	return output.RenderDescribe(os.Stdout, title, rows)
 }

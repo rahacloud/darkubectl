@@ -56,7 +56,9 @@ darkubectl config use-tenant talaland
 darkubectl get apps                    # table
 darkubectl get apps -o wide            # + cluster, RAM, CPU, domain, id
 darkubectl get apps -o json
-darkubectl describe app <name|id>      # full object (YAML)
+darkubectl describe app <name|id>      # colorized key/value view
+darkubectl describe app <name|id> -i   # interactive: scroll + / search
+darkubectl describe app <name|id> -o yaml
 
 # Other resources
 darkubectl get namespaces              # projects (derived from apps)
@@ -83,5 +85,7 @@ The codebase is layered:
 
 - `internal/client` — Darkube API client (built on [resty](https://resty.dev)).
 - `internal/config` — layered config loading (file + env) via [koanf](https://github.com/knadh/koanf).
-- `internal/output` — table / JSON / YAML rendering.
+- `internal/output` — table / JSON / YAML rendering and the colorized
+  ([lipgloss](https://github.com/charmbracelet/lipgloss)) describe view.
+- `internal/tui` — interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) viewers.
 - `cmd` — the [urfave/cli](https://cli.urfave.org) command tree.
