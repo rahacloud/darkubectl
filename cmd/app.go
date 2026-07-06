@@ -78,6 +78,9 @@ func NewApp() *cli.Command {
 			newScaleCommand(),
 			newPatchCommand(),
 			newDeleteCommand(),
+			newLoginCommand(),
+			newExecCommand(),
+			newTerminalCommand(),
 			newConfigCommand(),
 			newVersionCommand(),
 		},
@@ -137,19 +140,26 @@ func resolveBaseURL(cmd *cli.Command, cfg *config.Config) string {
 
 // newClient builds an API client for the active tenant, validating required inputs.
 func newClient(cmd *cli.Command) (*client.Client, error) {
+	c, _, err := buildClient(cmd)
+	return c, err
+}
+
+// buildClient is like newClient but also returns the loaded config, for commands
+// (login/exec/terminal) that need the JWT credentials alongside the REST client.
+func buildClient(cmd *cli.Command) (*client.Client, *config.Config, error) {
 	cfg, err := loadConfig(cmd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	token := resolveToken(cmd, cfg)
 	if token == "" {
-		return nil, errNoToken
+		return nil, nil, errNoToken
 	}
 	org := resolveOrg(cmd, cfg)
 	if org == "" {
-		return nil, errNoTenant
+		return nil, nil, errNoTenant
 	}
-	return client.New(resolveBaseURL(cmd, cfg), token, org), nil
+	return client.New(resolveBaseURL(cmd, cfg), token, org), cfg, nil
 }
 
 // outputFormat parses the -o flag.
