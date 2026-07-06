@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/auth"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/config"
 	"github.com/rahacloud/darkubectl/internal/wsexec"
 	"github.com/urfave/cli/v3"
@@ -65,22 +66,19 @@ func accessToken(ctx context.Context, cmd *cli.Command, cfg *config.Config) (str
 	return a.Refresh(ctx, refresh)
 }
 
-// selectPod resolves the target pod and container (in that order) for an app.
-func selectPod(ctx context.Context, c *client.Client, appID string, cmd *cli.Command) (string, string, error) {
-	container := cmd.String(flagContainer)
-	if container == "" {
-		container = defaultContainer
-	}
+// selectPod resolves the target pod and container (in that order) for an app,
+// using --pod if given, otherwise the app-state websocket.
+func selectPod(ctx context.Context, cmd *cli.Command, opts appstate.Options) (string, string, error) {
 	if p := cmd.String(flagPod); p != "" {
-		return p, container, nil
+		return p, containerFlag(cmd), nil
 	}
-	pods, err := c.ListPods(ctx, appID)
+	pods, _, err := appstate.FetchPods(ctx, opts)
 	if err != nil {
 		return "", "", err
 	}
 	switch len(pods) {
 	case 1:
-		return pods[0].Name, container, nil
+		return pods[0].Name, pickContainer(cmd, pods[0]), nil
 	case 0:
 		return "", "", errNoPod
 	default:
@@ -88,8 +86,30 @@ func selectPod(ctx context.Context, c *client.Client, appID string, cmd *cli.Com
 		for i, p := range pods {
 			names[i] = p.Name
 		}
-		return "", "", fmt.Errorf("%w: choose one of: %s", errNoPod, strings.Join(names, ", "))
+		return "", "", fmt.Errorf("%w: choose one with --pod: %s", errNoPod, strings.Join(names, ", "))
 	}
+}
+
+func containerFlag(cmd *cli.Command) string {
+	if c := cmd.String(flagContainer); c != "" {
+		return c
+	}
+	return defaultContainer
+}
+
+// pickContainer honors an explicit --container, else prefers "main" among the
+// pod's containers, else the pod's first container.
+func pickContainer(cmd *cli.Command, pod appstate.Pod) string {
+	if cmd.IsSet(flagContainer) {
+		return containerFlag(cmd)
+	}
+	if len(pod.Containers) > 0 {
+		if slices.Contains(pod.Containers, defaultContainer) {
+			return defaultContainer
+		}
+		return pod.Containers[0]
+	}
+	return defaultContainer
 }
 
 // execTarget is a dialed exec session plus display metadata.
@@ -111,18 +131,26 @@ func dialExec(ctx context.Context, cmd *cli.Command, nameOrID string) (*execTarg
 	if err != nil {
 		return nil, err
 	}
-	pod, container, err := selectPod(ctx, c, app.ID, cmd)
-	if err != nil {
-		return nil, err
-	}
 	access, err := accessToken(ctx, cmd, cfg)
 	if err != nil {
 		return nil, err
 	}
-	sess, err := wsexec.Dial(ctx, wsexec.Options{
-		BaseURL:     resolveBaseURL(cmd, cfg),
+	baseURL, org := resolveBaseURL(cmd, cfg), resolveOrg(cmd, cfg)
+
+	pod, container, err := selectPod(ctx, cmd, appstate.Options{
+		BaseURL:     baseURL,
 		AccessToken: access,
-		Org:         resolveOrg(cmd, cfg),
+		Org:         org,
+		AppID:       app.ID,
+		Debug:       cmd.Bool(flagDebug),
+	})
+	if err != nil {
+		return nil, err
+	}
+	sess, err := wsexec.Dial(ctx, wsexec.Options{
+		BaseURL:     baseURL,
+		AccessToken: access,
+		Org:         org,
 		AppID:       app.ID,
 		PodName:     pod,
 		Container:   container,

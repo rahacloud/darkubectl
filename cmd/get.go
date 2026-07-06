@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
+	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/output"
 	"github.com/urfave/cli/v3"
@@ -36,6 +38,16 @@ func newGetCommand() *cli.Command {
 				Aliases: []string{"namespace", "ns", "projects", "project"},
 				Usage:   "List namespaces (projects) in the current tenant",
 				Action:  getNamespacesAction,
+			},
+			{
+				Name:      "pods",
+				Aliases:   []string{"pod"},
+				Usage:     "List an app's running pods",
+				ArgsUsage: "APP|ID",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: flagDebug, Usage: "dump raw app-state JSON to stderr"},
+				},
+				Action: getPodsAction,
 			},
 			{
 				Name:    "certificates",
@@ -149,6 +161,53 @@ func getTenantsAction(_ context.Context, cmd *cli.Command) error {
 		rows = append(rows, []string{marker, t})
 	}
 	return output.WriteTable(os.Stdout, []string{"CURRENT", colName}, rows)
+}
+
+func getPodsAction(ctx context.Context, cmd *cli.Command) error {
+	name := cmd.Args().First()
+	if name == "" {
+		return errMissingAppRef
+	}
+	c, cfg, err := buildClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	format, err := outputFormat(cmd)
+	if err != nil {
+		return err
+	}
+	app, err := c.ResolveApp(ctx, name)
+	if err != nil {
+		return err
+	}
+	access, err := accessToken(ctx, cmd, cfg)
+	if err != nil {
+		return err
+	}
+
+	pods, _, err := appstate.FetchPods(ctx, appstate.Options{
+		BaseURL:     resolveBaseURL(cmd, cfg),
+		AccessToken: access,
+		Org:         resolveOrg(cmd, cfg),
+		AppID:       app.ID,
+		Debug:       cmd.Bool(flagDebug),
+	})
+	if err != nil {
+		return err
+	}
+
+	if handled, err := output.Structured(os.Stdout, format, pods); handled {
+		return err
+	}
+	if len(pods) == 0 {
+		fmt.Fprintln(os.Stderr, "no running pods for", app.Name)
+		return nil
+	}
+	rows := make([][]string, 0, len(pods))
+	for _, p := range pods {
+		rows = append(rows, []string{p.Name, dash(strings.Join(p.Containers, ","))})
+	}
+	return output.WriteTable(os.Stdout, []string{colName, "CONTAINERS"}, rows)
 }
 
 func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
