@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
@@ -61,14 +59,8 @@ func terminalAppAction(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 	sendSize()
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	defer signal.Stop(winch)
-	go func() {
-		for range winch {
-			sendSize()
-		}
-	}()
+	stopResize := watchWindowResize(sendSize)
+	defer stopResize()
 
 	// Local keystrokes -> remote PTY.
 	go func() {
