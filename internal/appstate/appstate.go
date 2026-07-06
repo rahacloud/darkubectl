@@ -7,8 +7,7 @@
 //	wss://api.hamravesh.com/ws/app-pods/?app_id=<id>
 //	Sec-WebSocket-Protocol: json, <console-jwt-access>, <org-slug>
 //
-// which streams pods as JSON. Pod extraction is deliberately defensive (it
-// searches the payload for a "pods" array) until the exact shape is pinned.
+// which streams "app_pods_update" frames whose "data" array holds the pods.
 package appstate
 
 import (
@@ -86,7 +85,7 @@ func FetchPods(ctx context.Context, opts Options) ([]Pod, []byte, error) {
 		if opts.Debug {
 			fmt.Fprintf(os.Stderr, "[appstate] recv %d bytes: %s\n", len(data), data)
 		}
-		if pods := parsePods(data); len(pods) > 0 {
+		if pods := ParsePods(data); len(pods) > 0 {
 			return pods, data, nil
 		}
 	}
@@ -107,78 +106,41 @@ func buildURL(baseURL, appID string) (string, error) {
 	return u.String(), nil
 }
 
-// parsePods searches a decoded JSON payload for a "pods" array and extracts pod
-// names (and containers when present).
-func parsePods(data []byte) []Pod {
-	var root any
-	if json.Unmarshal(data, &root) != nil {
+// podsMessage is the confirmed shape of an "app_pods_update" frame:
+//
+//	{"type":"app_pods_update","data":[{"pod_name":"…","containers":[{"name":"…"}]}]}
+type podsMessage struct {
+	Data []struct {
+		PodName    string `json:"pod_name"`
+		Name       string `json:"name"` // fallback for other message variants
+		Containers []struct {
+			Name string `json:"name"`
+		} `json:"containers"`
+	} `json:"data"`
+}
+
+// ParsePods extracts pods from an app-pods websocket frame. Non-pod frames yield nil.
+func ParsePods(data []byte) []Pod {
+	var msg podsMessage
+	if json.Unmarshal(data, &msg) != nil {
 		return nil
 	}
 	var pods []Pod
-	for _, entry := range findPods(root) {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			continue
+	for _, p := range msg.Data {
+		name := p.PodName
+		if name == "" {
+			name = p.Name
 		}
-		name := asString(m["name"])
 		if name == "" {
 			continue
 		}
-		pods = append(pods, Pod{Name: name, Containers: extractContainers(m)})
+		var containers []string
+		for _, c := range p.Containers {
+			if c.Name != "" {
+				containers = append(containers, c.Name)
+			}
+		}
+		pods = append(pods, Pod{Name: name, Containers: containers})
 	}
 	return pods
-}
-
-// findPods returns the first "pods" array found anywhere in the payload.
-func findPods(v any) []any {
-	switch t := v.(type) {
-	case map[string]any:
-		if pods, ok := t["pods"].([]any); ok {
-			return pods
-		}
-		for _, val := range t {
-			if found := findPods(val); found != nil {
-				return found
-			}
-		}
-	case []any:
-		for _, e := range t {
-			if found := findPods(e); found != nil {
-				return found
-			}
-		}
-	}
-	return nil
-}
-
-func extractContainers(m map[string]any) []string {
-	for _, key := range []string{"containers", "container_names"} {
-		raw, ok := m[key].([]any)
-		if !ok {
-			continue
-		}
-		var out []string
-		for _, c := range raw {
-			switch cv := c.(type) {
-			case string:
-				out = append(out, cv)
-			case map[string]any:
-				if name := asString(cv["name"]); name != "" {
-					out = append(out, name)
-				}
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
-	}
-	return nil
-}
-
-func asString(v any) string {
-	s, ok := v.(string)
-	if !ok {
-		return ""
-	}
-	return s
 }

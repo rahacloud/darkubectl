@@ -55,7 +55,7 @@ linters:
       # DTO structs mirror external JSON we do not control: the Darkube API
       # (snake_case, acronyms like enable_SSL) and the k8s remotecommand resize
       # payload ({"Width","Height"}).
-      - path: (^|/)internal/(client|wsexec)/
+      - path: (^|/)internal/(client|wsexec|appstate)/
         linters:
           - tagliatelle
       # Test files legitimately repeat small string literals (fixture keys).

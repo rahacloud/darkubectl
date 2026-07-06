@@ -84,9 +84,9 @@ Still unverified:
   high-confidence, but the scheme name (`Bearer` vs `JWT`) is set in one place:
   `client.BearerToken` in `internal/client/client.go`. Test by unsetting the
   Api-key after `darkubectl login` and running a read command.
-- **App-state pod JSON shape** — `internal/appstate` searches the payload for a
-  `pods` array defensively; the exact field layout (container names especially)
-  needs a captured `/ws/app-state/` message to confirm.
+- **App create payload** — `client.buildCreatePayload` is a best guess; the POST
+  endpoint 500s on wrong/partial bodies, so it needs a captured console create
+  request to confirm field names (namespace/plan id vs object, image fields).
 
 ## Conventions
 
