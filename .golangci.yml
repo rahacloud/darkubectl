@@ -1,0 +1,67 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Enable the full set, then switch off the few that fight idiomatic CLI code.
+  default: all
+  disable:
+    - exhaustruct      # we intentionally build partial structs (API models, cobra cmds)
+    - wsl             # opinionated whitespace rules
+    - wsl_v5
+    - nlreturn        # forced blank line before return
+    - varnamelen      # short receiver/loop names are fine
+    - gochecknoglobals # version var and cobra patterns use package globals
+    - gochecknoinits
+    - depguard        # no import allowlist policy needed
+    - godox           # TODO/FIXME comments are allowed
+    - ireturn         # returning interfaces is fine here
+    - gomodguard      # deprecated alias; superseded by gomodguard_v2 below
+    - noinlineerr     # `if err := f(); err != nil` is idiomatic Go
+    - wrapcheck       # errors are wrapped with context where it matters (client/config)
+
+  settings:
+    lll:
+      line-length: 140
+    funlen:
+      lines: 120
+      statements: 70
+    cyclop:
+      max-complexity: 20
+    gocognit:
+      min-complexity: 30
+    gocyclo:
+      min-complexity: 20
+    exhaustive:
+      default-signifies-exhaustive: true
+    errcheck:
+      # Writes to stdout/stderr in a CLI are not actionable on failure.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+  exclusions:
+    rules:
+      # The cmd/ layer is a CLI: it prints to stdout by design (forbidigo) and
+      # returns one-shot, user-facing validation errors never compared with
+      # errors.Is (err113). Keep both strict everywhere else.
+      - path: (^|/)cmd/
+        linters:
+          - forbidigo
+          - err113
+      # API DTO structs mirror the external Darkube JSON (snake_case, acronyms
+      # like enable_SSL) which we do not control.
+      - path: (^|/)internal/client/
+        linters:
+          - tagliatelle
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
