@@ -20,19 +20,23 @@ go build -o darkubectl .
 
 ## Authentication
 
-Authentication uses a Hamravesh **account API key** plus an active **tenant**
-(organization). Every request is sent as:
+Every request is scoped to an active **tenant** (organization) via the
+`X-Organization: <tenant-slug>` header, and carries one of two credentials:
 
-```text
-Authorization: Api-key <token>
-X-Organization: <tenant-slug>
-```
+- an **account API key** — `Authorization: Api-key <token>`; or
+- a **Console JWT** from `darkubectl login` — `Authorization: Bearer <jwt>`.
 
-Configure them once:
+Either credential drives the whole REST API. The Api-key is the simplest for
+scripting; a login is required additionally for the **terminal/exec** websocket
+(the Api-key cannot open it). If both are configured, the Api-key is used for
+REST and the JWT for the terminal.
+
+Configure a tenant plus at least one credential:
 
 ```sh
-darkubectl config set-token <your-api-key>
 darkubectl config use-tenant <org-slug>     # e.g. rahacloud
+darkubectl config set-token <your-api-key>  # API key, and/or:
+darkubectl login                            # JWT login (see below)
 ```
 
 Config is stored at `~/.darkube/config.yaml` (override with `$DARKUBE_CONFIG`).
@@ -77,12 +81,22 @@ darkubectl terminal app <name>            # interactive shell (alias: shell)
 darkubectl terminal app <name> --pod <p> -c <container>
 ```
 
-### Terminal authentication
+### Logging in
+
+`darkubectl login` obtains a Console JWT and stores the (long-lived) refresh
+token, from which access tokens are minted automatically. There are several
+ways to provide it — a refresh token is as powerful as a full login:
+
+```sh
+darkubectl login                              # interactive: email + password + TOTP (2FA)
+darkubectl login --refresh-token <token>      # store an existing refresh token (no 2FA)
+some-vault get token | darkubectl login --refresh-token-stdin
+export DARKUBE_REFRESH_TOKEN=<token>          # refresh token from the environment
+export DARKUBE_ACCESS_TOKEN=<jwt>             # a ready access token (used verbatim)
+```
 
 The account API key **cannot** open a pod terminal — the exec websocket
-(`wss://…/ws/aexec/`) requires a short-lived Console JWT. `darkubectl login`
-mints one from your email, password, and TOTP code (2FA), and stores only the
-refresh token; `exec`/`terminal` then refresh access tokens automatically.
+(`wss://…/ws/aexec/`) requires the JWT.
 
 > Note: the exec websocket **frame protocol** (how stdin/stdout/resize are
 > encoded) and the exact 2FA request shape are provisional in this build —
