@@ -1,8 +1,8 @@
-# darkubectl
+<div align="center">
+  <h1>darkubectl</h1>
 
-<p align="center">
   <img src="assets/darkubectl.jpg" alt="darkubectl" width="480">
-</p>
+</div>
 
 Kubectl-like access to the Hamravesh [Darkube](https://darkube.app) platform.
 
