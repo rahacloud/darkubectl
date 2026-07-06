@@ -42,14 +42,27 @@ func podFlags() []cli.Flag {
 	}
 }
 
-// accessToken mints a fresh Console access token from the stored refresh token.
+// accessToken obtains a Console access token for the exec websocket, trying, in
+// order of precedence:
+//
+//  1. an access token used verbatim ($DARKUBE_ACCESS_TOKEN) — no refresh call;
+//  2. a refresh token ($DARKUBE_REFRESH_TOKEN, then the stored one) minted into
+//     an access token.
+//
+// A refresh token is as powerful as an interactive login, so supplying one (via
+// `darkubectl login --refresh-token`, the env var, or config) is a full
+// alternative to entering email/password/TOTP.
 func accessToken(ctx context.Context, cmd *cli.Command, cfg *config.Config) (string, error) {
-	if cfg.RefreshToken == "" {
+	if at := os.Getenv("DARKUBE_ACCESS_TOKEN"); at != "" {
+		return at, nil
+	}
+	refresh := cfg.RefreshToken // already includes $DARKUBE_REFRESH_TOKEN via koanf
+	if refresh == "" {
 		return "", errNotLoggedIn
 	}
 	a := auth.New(resolveBaseURL(cmd, cfg))
 	defer func() { _ = a.Close() }()
-	return a.Refresh(ctx, cfg.RefreshToken)
+	return a.Refresh(ctx, refresh)
 }
 
 // selectPod resolves the target pod and container (in that order) for an app.
@@ -90,7 +103,7 @@ type execTarget struct {
 // dialExec resolves the app, selects a pod/container, mints a Console access
 // token, and opens the exec websocket.
 func dialExec(ctx context.Context, cmd *cli.Command, nameOrID string) (*execTarget, error) {
-	c, cfg, err := buildClient(cmd)
+	c, cfg, err := buildClient(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}

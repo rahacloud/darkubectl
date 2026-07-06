@@ -36,7 +36,7 @@ func deleteAppAction(ctx context.Context, cmd *cli.Command) error {
 	if name == "" {
 		return errMissingAppRef
 	}
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

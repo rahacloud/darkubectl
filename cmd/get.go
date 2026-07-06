@@ -53,7 +53,7 @@ func newGetCommand() *cli.Command {
 }
 
 func getAppsAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func getTenantsAction(_ context.Context, cmd *cli.Command) error {
 }
 
 func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
 }
 
 func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
 }
 
 func getPlansAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

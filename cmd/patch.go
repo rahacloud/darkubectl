@@ -52,7 +52,7 @@ func patchAppAction(ctx context.Context, cmd *cli.Command) error {
 	if err := json.Unmarshal([]byte(patchJSON), &patch); err != nil {
 		return fmt.Errorf("invalid --patch JSON: %w", err)
 	}
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

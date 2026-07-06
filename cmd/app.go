@@ -34,7 +34,8 @@ const (
 
 // Sentinel errors for command-level validation.
 var (
-	errNoToken  = errors.New("no API token: set one with `darkubectl config set-token`, --token, or $DARKUBE_TOKEN")
+	errNoCredentials = errors.New("no credentials: set an API key with `darkubectl config set-token` " +
+		"(or --token/$DARKUBE_TOKEN), or run `darkubectl login`")
 	errNoTenant = errors.New("no tenant selected: set one with `darkubectl config use-tenant <name>`, --org, or $DARKUBE_ORG")
 )
 
@@ -139,27 +140,45 @@ func resolveBaseURL(cmd *cli.Command, cfg *config.Config) string {
 }
 
 // newClient builds an API client for the active tenant, validating required inputs.
-func newClient(cmd *cli.Command) (*client.Client, error) {
-	c, _, err := buildClient(cmd)
+func newClient(ctx context.Context, cmd *cli.Command) (*client.Client, error) {
+	c, _, err := buildClient(ctx, cmd)
 	return c, err
 }
 
 // buildClient is like newClient but also returns the loaded config, for commands
 // (login/exec/terminal) that need the JWT credentials alongside the REST client.
-func buildClient(cmd *cli.Command) (*client.Client, *config.Config, error) {
+func buildClient(ctx context.Context, cmd *cli.Command) (*client.Client, *config.Config, error) {
 	cfg, err := loadConfig(cmd)
 	if err != nil {
 		return nil, nil, err
-	}
-	token := resolveToken(cmd, cfg)
-	if token == "" {
-		return nil, nil, errNoToken
 	}
 	org := resolveOrg(cmd, cfg)
 	if org == "" {
 		return nil, nil, errNoTenant
 	}
-	return client.New(resolveBaseURL(cmd, cfg), token, org), cfg, nil
+	auth, err := resolveAuth(ctx, cmd, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client.New(resolveBaseURL(cmd, cfg), auth, org), cfg, nil
+}
+
+// resolveAuth chooses REST authentication: an Api-key if one is configured,
+// otherwise a Console JWT (Bearer) minted from a login/refresh token. Either
+// credential can drive the whole API, so a login is a full alternative to the
+// Api-key (and the only credential that can also open the terminal).
+func resolveAuth(ctx context.Context, cmd *cli.Command, cfg *config.Config) (client.Auth, error) {
+	if token := resolveToken(cmd, cfg); token != "" {
+		return client.APIKey(token), nil
+	}
+	access, err := accessToken(ctx, cmd, cfg)
+	if err != nil {
+		if errors.Is(err, errNotLoggedIn) {
+			return "", errNoCredentials
+		}
+		return "", err
+	}
+	return client.BearerToken(access), nil
 }
 
 // outputFormat parses the -o flag.

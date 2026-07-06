@@ -25,7 +25,7 @@ func TestListAppsSendsAuthAndParses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := client.New(srv.URL, "tok", "talaland")
+	c := client.New(srv.URL, client.APIKey("tok"), "talaland")
 	apps, err := c.ListApps(context.Background())
 	if err != nil {
 		t.Fatalf("ListApps: %v", err)
@@ -53,7 +53,7 @@ func TestAPIErrorEnvelopeIsDecoded(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := client.New(srv.URL, "tok", "org")
+	c := client.New(srv.URL, client.APIKey("tok"), "org")
 	_, err := c.ListApps(context.Background())
 
 	var apiErr *client.APIError
@@ -75,7 +75,7 @@ func TestResolveAppByNameAndAmbiguity(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := client.New(srv.URL, "tok", "org")
+	c := client.New(srv.URL, client.APIKey("tok"), "org")
 	ctx := context.Background()
 
 	app, err := c.ResolveApp(ctx, "api")

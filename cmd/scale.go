@@ -49,7 +49,7 @@ func scaleAppAction(ctx context.Context, cmd *cli.Command) error {
 	if replicas < 0 {
 		return errNegativeReplicas
 	}
-	c, err := newClient(cmd)
+	c, err := newClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

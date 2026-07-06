@@ -28,6 +28,16 @@ const DefaultBaseURL = "https://api.hamravesh.com"
 // requestTimeout bounds every API call.
 const requestTimeout = 60 * time.Second
 
+// Auth is an HTTP Authorization header value. The Darkube API accepts two
+// schemes: an account Api-key, or a Console JWT (Bearer) obtained from login.
+type Auth string
+
+// APIKey builds Api-key–scheme authorization from an account token.
+func APIKey(token string) Auth { return Auth("Api-key " + token) }
+
+// BearerToken builds Bearer-scheme (JWT) authorization from a login access token.
+func BearerToken(jwt string) Auth { return Auth("Bearer " + jwt) }
+
 // Client talks to the Darkube API for a single tenant.
 type Client struct {
 	BaseURL string
@@ -37,7 +47,7 @@ type Client struct {
 }
 
 // New builds a Client. baseURL may be empty to use DefaultBaseURL.
-func New(baseURL, token, org string) *Client {
+func New(baseURL string, auth Auth, org string) *Client {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
@@ -47,7 +57,7 @@ func New(baseURL, token, org string) *Client {
 		SetBaseURL(baseURL).
 		SetTimeout(requestTimeout).
 		SetHeader("Accept", "application/json").
-		SetHeader("Authorization", "Api-key "+token)
+		SetHeader("Authorization", string(auth))
 	if org != "" {
 		rc.SetHeader("X-Organization", org)
 	}
