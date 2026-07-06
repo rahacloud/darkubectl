@@ -80,8 +80,9 @@ darkubectl delete app <name|id>
 
 # Terminal / exec — needs a JWT login (separate from the Api-key)
 darkubectl login                          # email + password + TOTP → stores a refresh token
+darkubectl get pods <name>                # an app's running pods (via the app-state stream)
 darkubectl exec app <name> -- ls -la      # run a command in a pod
-darkubectl terminal app <name>            # interactive shell (alias: shell)
+darkubectl terminal app <name>            # interactive shell (auto-detects the pod; alias: shell)
 darkubectl terminal app <name> --pod <p> -c <container>
 ```
 

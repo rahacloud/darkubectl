@@ -56,6 +56,9 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
   - `wss://api.hamravesh.com/ws/aexec/?app_id=&pod_name=&container_name=` with
     `Sec-WebSocket-Protocol: terminal, <jwt-access>, <org>` and
     `Origin: https://console.hamravesh.com`.
+  - `wss://api.hamravesh.com/ws/app-state/?app_id=` with subprotocol
+    `json, <jwt-access>, <org>` — streams app state as JSON; the **only** source
+    of pod names (REST `state.pods` is empty). Parsed in `internal/appstate`.
 - The JWT is a Console SimpleJWT access token: short-lived (~8h) and **IP-bound**
   (an `ip` claim), so it must be minted on the machine that connects. The
   refresh token is long-lived.
@@ -80,6 +83,9 @@ Still unverified:
   high-confidence, but the scheme name (`Bearer` vs `JWT`) is set in one place:
   `client.BearerToken` in `internal/client/client.go`. Test by unsetting the
   Api-key after `darkubectl login` and running a read command.
+- **App-state pod JSON shape** — `internal/appstate` searches the payload for a
+  `pods` array defensively; the exact field layout (container names especially)
+  needs a captured `/ws/app-state/` message to confirm.
 
 ## Conventions
 
