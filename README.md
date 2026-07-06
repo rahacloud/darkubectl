@@ -78,6 +78,12 @@ darkubectl scale app <name|id> --replicas 3
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
 darkubectl delete app <name|id>
 
+# Create an app from a Docker image (needs a JWT login; see below)
+darkubectl get plans                       # pick a plan (NAME column → --plan)
+darkubectl create app my-api --namespace <ns> --plan 1 --image nginx:latest
+darkubectl create app -f spec.yaml         # from a YAML spec
+darkubectl create app -i                   # interactive prompts
+
 # Terminal / exec — needs a JWT login (separate from the Api-key)
 darkubectl login                          # email + password + TOTP → stores a refresh token
 darkubectl get pods <name>                # an app's running pods (via the app-state stream)
@@ -100,8 +106,9 @@ export DARKUBE_REFRESH_TOKEN=<token>          # refresh token from the environme
 export DARKUBE_ACCESS_TOKEN=<jwt>             # a ready access token (used verbatim)
 ```
 
-The account API key **cannot** open a pod terminal — the exec websocket
-(`wss://…/ws/aexec/`) requires the JWT.
+The account API key **cannot** open a pod terminal or create apps — the exec
+websocket (`wss://…/ws/aexec/`) and app creation require the JWT. Force the JWT
+even when an Api-key is configured by unsetting it: `DARKUBE_TOKEN= darkubectl …`.
 
 Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`,
 `yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
