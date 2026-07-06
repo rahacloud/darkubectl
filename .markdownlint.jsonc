@@ -4,5 +4,7 @@
   // line-length limit impractical, and wrapping them adds spurious line breaks.
   "MD013": false,
   // Allow inline HTML for the centered banner image.
-  "MD033": false
+  "MD033": false,
+  // The README opens with an HTML banner block, not a Markdown heading.
+  "MD041": false
 }
