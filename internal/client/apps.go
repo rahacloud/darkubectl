@@ -100,6 +100,27 @@ func (c *Client) PatchApp(ctx context.Context, id string, patch map[string]any) 
 	return out, nil
 }
 
+// Pod is a running pod of an app.
+type Pod struct {
+	Name string `json:"name"`
+}
+
+// ListPods returns an app's running pods, read from its live state.
+//
+// Note: the console sources pods from the app-state websocket, so this REST
+// state may be empty; callers should fall back to an explicit pod name.
+func (c *Client) ListPods(ctx context.Context, id string) ([]Pod, error) {
+	var app struct {
+		State struct {
+			Pods []Pod `json:"pods"`
+		} `json:"state"`
+	}
+	if err := c.getJSON(ctx, appsPathV2+url.PathEscape(id)+"/", nil, &app); err != nil {
+		return nil, err
+	}
+	return app.State.Pods, nil
+}
+
 // DeleteApp deletes an app by UUID.
 func (c *Client) DeleteApp(ctx context.Context, id string) error {
 	_, err := c.do(ctx, http.MethodDelete, appsPathV2+url.PathEscape(id)+"/", nil, nil)
