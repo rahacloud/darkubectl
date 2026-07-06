@@ -33,7 +33,7 @@ func newPatchCommand() *cli.Command {
 					&cli.BoolFlag{
 						Name:    flagYes,
 						Aliases: []string{aliasYes},
-						Usage:   "skip the confirmation prompt",
+						Usage:   usageSkipConfirm,
 					},
 				},
 				Action: patchAppAction,

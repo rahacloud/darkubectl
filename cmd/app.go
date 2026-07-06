@@ -25,11 +25,14 @@ const (
 // Shared command, argument, and flag literals reused across the app-oriented
 // command trees (describe/scale/patch/delete and get apps).
 const (
-	cmdApp      = "app"
-	aliasApp    = "application"
-	argRefUsage = "NAME|ID"
-	flagYes     = "yes"
-	aliasYes    = "y"
+	cmdApp       = "app"
+	aliasApp     = "application"
+	argRefUsage  = "NAME|ID"
+	flagYes      = "yes"
+	aliasYes     = "y"
+	flagReplicas = "replicas"
+
+	usageSkipConfirm = "skip the confirmation prompt"
 )
 
 // Sentinel errors for command-level validation.
@@ -79,6 +82,7 @@ func NewApp() *cli.Command {
 			newScaleCommand(),
 			newPatchCommand(),
 			newDeleteCommand(),
+			newCreateCommand(),
 			newLoginCommand(),
 			newExecCommand(),
 			newTerminalCommand(),

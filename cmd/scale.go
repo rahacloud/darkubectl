@@ -24,14 +24,14 @@ func newScaleCommand() *cli.Command {
 				ArgsUsage: argRefUsage,
 				Flags: []cli.Flag{
 					&cli.IntFlag{
-						Name:     "replicas",
+						Name:     flagReplicas,
 						Required: true,
 						Usage:    "desired number of replicas",
 					},
 					&cli.BoolFlag{
 						Name:    flagYes,
 						Aliases: []string{aliasYes},
-						Usage:   "skip the confirmation prompt",
+						Usage:   usageSkipConfirm,
 					},
 				},
 				Action: scaleAppAction,
@@ -45,7 +45,7 @@ func scaleAppAction(ctx context.Context, cmd *cli.Command) error {
 	if name == "" {
 		return errMissingAppRef
 	}
-	replicas := cmd.Int("replicas")
+	replicas := cmd.Int(flagReplicas)
 	if replicas < 0 {
 		return errNegativeReplicas
 	}
