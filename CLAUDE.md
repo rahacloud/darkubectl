@@ -63,22 +63,23 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
   `{detail,success,code}`. Numeric-looking fields can be strings with units
   (`ram_limit:"500M"`, `cpu_request:"250m"`).
 
-## Provisional — `TODO(protocol)`, needs a live capture to confirm
+## Confirmed vs unverified
 
-Three things are best-guesses; do not treat them as verified:
+Confirmed against a live session:
 
-1. `internal/auth` — the 2FA request shape. Assumed: TOTP in the `x-otp` header
-   with `{email,password}` in the body (the header is in the API's CORS
-   allowlist). Confirm from a console-login network capture.
-2. `internal/wsexec` — the exec frame encoding. `encodeInput`/`encodeResize`/
-   `decodeOutput` assume raw text in/out and a `{"resize":{"cols","rows"}}`
-   control frame. Symptom of a wrong guess: the terminal **attaches but does
-   nothing** (the server waits for a correct init/resize before spawning the
-   PTY). Capture real frames with `darkubectl exec … --debug` or the console's
-   DevTools → Network → WS → Messages tab, then fix those three functions.
-3. REST accepting `Bearer` — the console uses JWT for REST, so it is
-   high-confidence, but the scheme name (`Bearer` vs `JWT`) is set in one
-   place: `client.BearerToken` in `internal/client/client.go`.
+- **2FA login** — `POST /api/v1/token/` with `{email,password}` and the TOTP in
+  the `x-otp` header works (`darkubectl login`).
+- **Exec frame protocol** — the Kubernetes remotecommand channel protocol:
+  binary frames prefixed with a 1-byte channel id (0 stdin, 1 stdout, 2 stderr,
+  3 exit-status → ends the session, 4 resize as `{"Width","Height"}`). See the
+  channel constants in `internal/wsexec`.
+
+Still unverified:
+
+- **REST accepting `Bearer`** — the console uses JWT for REST, so it is
+  high-confidence, but the scheme name (`Bearer` vs `JWT`) is set in one place:
+  `client.BearerToken` in `internal/client/client.go`. Test by unsetting the
+  Api-key after `darkubectl login` and running a read command.
 
 ## Conventions
 

@@ -100,8 +100,7 @@ export DARKUBE_ACCESS_TOKEN=<jwt>             # a ready access token (used verba
 ```
 
 The account API key **cannot** open a pod terminal — the exec websocket
-(`wss://…/ws/aexec/`) requires the JWT. The terminal/exec feature is still
-experimental (its wire protocol is being confirmed).
+(`wss://…/ws/aexec/`) requires the JWT.
 
 Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`,
 `yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
