@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/coder/websocket"
 )
@@ -44,6 +45,9 @@ type Options struct {
 type Session struct {
 	conn  *websocket.Conn
 	debug bool
+	// recvType records the message type (text/binary) the server last used for
+	// output, so input can be sent as the same type. 0 until the first frame.
+	recvType atomic.Int32
 }
 
 func (s *Session) logf(format string, args ...any) {
@@ -102,15 +106,26 @@ func (s *Session) Read(ctx context.Context) ([]byte, error) {
 		s.logf("read end: %v", err)
 		return nil, err //nolint:wrapcheck // callers switch on websocket.CloseStatus
 	}
+	s.recvType.Store(int32(typ)) //nolint:gosec // G115: MessageType is a small opcode (1|2)
 	s.logf("recv [%s] %d bytes: %q", typ, len(data), data)
 	return decodeOutput(typ, data), nil
 }
 
+// sendType is the frame type for outbound input: mirror whatever the server uses
+// for output, defaulting to binary (many terminal backends reserve text frames
+// for JSON control messages and only accept stdin on binary frames).
+func (s *Session) sendType() websocket.MessageType {
+	if t := s.recvType.Load(); t != 0 {
+		return websocket.MessageType(t)
+	}
+	return websocket.MessageBinary
+}
+
 // SendInput writes terminal input (keystrokes / a command).
 func (s *Session) SendInput(ctx context.Context, p []byte) error {
-	typ, data := encodeInput(p)
-	s.logf("send input [%s] %d bytes: %q", typ, len(data), data)
-	if err := s.conn.Write(ctx, typ, data); err != nil {
+	typ := s.sendType()
+	s.logf("send input [%s] %d bytes: %q", typ, len(p), p)
+	if err := s.conn.Write(ctx, typ, p); err != nil {
 		return fmt.Errorf("send input: %w", err)
 	}
 	return nil
@@ -135,11 +150,10 @@ func (s *Session) Close() error {
 }
 
 // --- wire protocol (TODO(protocol): confirm from a Messages-tab capture) ---
-
-// encodeInput encodes local keystrokes into an outbound frame. Assumed raw text.
-func encodeInput(p []byte) (websocket.MessageType, []byte) {
-	return websocket.MessageText, p
-}
+//
+// Input is sent as raw bytes on the same frame type the server uses for output
+// (see sendType). decodeOutput passes output through unchanged. Resize is a
+// best-guess JSON control frame.
 
 // decodeOutput extracts terminal output from an inbound frame. Assumed raw bytes.
 func decodeOutput(_ websocket.MessageType, data []byte) []byte {
