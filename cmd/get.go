@@ -63,8 +63,11 @@ func newGetCommand() *cli.Command {
 				Action:  getCertificatesAction,
 			},
 			{
-				Name:   "plans",
-				Usage:  "List available resource/pricing plans",
+				Name:  "plans",
+				Usage: "List app plans available for `create app` (--all for every plan)",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "all", Usage: "show every plan, not just create-eligible app plans"},
+				},
 				Action: getPlansAction,
 			},
 		},
@@ -276,12 +279,63 @@ func getPlansAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	if !cmd.Bool("all") {
+		plans = filterCreatablePlans(plans)
+	}
 	if handled, err := output.Structured(os.Stdout, format, plans); handled {
 		return err
 	}
 	rows := make([][]string, 0, len(plans))
 	for _, p := range plans {
-		rows = append(rows, []string{dash(p.Name), dash(p.PlanType), dash(p.CostType), p.ID})
+		rows = append(rows, []string{
+			dash(planRef(p)),
+			ramMB(p.Detail.RAMLimit),
+			cpuM(p.Detail.CPURequest),
+			dash(clusterLabel(p.Cluster)),
+			p.ID,
+		})
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "TYPE", "COST-TYPE", "ID"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{colName, "RAM", "CPU", "CLUSTER", "ID"}, rows, nil)
+}
+
+func filterCreatablePlans(plans []client.Plan) []client.Plan {
+	out := make([]client.Plan, 0, len(plans))
+	for _, p := range plans {
+		if p.IsCreatable() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// planRef is the value to pass to `create app --plan` (code name, else name).
+func planRef(p client.Plan) string {
+	if p.CodeName != "" {
+		return p.CodeName
+	}
+	return p.Name
+}
+
+func ramMB(mb int) string {
+	if mb == 0 {
+		return "-"
+	}
+	return strconv.Itoa(mb) + "M"
+}
+
+func cpuM(m int) string {
+	if m == 0 {
+		return "-"
+	}
+	return strconv.Itoa(m) + "m"
+}
+
+func clusterLabel(c *client.Cluster) string {
+	if c == nil {
+		return ""
+	}
+	if c.LocationCountry != "" {
+		return c.Name + " (" + c.LocationCountry + ")"
+	}
+	return c.Name
 }

@@ -32,11 +32,25 @@ type State struct {
 
 // Plan is a resource/pricing plan.
 type Plan struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	CodeName string `json:"code_name"`
-	PlanType string `json:"plan_type"`
-	CostType string `json:"cost_type"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	CodeName        string     `json:"code_name"`
+	PlanType        string     `json:"plan_type"`
+	CostType        string     `json:"cost_type"`
+	ShowInCreateApp bool       `json:"show_in_create_app"`
+	Detail          PlanDetail `json:"detail"`
+	Cluster         *Cluster   `json:"cluster"`
+}
+
+// PlanDetail holds an app plan's resource sizing (megabytes / millicores).
+type PlanDetail struct {
+	RAMLimit   int `json:"ram_limit"`
+	CPURequest int `json:"cpu_request"`
+}
+
+// IsCreatable reports whether a plan can be picked when creating an app.
+func (p Plan) IsCreatable() bool {
+	return p.PlanType == "app" && p.ShowInCreateApp
 }
 
 // App is a Darkube application (maps to a Kubernetes workload).
