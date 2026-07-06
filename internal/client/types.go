@@ -34,6 +34,7 @@ type State struct {
 type Plan struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	CodeName string `json:"code_name"`
 	PlanType string `json:"plan_type"`
 	CostType string `json:"cost_type"`
 }
