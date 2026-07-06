@@ -33,6 +33,8 @@ type appSpec struct {
 	Port      int    `yaml:"port"`
 	Replicas  int    `yaml:"replicas"`
 	EnableSSL bool   `yaml:"ssl"`
+	Command   string `yaml:"command"` // entrypoint override
+	Args      string `yaml:"args"`
 }
 
 func newCreateCommand() *cli.Command {
@@ -58,6 +60,8 @@ func newCreateAppCommand() *cli.Command {
 			&cli.StringFlag{Name: "image", Usage: "docker image (repo:tag)"},
 			&cli.IntFlag{Name: "port", Usage: "container port"},
 			&cli.IntFlag{Name: flagReplicas, Value: 1, Usage: "replica count"},
+			&cli.StringFlag{Name: "command", Usage: "container command (entrypoint override)"},
+			&cli.StringFlag{Name: "args", Usage: "container args"},
 			&cli.BoolFlag{Name: "enable-ssl", Usage: "enable SSL"},
 			&cli.BoolFlag{Name: flagInteractive, Aliases: []string{"i"}, Usage: "prompt for each field"},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
@@ -105,6 +109,8 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 		Port:        spec.Port,
 		Replicas:    spec.Replicas,
 		EnableSSL:   spec.EnableSSL,
+		Command:     spec.Command,
+		Args:        spec.Args,
 	})
 	if err != nil {
 		return err
@@ -136,6 +142,8 @@ func gatherAppSpec(cmd *cli.Command) (appSpec, error) {
 		Port:      cmd.Int("port"),
 		Replicas:  cmd.Int(flagReplicas),
 		EnableSSL: cmd.Bool("enable-ssl"),
+		Command:   cmd.String("command"),
+		Args:      cmd.String("args"),
 	}, nil
 }
 
@@ -170,6 +178,9 @@ func promptAppSpec() (appSpec, error) {
 		return s, err
 	}
 	if s.Image, err = prompt("Docker image (repo:tag): "); err != nil {
+		return s, err
+	}
+	if s.Command, err = prompt("Command (entrypoint override, blank for image default): "); err != nil {
 		return s, err
 	}
 	if s.Port, err = promptInt("Container port (blank for none): ", 0); err != nil {

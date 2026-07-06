@@ -13,6 +13,8 @@ type CreateAppInput struct {
 	PlanID      string
 	ImageRepo   string
 	ImageTag    string
+	Command     string
+	Args        string
 	Port        int
 	Replicas    int
 	EnableSSL   bool
@@ -50,6 +52,12 @@ func buildCreatePayload(in CreateAppInput) map[string]any {
 	}
 	if in.Port > 0 {
 		payload["port"] = in.Port
+	}
+	if in.Command != "" {
+		payload["command"] = in.Command
+	}
+	if in.Args != "" {
+		payload["args"] = in.Args
 	}
 	return payload
 }
