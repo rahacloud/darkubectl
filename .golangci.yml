@@ -52,9 +52,10 @@ linters:
         linters:
           - forbidigo
           - err113
-      # API DTO structs mirror the external Darkube JSON (snake_case, acronyms
-      # like enable_SSL) which we do not control.
-      - path: (^|/)internal/client/
+      # DTO structs mirror external JSON we do not control: the Darkube API
+      # (snake_case, acronyms like enable_SSL) and the k8s remotecommand resize
+      # payload ({"Width","Height"}).
+      - path: (^|/)internal/(client|wsexec)/
         linters:
           - tagliatelle
       # Test files legitimately repeat small string literals (fixture keys).

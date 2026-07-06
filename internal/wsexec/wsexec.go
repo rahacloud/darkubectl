@@ -19,9 +19,17 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync/atomic"
 
 	"github.com/coder/websocket"
+)
+
+// The exec stream uses the Kubernetes remotecommand channel protocol: every
+// binary frame is prefixed with a 1-byte channel id.
+const (
+	channelStdin  = 0 // client -> server: terminal input
+	channelStdout = 1 // server -> client: stdout
+	channelStderr = 2 // server -> client: stderr
+	channelResize = 4 // client -> server: terminal size (JSON {"Width","Height"})
 )
 
 const (
@@ -45,9 +53,6 @@ type Options struct {
 type Session struct {
 	conn  *websocket.Conn
 	debug bool
-	// recvType records the message type (text/binary) the server last used for
-	// output, so input can be sent as the same type. 0 until the first frame.
-	recvType atomic.Int32
 }
 
 func (s *Session) logf(format string, args ...any) {
@@ -101,44 +106,33 @@ func buildURL(opts Options) (string, error) {
 
 // Read returns the next chunk of terminal output (decoded from a frame).
 func (s *Session) Read(ctx context.Context) ([]byte, error) {
-	typ, data, err := s.conn.Read(ctx)
+	_, data, err := s.conn.Read(ctx)
 	if err != nil {
 		s.logf("read end: %v", err)
 		return nil, err //nolint:wrapcheck // callers switch on websocket.CloseStatus
 	}
-	s.recvType.Store(int32(typ)) //nolint:gosec // G115: MessageType is a small opcode (1|2)
-	s.logf("recv [%s] %d bytes: %q", typ, len(data), data)
-	return decodeOutput(typ, data), nil
+	s.logf("recv %d bytes: %q", len(data), data)
+	return decodeOutput(data), nil
 }
 
-// sendType is the frame type for outbound input: mirror whatever the server uses
-// for output, defaulting to binary (many terminal backends reserve text frames
-// for JSON control messages and only accept stdin on binary frames).
-func (s *Session) sendType() websocket.MessageType {
-	if t := s.recvType.Load(); t != 0 {
-		return websocket.MessageType(t)
-	}
-	return websocket.MessageBinary
-}
-
-// SendInput writes terminal input (keystrokes / a command).
+// SendInput writes terminal input (keystrokes / a command) on the stdin channel.
 func (s *Session) SendInput(ctx context.Context, p []byte) error {
-	typ := s.sendType()
-	s.logf("send input [%s] %d bytes: %q", typ, len(p), p)
-	if err := s.conn.Write(ctx, typ, p); err != nil {
+	frame := append([]byte{channelStdin}, p...)
+	s.logf("send input %d bytes: %q", len(p), p)
+	if err := s.conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
 		return fmt.Errorf("send input: %w", err)
 	}
 	return nil
 }
 
-// SendResize informs the remote PTY of a new window size.
+// SendResize informs the remote PTY of a new window size on the resize channel.
 func (s *Session) SendResize(ctx context.Context, cols, rows int) error {
-	typ, data, ok := encodeResize(cols, rows)
-	if !ok {
-		return nil
+	frame, err := encodeResize(cols, rows)
+	if err != nil {
+		return err
 	}
-	s.logf("send resize [%s]: %q", typ, data)
-	if err := s.conn.Write(ctx, typ, data); err != nil {
+	s.logf("send resize: %q", frame)
+	if err := s.conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
 		return fmt.Errorf("send resize: %w", err)
 	}
 	return nil
@@ -149,34 +143,34 @@ func (s *Session) Close() error {
 	return s.conn.Close(websocket.StatusNormalClosure, "")
 }
 
-// --- wire protocol (TODO(protocol): confirm from a Messages-tab capture) ---
-//
-// Input is sent as raw bytes on the same frame type the server uses for output
-// (see sendType). decodeOutput passes output through unchanged. Resize is a
-// best-guess JSON control frame.
+// --- Kubernetes remotecommand channel protocol ---
 
-// decodeOutput extracts terminal output from an inbound frame. Assumed raw bytes.
-func decodeOutput(_ websocket.MessageType, data []byte) []byte {
-	return data
-}
-
-// resizeMessage is a guess at the resize control frame shape.
-type resizeMessage struct {
-	Resize struct {
-		Cols int `json:"cols"`
-		Rows int `json:"rows"`
-	} `json:"resize"`
-}
-
-// encodeResize builds a resize control frame. The bool reports whether the
-// protocol supports resize (false → the caller skips sending one).
-func encodeResize(cols, rows int) (websocket.MessageType, []byte, bool) {
-	var m resizeMessage
-	m.Resize.Cols = cols
-	m.Resize.Rows = rows
-	data, err := json.Marshal(m)
-	if err != nil {
-		return 0, nil, false
+// decodeOutput strips the leading channel byte and returns stdout/stderr bytes.
+// Other channels (e.g. 3 = error/status) are not terminal output.
+func decodeOutput(data []byte) []byte {
+	if len(data) == 0 {
+		return nil
 	}
-	return websocket.MessageText, data, true
+	switch data[0] {
+	case channelStdout, channelStderr:
+		return data[1:]
+	default:
+		return nil
+	}
+}
+
+// terminalSize is the resize payload, matching k8s remotecommand.TerminalSize.
+type terminalSize struct {
+	Width  int `json:"Width"`
+	Height int `json:"Height"`
+}
+
+// encodeResize builds a channel-4 resize frame: the channel byte followed by a
+// JSON {"Width":cols,"Height":rows} payload.
+func encodeResize(cols, rows int) ([]byte, error) {
+	payload, err := json.Marshal(terminalSize{Width: cols, Height: rows})
+	if err != nil {
+		return nil, fmt.Errorf("encode resize: %w", err)
+	}
+	return append([]byte{channelResize}, payload...), nil
 }
