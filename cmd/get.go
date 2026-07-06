@@ -16,6 +16,13 @@ import (
 // colName is the shared first column header across the get tables.
 const colName = "NAME"
 
+// Column indices used for status-aware coloring.
+const (
+	appStateCol   = 2
+	appEnabledCol = 4
+	certStateCol  = 3
+)
+
 func newGetCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "get",
@@ -132,7 +139,7 @@ func printAppsTable(apps []client.App, wide bool) error {
 		}
 		rows = append(rows, row)
 	}
-	return output.WriteTable(os.Stdout, header, rows)
+	return output.StyledTable(os.Stdout, header, rows, output.StatusCells(appStateCol, appEnabledCol))
 }
 
 func getTenantsAction(_ context.Context, cmd *cli.Command) error {
@@ -160,7 +167,7 @@ func getTenantsAction(_ context.Context, cmd *cli.Command) error {
 		}
 		rows = append(rows, []string{marker, t})
 	}
-	return output.WriteTable(os.Stdout, []string{"CURRENT", colName}, rows)
+	return output.StyledTable(os.Stdout, []string{"CURRENT", colName}, rows, nil)
 }
 
 func getPodsAction(ctx context.Context, cmd *cli.Command) error {
@@ -207,7 +214,7 @@ func getPodsAction(ctx context.Context, cmd *cli.Command) error {
 	for _, p := range pods {
 		rows = append(rows, []string{p.Name, dash(strings.Join(p.Containers, ","))})
 	}
-	return output.WriteTable(os.Stdout, []string{colName, "CONTAINERS"}, rows)
+	return output.StyledTable(os.Stdout, []string{colName, "CONTAINERS"}, rows, nil)
 }
 
 func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
@@ -230,7 +237,7 @@ func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
 	for _, n := range ns {
 		rows = append(rows, []string{n.Name, n.Cluster.Name, n.Cluster.LocationCountry})
 	}
-	return output.WriteTable(os.Stdout, []string{colName, "CLUSTER", "LOCATION"}, rows)
+	return output.StyledTable(os.Stdout, []string{colName, "CLUSTER", "LOCATION"}, rows, nil)
 }
 
 func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
@@ -253,7 +260,7 @@ func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
 	for _, ct := range certs {
 		rows = append(rows, []string{dash(ct.Name), dash(ct.CommonName), dash(ct.Domain), dash(ct.State)})
 	}
-	return output.WriteTable(os.Stdout, []string{colName, "COMMON-NAME", "DOMAIN", "STATE"}, rows)
+	return output.StyledTable(os.Stdout, []string{colName, "COMMON-NAME", "DOMAIN", "STATE"}, rows, output.StatusCells(certStateCol))
 }
 
 func getPlansAction(ctx context.Context, cmd *cli.Command) error {
@@ -276,5 +283,5 @@ func getPlansAction(ctx context.Context, cmd *cli.Command) error {
 	for _, p := range plans {
 		rows = append(rows, []string{dash(p.Name), dash(p.PlanType), dash(p.CostType), p.ID})
 	}
-	return output.WriteTable(os.Stdout, []string{colName, "TYPE", "COST-TYPE", "ID"}, rows)
+	return output.StyledTable(os.Stdout, []string{colName, "TYPE", "COST-TYPE", "ID"}, rows, nil)
 }
