@@ -14,6 +14,7 @@ package wsexec
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -29,8 +30,13 @@ const (
 	channelStdin  = 0 // client -> server: terminal input
 	channelStdout = 1 // server -> client: stdout
 	channelStderr = 2 // server -> client: stderr
+	channelError  = 3 // server -> client: exit status; signals the session ended
 	channelResize = 4 // client -> server: terminal size (JSON {"Width","Height"})
 )
+
+// ErrExited is returned by Read when the remote command/shell has finished (a
+// channel-3 status frame), so the caller stops the read loop.
+var ErrExited = errors.New("remote session ended")
 
 const (
 	execPath      = "/ws/aexec/"
@@ -112,6 +118,10 @@ func (s *Session) Read(ctx context.Context) ([]byte, error) {
 		return nil, err //nolint:wrapcheck // callers switch on websocket.CloseStatus
 	}
 	s.logf("recv %d bytes: %q", len(data), data)
+	if len(data) > 0 && data[0] == channelError {
+		s.logf("remote status: %q", data[1:])
+		return nil, ErrExited
+	}
 	return decodeOutput(data), nil
 }
 
