@@ -28,7 +28,8 @@ const (
 var (
 	errNotLoggedIn = errors.New("not logged in: run `darkubectl login` first " +
 		"(the terminal needs a JWT; the Api-key cannot open it)")
-	errNoPod       = errors.New("could not determine a pod; pass --pod (live pods are not exposed over REST)")
+	errNoPod = errors.New("could not determine a pod from the app-state stream; " +
+		"pass --pod, or run `darkubectl get pods <app> --debug` to inspect the raw stream")
 	errNoCommand   = errors.New("a command is required after `--`")
 	errNotATTY     = errors.New("this command requires an interactive terminal")
 	errInputClosed = errors.New("input closed")

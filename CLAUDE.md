@@ -56,9 +56,10 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
   - `wss://api.hamravesh.com/ws/aexec/?app_id=&pod_name=&container_name=` with
     `Sec-WebSocket-Protocol: terminal, <jwt-access>, <org>` and
     `Origin: https://console.hamravesh.com`.
-  - `wss://api.hamravesh.com/ws/app-state/?app_id=` with subprotocol
-    `json, <jwt-access>, <org>` — streams app state as JSON; the **only** source
-    of pod names (REST `state.pods` is empty). Parsed in `internal/appstate`.
+  - `wss://api.hamravesh.com/ws/app-pods/?app_id=` with subprotocol
+    `json, <jwt-access>, <org>` — streams pods as JSON; the **only** source of
+    pod names (REST `state.pods` is empty; `/ws/app-state/` carries only
+    aggregate replica counts). Parsed in `internal/appstate`.
 - The JWT is a Console SimpleJWT access token: short-lived (~8h) and **IP-bound**
   (an `ip` claim), so it must be minted on the machine that connects. The
   refresh token is long-lived.

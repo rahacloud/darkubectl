@@ -1,14 +1,14 @@
-// Package appstate reads an app's live state (notably its pods) from the
-// Darkube app-state websocket.
+// Package appstate reads an app's live pods from the Darkube app-pods websocket.
 //
-// Pods are not exposed over REST (`state.pods` is empty); the console sources
-// them from:
+// Pods are not exposed over REST (`state.pods` is empty), and the app-state
+// socket carries only aggregate replica counts. The console sources pod names
+// from a separate stream:
 //
-//	wss://api.hamravesh.com/ws/app-state/?app_id=<id>
+//	wss://api.hamravesh.com/ws/app-pods/?app_id=<id>
 //	Sec-WebSocket-Protocol: json, <console-jwt-access>, <org-slug>
 //
-// which streams the app state as JSON. Pod extraction is deliberately defensive
-// (it searches the payload for a "pods" array) until the exact shape is pinned.
+// which streams pods as JSON. Pod extraction is deliberately defensive (it
+// searches the payload for a "pods" array) until the exact shape is pinned.
 package appstate
 
 import (
@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	appStatePath    = "/ws/app-state/"
+	appPodsPath     = "/ws/app-pods/"
 	subprotocolJSON = "json"
 	consoleOrigin   = "https://console.hamravesh.com"
 
@@ -97,9 +97,9 @@ func buildURL(baseURL, appID string) (string, error) {
 	base := strings.TrimRight(baseURL, "/")
 	base = strings.Replace(base, "https://", "wss://", 1)
 	base = strings.Replace(base, "http://", "ws://", 1)
-	u, err := url.Parse(base + appStatePath)
+	u, err := url.Parse(base + appPodsPath)
 	if err != nil {
-		return "", fmt.Errorf("parse app-state url: %w", err)
+		return "", fmt.Errorf("parse app-pods url: %w", err)
 	}
 	q := u.Query()
 	q.Set("app_id", appID)
