@@ -49,6 +49,10 @@ type Config struct {
 	Tenants []string `koanf:"tenants"`
 	// BaseURL overrides the API host (defaults to the public Hamravesh API).
 	BaseURL string `koanf:"base-url"`
+	// RefreshToken is a Console JWT refresh token (from `darkubectl login`), used
+	// to mint short-lived access tokens for the terminal/exec websocket. The
+	// account API key cannot open the terminal, so this is a separate credential.
+	RefreshToken string `koanf:"refresh-token"`
 
 	path string
 }
