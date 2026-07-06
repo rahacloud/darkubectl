@@ -69,7 +69,25 @@ darkubectl get plans
 darkubectl scale app <name|id> --replicas 3
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
 darkubectl delete app <name|id>
+
+# Terminal / exec — needs a JWT login (separate from the Api-key)
+darkubectl login                          # email + password + TOTP → stores a refresh token
+darkubectl exec app <name> -- ls -la      # run a command in a pod
+darkubectl terminal app <name>            # interactive shell (alias: shell)
+darkubectl terminal app <name> --pod <p> -c <container>
 ```
+
+### Terminal authentication
+
+The account API key **cannot** open a pod terminal — the exec websocket
+(`wss://…/ws/aexec/`) requires a short-lived Console JWT. `darkubectl login`
+mints one from your email, password, and TOTP code (2FA), and stores only the
+refresh token; `exec`/`terminal` then refresh access tokens automatically.
+
+> Note: the exec websocket **frame protocol** (how stdin/stdout/resize are
+> encoded) and the exact 2FA request shape are provisional in this build —
+> marked `TODO(protocol)` in `internal/wsexec` and `internal/auth` — pending
+> confirmation against a captured session.
 
 Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`,
 `yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
