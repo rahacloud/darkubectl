@@ -23,14 +23,14 @@ func StyledTable(w io.Writer, header []string, rows [][]string, cellColor CellCo
 		return WriteTable(w, header, rows)
 	}
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Padding(0, 1)
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).Padding(0, 1)
 	cellStyle := lipgloss.NewStyle().Padding(0, 1)
 
 	t := table.New().
 		Headers(header...).
 		Rows(rows...).
 		Border(lipgloss.RoundedBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("240"))).
+		BorderStyle(lipgloss.NewStyle().Foreground(ColorBorder)).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
 				return headerStyle
@@ -55,24 +55,17 @@ func isTerminal(w io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// Palette for status-aware coloring.
-var (
-	colorGreen = lipgloss.Color("42")
-	colorRed   = lipgloss.Color("196")
-	colorGray  = lipgloss.Color("244")
-)
-
 // StateColor maps a state string to a color: green for healthy, red for
 // error/failed, gray for disabled/pending. Returns nil for anything else.
 func StateColor(state string) color.Color {
 	s := strings.ToLower(state)
 	switch {
 	case strings.Contains(s, "healthy"), strings.Contains(s, "running"), strings.Contains(s, "ready"):
-		return colorGreen
+		return ColorSuccess
 	case strings.Contains(s, "error"), strings.Contains(s, "fail"), strings.Contains(s, "crash"):
-		return colorRed
+		return ColorDanger
 	case strings.Contains(s, "disabled"), strings.Contains(s, "pending"), strings.Contains(s, "stopped"):
-		return colorGray
+		return ColorMuted
 	default:
 		return nil
 	}
@@ -82,9 +75,9 @@ func StateColor(state string) color.Color {
 func BoolColor(value string) color.Color {
 	switch strings.ToLower(value) {
 	case "true":
-		return colorGreen
+		return ColorSuccess
 	case "false":
-		return colorGray
+		return ColorMuted
 	default:
 		return nil
 	}

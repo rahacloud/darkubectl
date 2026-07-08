@@ -64,10 +64,10 @@ func RunDescribe(title string, rows []output.Row) error {
 		plainLines:   plain,
 		styles:       styles,
 		search:       search,
-		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")),
-		hintStyle:    lipgloss.NewStyle().Faint(true),
-		matchStyle:   lipgloss.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("231")),
-		currentStyle: lipgloss.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("231")),
+		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(output.ColorAccent),
+		hintStyle:    lipgloss.NewStyle().Foreground(output.ColorMuted).Faint(true),
+		matchStyle:   lipgloss.NewStyle().Background(output.ColorMatchBG).Foreground(output.ColorMatchFG),
+		currentStyle: lipgloss.NewStyle().Background(output.ColorCurrentBG).Foreground(output.ColorCurrentFG),
 	}
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {

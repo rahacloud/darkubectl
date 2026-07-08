@@ -160,14 +160,14 @@ type DescribeStyles struct {
 
 func newDescribeStyles() DescribeStyles {
 	return DescribeStyles{
-		title:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")),
-		section: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")),
-		key:     lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		branch:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
-		str:     lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		num:     lipgloss.NewStyle().Foreground(lipgloss.Color("208")),
-		boolean: lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
-		null:    lipgloss.NewStyle().Faint(true),
+		title:   lipgloss.NewStyle().Bold(true).Foreground(ColorAccent),
+		section: lipgloss.NewStyle().Bold(true).Foreground(ColorAccent),
+		key:     lipgloss.NewStyle().Foreground(ColorKey),
+		branch:  lipgloss.NewStyle().Bold(true).Foreground(ColorBranch),
+		str:     lipgloss.NewStyle(), // inherit the terminal's default foreground
+		num:     lipgloss.NewStyle().Foreground(ColorNumber),
+		boolean: lipgloss.NewStyle().Foreground(ColorSuccess),
+		null:    lipgloss.NewStyle().Foreground(ColorMuted).Faint(true),
 	}
 }
 
