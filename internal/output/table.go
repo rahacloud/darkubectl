@@ -55,6 +55,19 @@ func isTerminal(w io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
+// IsTerminal reports whether w is a terminal, so callers can decide between
+// a styled, grouped presentation and a flat, pipe-safe one.
+func IsTerminal(w io.Writer) bool { return isTerminal(w) }
+
+// PrintSectionHeader writes a bold, accent-colored label (e.g. a namespace
+// grouping the table printed below it), downsampled to w's color profile.
+func PrintSectionHeader(w io.Writer, text string) error {
+	style := lipgloss.NewStyle().Bold(true).Foreground(ColorBranch)
+	cw := colorprofile.NewWriter(w, os.Environ())
+	_, err := io.WriteString(cw, style.Render(text)+"\n")
+	return err
+}
+
 // StateColor maps a state string to a color: green for healthy, red for
 // error/failed, gray for disabled/pending. Returns nil for anything else.
 func StateColor(state string) color.Color {

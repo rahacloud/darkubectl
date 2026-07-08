@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -16,11 +17,18 @@ import (
 // colName is the shared first column header across the get tables.
 const colName = "NAME"
 
-// Column indices used for status-aware coloring.
+// flagNamespace filters `get apps` to a single namespace (name or id).
+const flagNamespace = "namespace"
+
+// Column indices used for status-aware coloring. The grouped-by-namespace
+// table drops the NAMESPACE column, shifting STATE/ENABLED left by one.
 const (
 	appStateCol   = 2
 	appEnabledCol = 4
 	certStateCol  = 3
+
+	appGroupedStateCol   = 1
+	appGroupedEnabledCol = 3
 )
 
 func newGetCommand() *cli.Command {
@@ -32,7 +40,10 @@ func newGetCommand() *cli.Command {
 				Name:    "apps",
 				Aliases: []string{cmdApp, "applications"},
 				Usage:   "List apps in the current tenant",
-				Action:  getAppsAction,
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: flagNamespace, Aliases: []string{"ns"}, Usage: "only show apps in this namespace (name or id)"},
+				},
+				Action: getAppsAction,
 			},
 			{
 				Name:    "tenants",
@@ -94,6 +105,12 @@ func getAppsAction(ctx context.Context, cmd *cli.Command) error {
 			return fmt.Errorf("no app matching %q in tenant %q", name, c.Org)
 		}
 	}
+	if ns := cmd.String(flagNamespace); ns != "" {
+		apps = filterAppsByNamespace(apps, ns)
+		if len(apps) == 0 {
+			return fmt.Errorf("no app in namespace %q in tenant %q", ns, c.Org)
+		}
+	}
 
 	if handled, err := output.Structured(os.Stdout, format, apps); handled {
 		return err
@@ -117,7 +134,37 @@ func filterAppsByName(apps []client.App, name string) []client.App {
 	return out
 }
 
+func filterAppsByNamespace(apps []client.App, ns string) []client.App {
+	var out []client.App
+	for _, a := range apps {
+		if a.Namespace.Name == ns || strconv.Itoa(a.Namespace.ID) == ns {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// printAppsTable renders apps grouped under a per-namespace heading on a
+// terminal, and as a single flat (pipe-safe) table otherwise.
 func printAppsTable(apps []client.App, wide bool) error {
+	if !output.IsTerminal(os.Stdout) {
+		return printAppsFlatTable(apps, wide)
+	}
+	for i, g := range groupAppsByNamespace(apps) {
+		if i > 0 {
+			fmt.Fprintln(os.Stdout)
+		}
+		if err := output.PrintSectionHeader(os.Stdout, "NAMESPACE: "+g.namespace); err != nil {
+			return err
+		}
+		if err := printAppsGroupTable(g.apps, wide); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func printAppsFlatTable(apps []client.App, wide bool) error {
 	header := []string{colName, "NAMESPACE", "STATE", "REPLICAS", "ENABLED"}
 	if wide {
 		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
@@ -143,6 +190,59 @@ func printAppsTable(apps []client.App, wide bool) error {
 		rows = append(rows, row)
 	}
 	return output.StyledTable(os.Stdout, header, rows, output.StatusCells(appStateCol, appEnabledCol))
+}
+
+// printAppsGroupTable is printAppsFlatTable without the (now redundant)
+// NAMESPACE column, for use under a per-namespace section header.
+func printAppsGroupTable(apps []client.App, wide bool) error {
+	header := []string{colName, "STATE", "REPLICAS", "ENABLED"}
+	if wide {
+		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
+	}
+	rows := make([][]string, 0, len(apps))
+	for _, a := range apps {
+		row := []string{
+			a.Name,
+			stateLabel(a.State),
+			strconv.Itoa(a.Replicas),
+			yesNo(a.IsEnabled),
+		}
+		if wide {
+			row = append(row,
+				a.Namespace.Cluster.Name,
+				dash(a.RAMLimit),
+				dash(a.CPURequest),
+				dash(a.CustomDomainAddress),
+				a.ID,
+			)
+		}
+		rows = append(rows, row)
+	}
+	return output.StyledTable(os.Stdout, header, rows, output.StatusCells(appGroupedStateCol, appGroupedEnabledCol))
+}
+
+// appGroup is a namespace and the apps in it, in `get apps` list order.
+type appGroup struct {
+	namespace string
+	apps      []client.App
+}
+
+// groupAppsByNamespace buckets apps by namespace name, sorted alphabetically
+// by namespace for a stable, readable listing.
+func groupAppsByNamespace(apps []client.App) []appGroup {
+	idx := make(map[string]int)
+	var groups []appGroup
+	for _, a := range apps {
+		name := a.Namespace.Name
+		if i, ok := idx[name]; ok {
+			groups[i].apps = append(groups[i].apps, a)
+			continue
+		}
+		idx[name] = len(groups)
+		groups = append(groups, appGroup{namespace: name, apps: []client.App{a}})
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].namespace < groups[j].namespace })
+	return groups
 }
 
 func getTenantsAction(_ context.Context, cmd *cli.Command) error {
