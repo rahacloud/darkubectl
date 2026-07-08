@@ -3,11 +3,13 @@ package output
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 // Kind classifies a described value for type-aware coloring.
@@ -144,9 +146,7 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-// DescribeStyles holds the lipgloss styles for a describe rendering. When the
-// destination is not a terminal (or NO_COLOR is set), the renderer's profile is
-// Ascii and every style becomes a no-op, so output is plain and pipe-safe.
+// DescribeStyles holds the lipgloss styles for a describe rendering.
 type DescribeStyles struct {
 	title   lipgloss.Style
 	section lipgloss.Style
@@ -158,16 +158,16 @@ type DescribeStyles struct {
 	null    lipgloss.Style
 }
 
-func newDescribeStyles(r *lipgloss.Renderer) DescribeStyles {
+func newDescribeStyles() DescribeStyles {
 	return DescribeStyles{
-		title:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("62")),
-		section: r.NewStyle().Bold(true).Foreground(lipgloss.Color("212")),
-		key:     r.NewStyle().Foreground(lipgloss.Color("245")),
-		branch:  r.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
-		str:     r.NewStyle().Foreground(lipgloss.Color("252")),
-		num:     r.NewStyle().Foreground(lipgloss.Color("208")),
-		boolean: r.NewStyle().Foreground(lipgloss.Color("42")),
-		null:    r.NewStyle().Faint(true),
+		title:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")),
+		section: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")),
+		key:     lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		branch:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
+		str:     lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		num:     lipgloss.NewStyle().Foreground(lipgloss.Color("208")),
+		boolean: lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
+		null:    lipgloss.NewStyle().Faint(true),
 	}
 }
 
@@ -227,11 +227,11 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
-// RenderDescribe writes a colorized static view of rows to w. Color is applied
-// only when w is a terminal (lipgloss auto-detects and respects NO_COLOR).
+// RenderDescribe writes a colorized static view of rows to w. Color is
+// downsampled (or stripped entirely) to match w's actual color profile, so
+// pipes, redirected files, and NO_COLOR all fall back to plain text.
 func RenderDescribe(w io.Writer, title string, rows []Row) error {
-	r := lipgloss.NewRenderer(w)
-	s := newDescribeStyles(r)
+	s := newDescribeStyles()
 
 	var b strings.Builder
 	b.WriteString(s.title.Render(title))
@@ -240,10 +240,11 @@ func RenderDescribe(w io.Writer, title string, rows []Row) error {
 		b.WriteString(RenderRow(s, row))
 		b.WriteString("\n")
 	}
-	_, err := io.WriteString(w, b.String())
+	cw := colorprofile.NewWriter(w, os.Environ())
+	_, err := io.WriteString(cw, b.String())
 	return err
 }
 
-// NewStyles exposes describe styles for the interactive viewer, bound to a
-// renderer that always emits color (the TUI targets a real terminal).
-func NewStyles(r *lipgloss.Renderer) DescribeStyles { return newDescribeStyles(r) }
+// NewStyles exposes describe styles for the interactive viewer, which always
+// targets a real terminal.
+func NewStyles() DescribeStyles { return newDescribeStyles() }

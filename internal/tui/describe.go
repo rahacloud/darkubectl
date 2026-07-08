@@ -2,14 +2,13 @@
 package tui
 
 import (
-	"os"
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/rahacloud/darkubectl/internal/output"
 )
 
@@ -45,8 +44,7 @@ type model struct {
 
 // RunDescribe launches the interactive viewer for a described object.
 func RunDescribe(title string, rows []output.Row) error {
-	r := lipgloss.NewRenderer(os.Stdout)
-	styles := output.NewStyles(r)
+	styles := output.NewStyles()
 
 	styled := make([]string, len(rows))
 	plain := make([]string, len(rows))
@@ -66,13 +64,13 @@ func RunDescribe(title string, rows []output.Row) error {
 		plainLines:   plain,
 		styles:       styles,
 		search:       search,
-		titleStyle:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("62")),
-		hintStyle:    r.NewStyle().Faint(true),
-		matchStyle:   r.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("231")),
-		currentStyle: r.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("231")),
+		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("62")),
+		hintStyle:    lipgloss.NewStyle().Faint(true),
+		matchStyle:   lipgloss.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("231")),
+		currentStyle: lipgloss.NewStyle().Background(lipgloss.Color("205")).Foreground(lipgloss.Color("231")),
 	}
 
-	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
+	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return err
 	}
 	return nil
@@ -86,7 +84,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.resize(msg)
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.searching {
 			return m.updateSearch(msg)
 		}
@@ -101,17 +99,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) resize(msg tea.WindowSizeMsg) {
 	if !m.ready {
-		m.vp = viewport.New(msg.Width, msg.Height-headerHeight-footerHeight)
+		m.vp = viewport.New(viewport.WithWidth(msg.Width), viewport.WithHeight(msg.Height-headerHeight-footerHeight))
 		m.ready = true
 	} else {
-		m.vp.Width = msg.Width
-		m.vp.Height = msg.Height - headerHeight - footerHeight
+		m.vp.SetWidth(msg.Width)
+		m.vp.SetHeight(msg.Height - headerHeight - footerHeight)
 	}
 	m.vp.SetContent(m.content())
 }
 
 // handleKey processes navigation keys; the bool reports whether it consumed the key.
-func (m *model) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return tea.Quit, true
@@ -136,7 +134,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	}
 }
 
-func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.searching = false
@@ -186,7 +184,7 @@ func (m *model) jump(delta int) {
 
 func (m *model) scrollTo(line int) {
 	// Position the target roughly a third down from the top for context.
-	m.vp.SetYOffset(max(line-m.vp.Height/scrollContextDivisor, 0))
+	m.vp.SetYOffset(max(line-m.vp.Height()/scrollContextDivisor, 0))
 }
 
 func (m *model) content() string {
@@ -207,11 +205,14 @@ func (m *model) content() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *model) View() string {
+func (m *model) View() tea.View {
 	if !m.ready {
-		return "\n  loading…"
+		return tea.NewView("\n  loading…")
 	}
-	return m.header() + "\n" + m.vp.View() + "\n" + m.footer()
+	v := tea.NewView(m.header() + "\n" + m.vp.View() + "\n" + m.footer())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 func (m *model) header() string {
