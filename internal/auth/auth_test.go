@@ -18,7 +18,7 @@ func TestLoginSendsCredentialsAndParsesTokens(t *testing.T) {
 	var gotOTP, gotPath string
 	var body map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotOTP = r.Header.Get("x-otp")
+		gotOTP = r.Header.Get("X-Otp")
 		gotPath = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")

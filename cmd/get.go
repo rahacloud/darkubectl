@@ -17,6 +17,9 @@ import (
 // colName is the shared first column header across the get tables.
 const colName = "NAME"
 
+// colState is the shared state column header across the get tables.
+const colState = "STATE"
+
 // flagNamespace filters `get apps` to a single namespace (name or id).
 const flagNamespace = "namespace"
 
@@ -165,7 +168,7 @@ func printAppsTable(apps []client.App, wide bool) error {
 }
 
 func printAppsFlatTable(apps []client.App, wide bool) error {
-	header := []string{colName, "NAMESPACE", "STATE", "REPLICAS", "ENABLED"}
+	header := []string{colName, "NAMESPACE", colState, "REPLICAS", "ENABLED"}
 	if wide {
 		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
 	}
@@ -195,7 +198,7 @@ func printAppsFlatTable(apps []client.App, wide bool) error {
 // printAppsGroupTable is printAppsFlatTable without the (now redundant)
 // NAMESPACE column, for use under a per-namespace section header.
 func printAppsGroupTable(apps []client.App, wide bool) error {
-	header := []string{colName, "STATE", "REPLICAS", "ENABLED"}
+	header := []string{colName, colState, "REPLICAS", "ENABLED"}
 	if wide {
 		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
 	}
@@ -363,7 +366,7 @@ func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
 	for _, ct := range certs {
 		rows = append(rows, []string{dash(ct.Name), dash(ct.CommonName), dash(ct.Domain), dash(ct.State)})
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "COMMON-NAME", "DOMAIN", "STATE"}, rows, output.StatusCells(certStateCol))
+	return output.StyledTable(os.Stdout, []string{colName, "COMMON-NAME", "DOMAIN", colState}, rows, output.StatusCells(certStateCol))
 }
 
 func getPlansAction(ctx context.Context, cmd *cli.Command) error {
