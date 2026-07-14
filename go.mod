@@ -16,7 +16,7 @@ require (
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	resty.dev/v3 v3.0.0-rc.2
+	resty.dev/v3 v3.0.0-rc.3
 )
 
 require (
