@@ -126,10 +126,48 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 		SecretEnvs:     spec.SecretEnvs,
 	})
 	if err != nil {
-		return err
+		return explainCreateError(ctx, c, spec, err)
 	}
 	fmt.Fprintf(os.Stdout, "app/%s created\n", spec.Name)
 	return nil
+}
+
+// explainCreateError writes guidance for the API's two name-collision codes to
+// stderr and returns the original error. Both codes arrive with a Persian
+// `detail` saying only "an app with this name exists, change the name or the
+// namespace", which is actively misleading when no such app exists.
+func explainCreateError(ctx context.Context, c *client.Client, spec appSpec, err error) error {
+	switch client.ErrorCode(err) {
+	case client.CodeDuplicateReleaseAndNamespace:
+		fmt.Fprintf(os.Stderr,
+			"\nAn app named %q already exists in this namespace. Pick another name, or delete it first.\n",
+			spec.Name)
+
+	case client.CodeTerminatingApp:
+		fmt.Fprintf(os.Stderr,
+			"\nAn app named %q is still being deleted. Deletion is asynchronous — wait and retry.\n",
+			spec.Name)
+
+	case client.CodeSameHelmReleaseName:
+		// Distinguish a real name clash from an orphaned Helm release: if no app
+		// of this name exists, the record is gone but the release is not.
+		if _, resolveErr := c.ResolveApp(ctx, spec.Name); resolveErr == nil {
+			fmt.Fprintf(os.Stderr,
+				"\nAn app named %q already exists in this tenant. Pick another name, or delete it first.\n",
+				spec.Name)
+			break
+		}
+		fmt.Fprintf(os.Stderr,
+			"\nNo app named %q exists, so its Helm release has outlived the app record — a known\n"+
+				"consequence of deleting an app. The name cannot be reused until that release is gone,\n"+
+				"and the API exposes no way to remove it: there is no force/overwrite flag on create\n"+
+				"and no release endpoint. Clear it from the Darkube console, or ask Hamravesh support\n"+
+				"to drop the orphaned release, then retry.\n\n"+
+				"To avoid this: an app's ports, disk and environment can only be set at creation\n"+
+				"(PATCH is broken), so get the spec right first time rather than delete-and-recreate.\n",
+			spec.Name)
+	}
+	return err
 }
 
 func (s appSpec) complete() bool {

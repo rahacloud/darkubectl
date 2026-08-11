@@ -13,6 +13,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -80,6 +81,31 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("api error %d (%s): %s", e.StatusCode, e.Code, e.Detail)
 	}
 	return fmt.Sprintf("api error %d: %s", e.StatusCode, e.Detail)
+}
+
+// API error codes worth handling by name. The `detail` that accompanies them is
+// Persian prose, so matching the code is both more robust and more readable.
+const (
+	// CodeSameHelmReleaseName means the name is taken by a Helm release in the
+	// target namespace. Deleting an app drops its record immediately but can
+	// leave the release behind, so this also fires for names with no app.
+	CodeSameHelmReleaseName = "SameHelmReleaseNameExists"
+	// CodeTerminatingApp means an app of this name is still being deleted.
+	CodeTerminatingApp = "TerminatingAppException"
+	// CodeDuplicateReleaseAndNamespace means a live app of this name already
+	// exists in the namespace. The API distinguishes this from
+	// CodeSameHelmReleaseName, which is the orphaned-release case.
+	CodeDuplicateReleaseAndNamespace = "DuplicateReleaseAndNamespaceException"
+)
+
+// ErrorCode returns the API error code carried by err, or "" if err is not an
+// *APIError.
+func ErrorCode(err error) string {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code
+	}
+	return ""
 }
 
 // do issues a request and returns the raw response body on 2xx, or an *APIError.

@@ -55,5 +55,10 @@ func deleteAppAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s deleted\n", app.Name)
+	fmt.Fprintf(os.Stderr,
+		"note: the app record is gone immediately, but its Helm release is removed asynchronously and\n"+
+			"      can outlive it. Until that finishes, creating an app named %q fails; if the release is\n"+
+			"      left behind entirely, the name stays unusable until it is cleared from the console.\n",
+		app.Name)
 	return nil
 }
