@@ -63,6 +63,15 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
     `organization` (numeric id, from an app's v1 detail), `namespace` (int),
     `plan`. Requires JWT (user context); the Api-key 500s. See
     `client.buildCreatePayload`.
+  - `GET /api/v1/darkube/apps/<uuid>/app_log/` — container logs. Query:
+    `pod_name`, `container_name`, `previous` (the crashed instance, like
+    `kubectl logs -p`), and an index window `from_index`/`to_index` anchored by
+    `reference_index`. The window is absolute, not time-based; the server clamps
+    an out-of-range window to the end, so the tail is `from_index=20000000`
+    (the console's own sentinel) and `to_index=20000000+N`. Response is
+    `{"logs": {"<rfc3339>": "<text>"}, "reference": <int>}` — an **object**, so
+    ordering is lost in JSON and has to be restored by sorting the keys.
+    Entries can hold several physical lines separated by ` \n `.
   - `POST /api/v1/token/` — `{email,password}` + TOTP → `{access,refresh}`.
   - `POST /api/v1/token/refresh/` — `{refresh}` → `{access}`.
   - `wss://api.hamravesh.com/ws/aexec/?app_id=&pod_name=&container_name=` with
@@ -109,6 +118,15 @@ Confirmed against a live session:
   the full-access path.
 - **`GET /api/v1/darkube/namespaces/`** — works with a JWT, 200 with the full
   project list including empty projects. Confirmed 2026-08-11.
+- **`GET .../app_log/`** — confirmed against running apps, including a pod that
+  was not Ready. This is the only diagnostic that works on a failing container:
+  the exec websocket 403s unless the pod is Ready, so `logs` is what you reach
+  for when an app will not start.
+- **The websocket subprotocol is not a selector.** `/ws/aexec/`, `/ws/app-pods/`
+  and `/ws/app-state/` each accept `terminal`, `json`, `logs` or `log`
+  interchangeably — only the 2nd (token) and 3rd (org) values matter. Unknown
+  `/ws/…` paths return 500 on the handshake rather than 404, so a 500 there
+  means "no such route", not an outage.
 
 - **`POST` accepts the full app shape** — `svc.ports`, `disk` and `envs` all
   persist when sent at creation. Verified 2026-08-11 by creating throwaway apps
