@@ -6,9 +6,7 @@
 
 Kubectl-like access to the Hamravesh [Darkube](https://darkube.app) platform.
 
-`darkubectl` talks to the Hamravesh API (`https://api.hamravesh.com`) to list and
-manage your Darkube resources from the command line. Tenants map to Darkube
-**organizations**, namespaces to **projects**, and apps to Kubernetes **apps**.
+`darkubectl` talks to the Hamravesh API (`https://api.hamravesh.com`) to list and manage your Darkube resources from the command line. Tenants map to Darkube **organizations**, namespaces to **projects**, and apps to Kubernetes **apps**.
 
 ## Install
 
@@ -24,16 +22,12 @@ go build -o darkubectl .
 
 ## Authentication
 
-Every request is scoped to an active **tenant** (organization) via the
-`X-Organization: <tenant-slug>` header, and carries one of two credentials:
+Every request is scoped to an active **tenant** (organization) via the `X-Organization: <tenant-slug>` header, and carries one of two credentials:
 
 - an **account API key** — `Authorization: Api-key <token>`; or
 - a **Console JWT** from `darkubectl login` — `Authorization: Bearer <jwt>`.
 
-Either credential drives the whole REST API. The Api-key is the simplest for
-scripting; a login is required additionally for the **terminal/exec** websocket
-(the Api-key cannot open it). If both are configured, the Api-key is used for
-REST and the JWT for the terminal.
+Either credential drives the whole REST API. The Api-key is the simplest for scripting; a login is required additionally for the **terminal/exec** websocket (the Api-key cannot open it). If both are configured, the Api-key is used for REST and the JWT for the terminal.
 
 Configure a tenant plus at least one credential:
 
@@ -43,8 +37,7 @@ darkubectl config set-token <your-api-key>  # API key, and/or:
 darkubectl login                            # JWT login (see below)
 ```
 
-Config is stored at `~/.darkube/config.yaml` (override with `$DARKUBE_CONFIG`).
-Values can also be supplied via environment or flags, which take precedence:
+Config is stored at `~/.darkube/config.yaml` (override with `$DARKUBE_CONFIG`). Values can also be supplied via environment or flags, which take precedence:
 
 | Setting  | Flag         | Environment        | Config key       |
 | -------- | ------------ | ------------------ | ---------------- |
@@ -101,8 +94,7 @@ darkubectl terminal app <name> --pod <p> -c <container>
 
 ### The app spec file
 
-Flags cover the flat fields. Ports, persistent storage and environment variables
-are nested, so they are `--file` only:
+Flags cover the flat fields. Ports, persistent storage and environment variables are nested, so they are `--file` only:
 
 ```yaml
 name: masstransit-dev
@@ -126,20 +118,13 @@ secretEnvs:
   - {name: RabbitMq__Password, value: hunter2}
 ```
 
-**Set these at creation time or not at all.** `PATCH` on an existing app
-currently returns 500 for every field, so `patch app` and `scale app` do not
-work and an app created without its ports, disk or environment cannot be
-completed through the API — only through the console. Getting the spec right
-up front avoids a delete-and-recreate.
+**Set these at creation time or not at all.** `PATCH` on an existing app currently returns 500 for every field, so `patch app` and `scale app` do not work and an app created without its ports, disk or environment cannot be completed through the API — only through the console. Getting the spec right up front avoids a delete-and-recreate.
 
-Namespaces resolve by name when they already contain an app; a brand-new empty
-project has to be referenced by id, which `get namespaces` now prints.
+Namespaces resolve by name when they already contain an app; a brand-new empty project has to be referenced by id, which `get namespaces` now prints.
 
 ### Logging in
 
-`darkubectl login` obtains a Console JWT and stores the (long-lived) refresh
-token, from which access tokens are minted automatically. There are several
-ways to provide it — a refresh token is as powerful as a full login:
+`darkubectl login` obtains a Console JWT and stores the (long-lived) refresh token, from which access tokens are minted automatically. There are several ways to provide it — a refresh token is as powerful as a full login:
 
 ```sh
 darkubectl login                              # interactive: email + password + TOTP (2FA)
@@ -149,12 +134,9 @@ export DARKUBE_REFRESH_TOKEN=<token>          # refresh token from the environme
 export DARKUBE_ACCESS_TOKEN=<jwt>             # a ready access token (used verbatim)
 ```
 
-The account API key **cannot** open a pod terminal or create apps — the exec
-websocket (`wss://…/ws/aexec/`) and app creation require the JWT. Force the JWT
-even when an Api-key is configured by unsetting it: `DARKUBE_TOKEN= darkubectl …`.
+The account API key **cannot** open a pod terminal or create apps — the exec websocket (`wss://…/ws/aexec/`) and app creation require the JWT. Force the JWT even when an Api-key is configured by unsetting it: `DARKUBE_TOKEN= darkubectl …`.
 
-Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`,
-`yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
+Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`, `yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
 
 ## Development
 
@@ -164,5 +146,4 @@ go test -race ./...
 golangci-lint run ./...
 ```
 
-Architecture, the reverse-engineered API/auth details, and contributor
-conventions live in [`CLAUDE.md`](CLAUDE.md).
+Architecture, the reverse-engineered API/auth details, and contributor conventions live in [`CLAUDE.md`](CLAUDE.md).
