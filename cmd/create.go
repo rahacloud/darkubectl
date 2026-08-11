@@ -206,7 +206,9 @@ func resolveNamespaceID(ctx context.Context, c *client.Client, nameOrID string) 
 	if id, err := strconv.Atoi(nameOrID); err == nil {
 		return id, nil
 	}
-	namespaces, err := c.NamespacesFromApps(ctx)
+	// Namespaces, not NamespacesFromApps: creating the *first* app in a new
+	// project is precisely the case the apps-derived list cannot serve.
+	namespaces, err := c.Namespaces(ctx)
 	if err != nil {
 		return 0, err
 	}

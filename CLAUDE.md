@@ -51,6 +51,13 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
   - `GET /api/v2/darkube/apps/?limit=&offset=&fields=` — list; `GET/PATCH/DELETE
     /api/v2/darkube/apps/<uuid>/` for one app.
   - `GET /api/v1/darkube/plans/` (global), `.../certificates/`.
+  - `GET /api/v1/darkube/namespaces/` — paginated DRF list of projects, with
+    `id`, `name` and the nested `cluster`. Needs a **JWT**; the Api-key is
+    rejected, which is why `NamespacesFromApps` exists as a fallback. Prefer
+    `client.Namespaces`, which tries this first: the derived list can only
+    contain namespaces that already hold an app, so a freshly created empty
+    project is invisible to it — exactly when you need its id in order to create
+    the first app in it.
   - `POST /api/v1/darkube/apps/` — **create** (v1, not v2). Body needs `svc`
     `{type,ports}`, `custom_config`, `builder`, `ssl_challenge_type`,
     `organization` (numeric id, from an app's v1 detail), `namespace` (int),
@@ -65,6 +72,18 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
     `json, <jwt-access>, <org>` — streams pods as JSON; the **only** source of
     pod names (REST `state.pods` is empty; `/ws/app-state/` carries only
     aggregate replica counts). Parsed in `internal/appstate`.
+- **App detail fields worth knowing** (from `GET .../apps/<uuid>/`), none of
+  which `create` can set — a created app is bare until the console fills it in:
+  - `disk` — `{partitions:[{display_name,mount_path,sub_path}], set_fsgroup,
+    size_in_Gi, storage_class_name}`. `create` leaves it `{}`, so an app that
+    needs persistence gets none.
+  - `svc` — `{type, ports:{<name>:{containerPort,servicePort,nodePort,protocol}}}`
+    plus read-only `internalAddress` / `externalIP`. `create` posts empty
+    `ports`, so a new app exposes nothing on its Service.
+  - `envs` / `secret_envs` — plain and secret environment variables.
+  - `namespace.cluster.has_capacity_to_create_app` — whether the cluster will
+    accept a new app at all. Worth checking before a create: as of 2026-08-11
+    `hamravesh-c13` reports `false` while `hamravesh-c11` reports `true`.
 - The JWT is a Console SimpleJWT access token: short-lived (~8h) and **IP-bound**
   (an `ip` claim), so it must be minted on the machine that connects. The
   refresh token is long-lived.
@@ -86,10 +105,26 @@ Confirmed against a live session:
   API (the `ip` claim is not enforced for REST). The Api-key and the Console
   login are different principals with different per-app access, so the login is
   the full-access path.
+- **`GET /api/v1/darkube/namespaces/`** — works with a JWT, 200 with the full
+  project list including empty projects. Confirmed 2026-08-11.
 
-All the reverse-engineered surfaces are now confirmed. `create app` requires the
-JWT (the Api-key lacks the user context and 500s); its numeric `organization`
-field is resolved from an existing app's v1 detail (`client.OrganizationID`).
+Known broken, confirmed 2026-08-11 against a freshly created app:
+
+- **`PATCH /api/v{1,2}/darkube/apps/<uuid>/` returns 500** with an empty body for
+  every field tried — a scalar (`readiness_probe_path`), `replicas`, and the
+  nested `svc`. Both API versions behave identically, so the v1-for-writes rule
+  that rescues `create` does not apply here. This makes `patch app` and
+  `scale app` non-functional, and means `disk`, `svc.ports` and `envs` can only
+  be set from the console today. The empty body points at a server-side
+  exception rather than a validation error, so there is probably no payload
+  shape that makes it work — but it has only been exercised against one
+  newly-created app, so it is worth re-testing against an established one before
+  concluding it is global.
+
+Every reverse-engineered surface is confirmed except PATCH, noted above.
+`create app` requires the JWT (the Api-key lacks the user context and 500s); its
+numeric `organization` field is resolved from an existing app's v1 detail
+(`client.OrganizationID`).
 
 ## Conventions
 

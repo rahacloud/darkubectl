@@ -87,6 +87,13 @@ func (c *Client) ResolveApp(ctx context.Context, nameOrID string) (*App, error) 
 }
 
 // PatchApp applies a partial update (PATCH) to an app and returns the updated raw object.
+//
+// Caveat observed 2026-08-11 against a freshly created app: PATCH returned 500
+// with an empty body for every field tried — a scalar (`readiness_probe_path`),
+// `replicas`, and the nested `svc` — on both the v1 and v2 detail routes. So the
+// v1-for-writes rule that `create` follows does not rescue PATCH, and callers
+// (including `scale app`) should expect it to fail. Setting `disk`, `svc.ports`
+// and `envs` currently requires the console.
 func (c *Client) PatchApp(ctx context.Context, id string, patch map[string]any) (map[string]any, error) {
 	data, err := c.do(ctx, http.MethodPatch, appsPathV2+url.PathEscape(id)+"/", nil, patch)
 	if err != nil {

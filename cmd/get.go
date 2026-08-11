@@ -332,7 +332,7 @@ func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	ns, err := c.NamespacesFromApps(ctx)
+	ns, err := c.Namespaces(ctx)
 	if err != nil {
 		return err
 	}
@@ -341,9 +341,9 @@ func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
 	}
 	rows := make([][]string, 0, len(ns))
 	for _, n := range ns {
-		rows = append(rows, []string{n.Name, n.Cluster.Name, n.Cluster.LocationCountry})
+		rows = append(rows, []string{n.Name, strconv.Itoa(n.ID), n.Cluster.Name, n.Cluster.LocationCountry})
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "CLUSTER", "LOCATION"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{colName, "ID", "CLUSTER", "LOCATION"}, rows, nil)
 }
 
 func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
