@@ -33,6 +33,15 @@ type appSpec struct {
 	Replicas  int    `yaml:"replicas"`
 	Command   string `yaml:"command"` // entrypoint override
 	Args      string `yaml:"args"`
+
+	// The fields below are only settable at creation time — PATCH on an
+	// existing app 500s — so they are --file/-f only, where the nesting is
+	// expressible. See the example in `create app --help`.
+	SvcType    string                 `yaml:"svcType"`
+	Ports      map[string]client.Port `yaml:"ports"`
+	Disk       *client.Disk           `yaml:"disk"`
+	Envs       []client.EnvVar        `yaml:"envs"`
+	SecretEnvs []client.EnvVar        `yaml:"secretEnvs"`
 }
 
 func newCreateCommand() *cli.Command {
@@ -110,6 +119,11 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 		Command:        spec.Command,
 		Args:           spec.Args,
 		Replicas:       spec.Replicas,
+		SvcType:        spec.SvcType,
+		Ports:          spec.Ports,
+		Disk:           spec.Disk,
+		Envs:           spec.Envs,
+		SecretEnvs:     spec.SecretEnvs,
 	})
 	if err != nil {
 		return err

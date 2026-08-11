@@ -13,8 +13,40 @@ const appsPathV1 = "/api/v1/darkube/apps/"
 // ErrNoOrganizationID is returned when the numeric org id can't be derived.
 var ErrNoOrganizationID = errors.New("could not determine the organization id (no existing app to read it from)")
 
+// Port is one entry of svc.ports, keyed by name in the API ("main", "amqp", …).
+type Port struct {
+	ContainerPort int    `json:"containerPort" yaml:"containerPort"`
+	ServicePort   int    `json:"servicePort"   yaml:"servicePort"`
+	Protocol      string `json:"protocol"      yaml:"protocol"`
+}
+
+// Partition is one mount inside a Disk.
+type Partition struct {
+	DisplayName string `json:"display_name" yaml:"name"`
+	MountPath   string `json:"mount_path"   yaml:"mountPath"`
+	SubPath     string `json:"sub_path"     yaml:"subPath"`
+}
+
+// Disk is the app's persistent volume. SizeInGi of 0 means "no disk".
+type Disk struct {
+	Partitions       []Partition `json:"partitions"                   yaml:"partitions"`
+	SizeInGi         int         `json:"size_in_Gi"                   yaml:"sizeInGi"`
+	StorageClassName string      `json:"storage_class_name,omitempty" yaml:"storageClassName"`
+	SetFSGroup       bool        `json:"set_fsgroup"                  yaml:"setFsGroup"`
+}
+
+// EnvVar is one entry of envs or secret_envs. The API calls the key "name".
+type EnvVar struct {
+	Name  string `json:"name"  yaml:"name"`
+	Value string `json:"value" yaml:"value"`
+}
+
 // CreateAppInput describes a Docker-image app to create. Names have already been
 // resolved to ids by the caller.
+//
+// Everything below Replicas is optional and, crucially, can only be set here:
+// PATCH on an existing app 500s, so an app created without its ports, disk or
+// environment cannot be completed through the API afterwards.
 type CreateAppInput struct {
 	Name           string
 	NamespaceID    int
@@ -25,6 +57,12 @@ type CreateAppInput struct {
 	Command        string
 	Args           string
 	Replicas       int
+
+	SvcType    string
+	Ports      map[string]Port
+	Disk       *Disk
+	Envs       []EnvVar
+	SecretEnvs []EnvVar
 }
 
 // CreateApp creates a Docker-image app and returns the created object. The
@@ -42,7 +80,28 @@ func (c *Client) CreateApp(ctx context.Context, in CreateAppInput) (map[string]a
 }
 
 func buildCreatePayload(in CreateAppInput) map[string]any {
-	return map[string]any{
+	svcType := in.SvcType
+	if svcType == "" {
+		svcType = "ClusterIP"
+	}
+	ports := map[string]any{}
+	for name, p := range in.Ports {
+		proto := p.Protocol
+		if proto == "" {
+			proto = "TCP"
+		}
+		svcPort := p.ServicePort
+		if svcPort == 0 {
+			svcPort = p.ContainerPort
+		}
+		ports[name] = map[string]any{
+			"containerPort": p.ContainerPort,
+			"servicePort":   svcPort,
+			"protocol":      proto,
+		}
+	}
+
+	payload := map[string]any{
 		"name":                 in.Name,
 		"namespace":            in.NamespaceID,
 		"organization":         in.OrganizationID,
@@ -54,13 +113,23 @@ func buildCreatePayload(in CreateAppInput) map[string]any {
 		"command":              in.Command,
 		"args":                 in.Args,
 		"replicas":             in.Replicas,
-		"svc":                  map[string]any{"type": "ClusterIP", "ports": map[string]any{}},
+		"svc":                  map[string]any{"type": svcType, "ports": ports},
 		"custom_config":        map[string]any{},
 		"readiness_probe_path": "",
 		"backup_config":        nil,
 		"deploy_context":       nil,
 		"ssl_challenge_type":   "dns01",
 	}
+	if in.Disk != nil && in.Disk.SizeInGi > 0 {
+		payload["disk"] = in.Disk
+	}
+	if len(in.Envs) > 0 {
+		payload["envs"] = in.Envs
+	}
+	if len(in.SecretEnvs) > 0 {
+		payload["secret_envs"] = in.SecretEnvs
+	}
+	return payload
 }
 
 // OrganizationID returns the current tenant's numeric organization id, which the

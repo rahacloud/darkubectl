@@ -80,8 +80,9 @@ darkubectl delete app <name|id>
 
 # Create an app from a Docker image (needs a JWT login; see below)
 darkubectl get plans                       # pick a plan (NAME column → --plan)
+darkubectl get namespaces                  # pick a namespace (ID column → --namespace)
 darkubectl create app my-api --namespace <ns> --plan 1 --image nginx:latest
-darkubectl create app -f spec.yaml         # from a YAML spec
+darkubectl create app -f spec.yaml         # from a YAML spec (ports, disk, env)
 darkubectl create app -i                   # interactive prompts
 
 # Terminal / exec — needs a JWT login (separate from the Api-key)
@@ -91,6 +92,42 @@ darkubectl exec app <name> -- ls -la      # run a command in a pod
 darkubectl terminal app <name>            # interactive shell (auto-detects the pod; alias: shell)
 darkubectl terminal app <name> --pod <p> -c <container>
 ```
+
+### The app spec file
+
+Flags cover the flat fields. Ports, persistent storage and environment variables
+are nested, so they are `--file` only:
+
+```yaml
+name: masstransit-dev
+namespace: "175864"        # id, or a name — ids always work, see below
+plan: "1"                  # plan NAME from `get plans`, or its id
+image: masstransit/rabbitmq:3.13.1
+replicas: 1
+svcType: ClusterIP         # or LoadBalancer; defaults to ClusterIP
+ports:                     # keyed by name; "main" is the one ingress targets
+  amqp: {containerPort: 5672, servicePort: 5672, protocol: TCP}
+  main: {containerPort: 15672, servicePort: 15672, protocol: TCP}
+disk:
+  sizeInGi: 4
+  setFsGroup: true
+  storageClassName: rawfile-btrfs   # required — omitting it makes the API 500
+  partitions:
+    - {name: data, mountPath: /var/lib/rabbitmq/mnesia, subPath: data}
+envs:
+  - {name: RabbitMq__Host, value: masstransit-dev.talaland-dev.svc}
+secretEnvs:
+  - {name: RabbitMq__Password, value: hunter2}
+```
+
+**Set these at creation time or not at all.** `PATCH` on an existing app
+currently returns 500 for every field, so `patch app` and `scale app` do not
+work and an app created without its ports, disk or environment cannot be
+completed through the API — only through the console. Getting the spec right
+up front avoids a delete-and-recreate.
+
+Namespaces resolve by name when they already contain an app; a brand-new empty
+project has to be referenced by id, which `get namespaces` now prints.
 
 ### Logging in
 

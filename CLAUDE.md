@@ -72,15 +72,17 @@ CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.12.2) and
     `json, <jwt-access>, <org>` — streams pods as JSON; the **only** source of
     pod names (REST `state.pods` is empty; `/ws/app-state/` carries only
     aggregate replica counts). Parsed in `internal/appstate`.
-- **App detail fields worth knowing** (from `GET .../apps/<uuid>/`), none of
-  which `create` can set — a created app is bare until the console fills it in:
+- **App detail fields worth knowing** (from `GET .../apps/<uuid>/`). All of these
+  *can* be set on `POST` — and only there, since PATCH 500s:
   - `disk` — `{partitions:[{display_name,mount_path,sub_path}], set_fsgroup,
-    size_in_Gi, storage_class_name}`. `create` leaves it `{}`, so an app that
-    needs persistence gets none.
+    size_in_Gi, storage_class_name}`. `storage_class_name` is **required**:
+    omitting it returns 500, not a validation error. `rawfile-btrfs` is valid on
+    c11 and c13.
   - `svc` — `{type, ports:{<name>:{containerPort,servicePort,nodePort,protocol}}}`
-    plus read-only `internalAddress` / `externalIP`. `create` posts empty
-    `ports`, so a new app exposes nothing on its Service.
-  - `envs` / `secret_envs` — plain and secret environment variables.
+    plus read-only `internalAddress` / `externalIP`. Omit `ports` and the app
+    exposes nothing.
+  - `envs` / `secret_envs` — lists of `{name, value}`. The key is `name`, not
+    `key`; `key` returns a bare 400 `invalid` with an empty `detail`.
   - `namespace.cluster.has_capacity_to_create_app` — whether the cluster will
     accept a new app at all. Worth checking before a create: as of 2026-08-11
     `hamravesh-c13` reports `false` while `hamravesh-c11` reports `true`.
@@ -108,18 +110,24 @@ Confirmed against a live session:
 - **`GET /api/v1/darkube/namespaces/`** — works with a JWT, 200 with the full
   project list including empty projects. Confirmed 2026-08-11.
 
-Known broken, confirmed 2026-08-11 against a freshly created app:
+- **`POST` accepts the full app shape** — `svc.ports`, `disk` and `envs` all
+  persist when sent at creation. Verified 2026-08-11 by creating throwaway apps
+  and reading each field back, including a `rawfile-btrfs` PVC that bound and
+  came up healthy on c11.
+
+Known broken, confirmed 2026-08-11:
 
 - **`PATCH /api/v{1,2}/darkube/apps/<uuid>/` returns 500** with an empty body for
   every field tried — a scalar (`readiness_probe_path`), `replicas`, and the
   nested `svc`. Both API versions behave identically, so the v1-for-writes rule
-  that rescues `create` does not apply here. This makes `patch app` and
-  `scale app` non-functional, and means `disk`, `svc.ports` and `envs` can only
-  be set from the console today. The empty body points at a server-side
-  exception rather than a validation error, so there is probably no payload
-  shape that makes it work — but it has only been exercised against one
-  newly-created app, so it is worth re-testing against an established one before
-  concluding it is global.
+  that rescues `create` does not apply. This makes `patch app` and `scale app`
+  non-functional and makes `POST` the only chance to get an app's configuration
+  right: fixing one afterwards means delete-and-recreate.
+- **Delete is asynchronous and holds the name.** After `DELETE`, the app leaves
+  the list immediately but its Helm release lingers, and recreating with the same
+  name fails — first `TerminatingAppException` ("try again in a minute"), then
+  `SameHelmReleaseNameExists`. Budget minutes, not seconds, between a delete and
+  a recreate under the same name.
 
 Every reverse-engineered surface is confirmed except PATCH, noted above.
 `create app` requires the JWT (the Api-key lacks the user context and 500s); its
