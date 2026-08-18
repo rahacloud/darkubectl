@@ -66,6 +66,14 @@ darkubectl get namespaces              # projects (derived from apps)
 darkubectl get certificates
 darkubectl get plans
 
+# CI credentials — the pair `darkube deploy` needs in a pipeline
+darkubectl get deploy-token <name|id>          # app id + trigger deploy token
+darkubectl get deploy-token <name|id> -o name  # the bare token, for a CI variable
+
+# Reconcile Darkube against a cluster (needs kubectl on PATH)
+darkubectl get orphans                                  # every namespace in the current context
+darkubectl get orphans --context <ctx> --namespace <ns>
+
 # Mutations (all prompt for confirmation; pass -y to skip)
 darkubectl scale app <name|id> --replicas 3
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
@@ -121,6 +129,30 @@ secretEnvs:
 **Set these at creation time or not at all.** `PATCH` on an existing app currently returns 500 for every field, so `patch app` and `scale app` do not work and an app created without its ports, disk or environment cannot be completed through the API — only through the console. Getting the spec right up front avoids a delete-and-recreate.
 
 Namespaces resolve by name when they already contain an app; a brand-new empty project has to be referenced by id, which `get namespaces` now prints.
+
+**A multi-port spec is not proven to work.** The example above is the real `masstransit-dev` spec, and the app it produced has no container ports and no Service at all — `darkube deploy` reported success and said nothing. Every single-port app created alongside it got its Service, so `main` on its own is the shape known to work. Treat the second port as unverified rather than broken: that app was later deleted and its release orphaned (see below), which is a second candidate explanation nobody has separated from the first.
+
+### Orphaned releases
+
+Deleting an app removes it from the API at once and tears its Helm release down separately — and the release is routinely left behind. It keeps running, keeps its `darkube.hamravesh.com/app-id` label, and keeps the name, so recreating under that name fails with `SameHelmReleaseNameExists` indefinitely. Neither side shows this on its own: `get apps` cannot list an app that no longer exists, and the cluster looks entirely normal.
+
+`get orphans` is the reconciliation, comparing the tenant's apps against the Deployments in a cluster:
+
+```sh
+darkubectl get orphans --context <ctx> --namespace <ns>
+```
+
+```text
+NAME              NAMESPACE      KIND       APP-ID
+masstransit-dev   talaland-dev   orphaned   a5895ea3-ebea-4356-af55-e60835fd47f0
+redis-dev         talaland-dev   orphaned   72050779-4c43-4c29-90c1-86d0ca066d5f
+```
+
+`orphaned` is a workload whose app is gone; `no-workload` is the reverse, an app with nothing in the cluster carrying its id. Only namespaces the cluster returns are compared, because a tenant's apps span several clusters while one kubeconfig context reaches one of them.
+
+Clearing an orphan needs the console or Hamravesh support — there is no `force`/`adopt` flag on create and no release endpoint in the API. The command tells you the name is taken and why; it cannot free it.
+
+This shells out to `kubectl` rather than linking client-go, which keeps the dependency tree small and inherits whatever kubeconfig, context and OIDC exec-plugin credentials already work for you.
 
 ### Logging in
 

@@ -86,6 +86,25 @@ func (c *Client) ResolveApp(ctx context.Context, nameOrID string) (*App, error) 
 	}
 }
 
+// DeployToken returns an app's CI trigger deploy token.
+//
+// This is the credential `darkube deploy --token` wants in a pipeline, paired
+// with the app's own id as --app-id. The console shows it on the app's CI/CD
+// page and it is stored nowhere in the cluster, so the API is the only way to
+// wire up CI without the web UI.
+//
+// It is deliberately not a field on App: `get apps -o json` would then print
+// every app's deploy token, which is not what asking for a list of apps means.
+func (c *Client) DeployToken(ctx context.Context, id string) (string, error) {
+	var out struct {
+		Token string `json:"trigger_deploy_token"`
+	}
+	if err := c.getJSON(ctx, appsPathV2+url.PathEscape(id)+"/", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Token, nil
+}
+
 // PatchApp applies a partial update (PATCH) to an app and returns the updated raw object.
 //
 // Caveat observed 2026-08-11 against a freshly created app: PATCH returned 500

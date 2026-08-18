@@ -10,6 +10,7 @@ import (
 
 	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
+	"github.com/rahacloud/darkubectl/internal/kube"
 	"github.com/rahacloud/darkubectl/internal/output"
 	"github.com/urfave/cli/v3"
 )
@@ -19,6 +20,9 @@ const colName = "NAME"
 
 // colState is the shared state column header across the get tables.
 const colState = "STATE"
+
+// colNamespace is the shared namespace column header across the get tables.
+const colNamespace = "NAMESPACE"
 
 // flagNamespace filters `get apps` to a single namespace (name or id).
 const flagNamespace = "namespace"
@@ -69,6 +73,30 @@ func newGetCommand() *cli.Command {
 					&cli.BoolFlag{Name: flagDebug, Usage: "dump raw app-state JSON to stderr"},
 				},
 				Action: getPodsAction,
+			},
+			{
+				Name:      "deploy-token",
+				Aliases:   []string{"deploy-tokens", "deploytoken"},
+				Usage:     "Print an app's CI deploy token and app id (prints a secret)",
+				ArgsUsage: argRefUsage,
+				Description: "The two values `darkube deploy --app-id ... --token ...` needs in a pipeline.\n" +
+					"Use -o name for the bare token, to interpolate into a CI variable.",
+				Action: getDeployTokenAction,
+			},
+			{
+				Name:  "orphans",
+				Usage: "Find workloads whose Darkube app no longer exists (shells out to kubectl)",
+				Description: "Compares the tenant's apps against the Deployments in a cluster, using the\n" +
+					"darkube.hamravesh.com/app-id label. Catches Helm releases left behind by a\n" +
+					"delete, which hold the name and make `create app` fail, and which neither\n" +
+					"side can show on its own. Only namespaces the cluster returns are compared.",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: flagNamespace, Aliases: []string{"ns"}, Usage: "only check this namespace (default: all)"},
+					&cli.StringFlag{Name: flagKubeContext, Usage: "kubectl context to read the cluster from"},
+					&cli.StringFlag{Name: flagKubeconfig, Usage: "path to a kubeconfig (default: kubectl's own resolution)"},
+					&cli.StringFlag{Name: flagKubectl, Usage: "kubectl binary to run", Value: kube.DefaultBinary},
+				},
+				Action: getOrphansAction,
 			},
 			{
 				Name:    "certificates",
@@ -168,7 +196,7 @@ func printAppsTable(apps []client.App, wide bool) error {
 }
 
 func printAppsFlatTable(apps []client.App, wide bool) error {
-	header := []string{colName, "NAMESPACE", colState, "REPLICAS", "ENABLED"}
+	header := []string{colName, colNamespace, colState, "REPLICAS", "ENABLED"}
 	if wide {
 		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
 	}
