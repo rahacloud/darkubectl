@@ -23,3 +23,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: a PAT with contents:write on rahacloud/homebrew-tap.
+          # Unset, the Homebrew cask is built but not published (see .goreleaser.yaml).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -49,6 +49,37 @@ changelog:
       - "^ci:"
       - "Merge pull request"
 
+# Homebrew tap. Publishing needs a `rahacloud/homebrew-tap` repository and a
+# HOMEBREW_TAP_GITHUB_TOKEN secret with `contents: write` on it — GITHUB_TOKEN
+# only reaches this repository. `homebrew_casks` replaces the deprecated
+# `brews` block (GoReleaser v2.10+); casks are macOS-only, Linux users take the
+# tarball or `go install`.
+homebrew_casks:
+  - name: darkubectl
+    binaries: [darkubectl]
+    directory: Casks
+    homepage: https://github.com/rahacloud/darkubectl
+    description: kubectl-like access to the Hamravesh Darkube platform
+    license: GPL-3.0
+    # No tap secret configured yet? Generate the cask but do not try to push it,
+    # so a release never fails on a missing HOMEBREW_TAP_GITHUB_TOKEN.
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    repository:
+      owner: rahacloud
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    hooks:
+      post:
+        # The release binaries are unsigned, so macOS would otherwise quarantine
+        # them and refuse the first run.
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/darkubectl"]
+          end
+
 release:
   draft: false
   prerelease: auto
