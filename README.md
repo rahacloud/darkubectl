@@ -10,11 +10,10 @@
 [![CI](https://github.com/rahacloud/darkubectl/actions/workflows/ci.yml/badge.svg)](https://github.com/rahacloud/darkubectl/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/rahacloud/darkubectl?logo=github&color=D6336C)](https://github.com/rahacloud/darkubectl/releases/latest)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rahacloud/darkubectl.svg)](https://pkg.go.dev/github.com/rahacloud/darkubectl)
-[![Go Report Card](https://goreportcard.com/badge/github.com/rahacloud/darkubectl)](https://goreportcard.com/report/github.com/rahacloud/darkubectl)
 [![Downloads](https://img.shields.io/github/downloads/rahacloud/darkubectl/total?logo=github&color=228BE6)](https://github.com/rahacloud/darkubectl/releases)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-**Your [Darkube](https://darkube.app) apps, from the terminal.** List, inspect, tail, shell into and create apps on the Hamravesh platform — without opening the console.
+**Your [Darkube](https://hamravesh.com/darkube) apps, from the terminal.** List, inspect, tail, shell into and create apps on the Hamravesh platform — without opening the console.
 
 </div>
 
@@ -41,6 +40,7 @@ darkubectl get orphans               # something the console cannot tell you at 
 | 👻 **Orphan detection** | `get orphans` reconciles your tenant against a live cluster and finds the Helm releases Darkube left behind on delete. Nothing else surfaces these. |
 | 🎨 **Readable output** | Colorized tables and a `describe -i` interactive viewer with search, degrading to plain text the moment you pipe it. |
 | 🤖 **Scriptable** | `-o json`, `-o yaml`, `-o name` on everything, config via flags, env or file, and `get deploy-token` to wire a CI pipeline without the console. |
+| 🧠 **Agent-ready** | Non-interactive, JSON-emitting and credentialed from the environment, so a coding agent can run it as a tool and manage Darkube for you. |
 | 🔐 **Two auth modes** | An account API key for scripting, or a full 2FA Console login (TOTP) for terminals and app creation. |
 | 📦 **One static binary** | Go, no client-go, no runtime deps. Linux, macOS and Windows on amd64 and arm64. |
 
@@ -85,6 +85,24 @@ That covers everything read-only. For pod terminals and app creation, add a Cons
 darkubectl login                            # email + password + TOTP
 darkubectl terminal app <name>
 ```
+
+## Let an AI agent run it
+
+Darkube has no MCP server and no CLI of its own, which leaves an agent with nothing to hold. `darkubectl` closes that gap: it is one static binary, every subcommand is non-interactive, every read speaks JSON, and credentials come from the environment — the four properties a coding agent (Claude Code, Codex, Cursor, or anything that can run a shell) needs to use a tool unattended. Give it the binary and it can answer "is anything unhealthy in talaland-dev?" or "why did the api pod restart last night?" without a human opening the console.
+
+```sh
+export DARKUBE_TOKEN=<api-key> DARKUBE_ORG=<org-slug>
+
+darkubectl get apps -o json | jq -r '.[] | select(.state.text != "Healthy") | "\(.namespace.name)/\(.name): \(.state.text)"'
+darkubectl logs app api --previous --tail 200      # what the container said before it died
+darkubectl get orphans --context <ctx>             # releases left behind by deletes
+```
+
+A few lines in your `CLAUDE.md` or `AGENTS.md` are usually enough to teach an agent the tool:
+
+> Our apps run on Darkube. Use `darkubectl get apps -o json` to inspect state, `darkubectl describe app <name> -o yaml` for configuration, and `darkubectl logs app <name> --tail 200` to read logs. Run `darkubectl get orphans` before recreating an app whose name is taken. Never run `delete` and never pass `-y`.
+
+**Give the agent an API key rather than a Console login.** The Api-key cannot open pod terminals or create apps, which bounds an agent's blast radius to reads. Keep `delete` out of its reach: the deletion is asynchronous and routinely orphans the Helm release, and no flag in the API can undo that — see [Orphaned releases](#orphaned-releases).
 
 ## Authentication
 
