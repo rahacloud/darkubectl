@@ -11,6 +11,9 @@
 # Built CLI binary
 /darkubectl
 
+# GoReleaser build output (`goreleaser release --snapshot`)
+/dist/
+
 # Test binary, built with `go test -c`
 *.test
 
