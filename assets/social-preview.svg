@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="darkubectl — kubectl-like access to the Hamravesh Darkube platform">
+  <title>darkubectl</title>
+  <defs>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif; }
+      .wordmark  { fill: #E6EDF3; font-size: 62px; font-weight: 700; letter-spacing: -1px; }
+      .tagline   { fill: #8B949E; font-size: 21px; }
+      .chrome    { fill: #6E7681; font-size: 14px; }
+      .prompt    { fill: #40C057; font-size: 19px; }
+      .cmd       { fill: #E6EDF3; font-size: 19px; }
+      .flag      { fill: #868E96; font-size: 19px; }
+      .branch    { fill: #228BE6; font-size: 19px; font-weight: 700; }
+      .th        { fill: #D6336C; font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
+      .td        { fill: #C9D1D9; font-size: 18px; }
+      .ok        { fill: #40C057; font-size: 18px; }
+      .warn      { fill: #E8590C; font-size: 18px; }
+      .muted     { fill: #868E96; font-size: 18px; }
+      .num       { fill: #F08C00; font-size: 18px; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="640" fill="#0D1117"/>
+
+  <!-- wordmark -->
+  <text class="mono wordmark" x="640" y="118" text-anchor="middle">darkubectl</text>
+  <text class="sans tagline" x="640" y="158" text-anchor="middle">kubectl-like access to the Hamravesh Darkube platform</text>
+
+  <!-- terminal window -->
+  <rect x="40" y="208" width="1200" height="344" rx="12" fill="#161B22" stroke="#30363D" stroke-width="1"/>
+  <path d="M40 248 L40 220 A12 12 0 0 1 52 208 L1228 208 A12 12 0 0 1 1240 220 L1240 248 Z" fill="#21262D"/>
+  <line x1="40" y1="248" x2="1240" y2="248" stroke="#30363D" stroke-width="1"/>
+  <circle cx="70" cy="228" r="6" fill="#FF5F57"/>
+  <circle cx="92" cy="228" r="6" fill="#FEBC2E"/>
+  <circle cx="114" cy="228" r="6" fill="#28C840"/>
+  <text class="mono chrome" x="640" y="233" text-anchor="middle">darkubectl — talaland-dev</text>
+
+  <!-- divider between the two panes -->
+  <line x1="784" y1="272" x2="784" y2="528" stroke="#30363D" stroke-width="1"/>
+
+  <!-- left pane: get apps -->
+  <text class="mono" x="72" y="294"><tspan class="prompt">$</tspan><tspan class="cmd" dx="10">darkubectl get apps</tspan></text>
+  <text class="mono branch" x="72" y="334">NAMESPACE: talaland-dev</text>
+
+  <rect x="72" y="350" width="660" height="144" rx="6" fill="none" stroke="#5C5F77" stroke-width="1"/>
+  <line x1="72" y1="388" x2="732" y2="388" stroke="#5C5F77" stroke-width="1"/>
+  <line x1="272" y1="350" x2="272" y2="494" stroke="#5C5F77" stroke-width="1"/>
+  <line x1="412" y1="350" x2="412" y2="494" stroke="#5C5F77" stroke-width="1"/>
+  <line x1="576" y1="350" x2="576" y2="494" stroke="#5C5F77" stroke-width="1"/>
+
+  <text class="mono th" x="88" y="375">NAME</text>
+  <text class="mono th" x="288" y="375">STATE</text>
+  <text class="mono th" x="428" y="375">REPLICAS</text>
+  <text class="mono th" x="592" y="375">ENABLED</text>
+
+  <text class="mono td" x="88" y="416">api</text>
+  <text class="mono ok" x="288" y="416">Healthy</text>
+  <text class="mono num" x="428" y="416">3</text>
+  <text class="mono ok" x="592" y="416">true</text>
+
+  <text class="mono td" x="88" y="450">worker</text>
+  <text class="mono ok" x="288" y="450">Healthy</text>
+  <text class="mono num" x="428" y="450">1</text>
+  <text class="mono ok" x="592" y="450">true</text>
+
+  <text class="mono td" x="88" y="484">redis-dev</text>
+  <text class="mono muted" x="288" y="484">Pending</text>
+  <text class="mono num" x="428" y="484">1</text>
+  <text class="mono ok" x="592" y="484">true</text>
+
+  <!-- right pane: get orphans + terminal -->
+  <text class="mono" x="816" y="294"><tspan class="prompt">$</tspan><tspan class="cmd" dx="10">darkubectl get orphans</tspan></text>
+
+  <text class="mono th" x="816" y="338">NAME</text>
+  <text class="mono th" x="1030" y="338">KIND</text>
+  <line x1="816" y1="350" x2="1200" y2="350" stroke="#30363D" stroke-width="1"/>
+
+  <text class="mono td" x="816" y="380">masstransit-dev</text>
+  <text class="mono warn" x="1030" y="380">orphaned</text>
+  <text class="mono td" x="816" y="410">redis-dev</text>
+  <text class="mono warn" x="1030" y="410">orphaned</text>
+  <text class="mono td" x="816" y="440">sql-pad</text>
+  <text class="mono muted" x="1030" y="440">no-workload</text>
+
+  <text class="mono" x="816" y="490"><tspan class="prompt">$</tspan><tspan class="cmd" dx="10">darkubectl terminal app api</tspan></text>
+  <text class="mono" x="816" y="522"><tspan class="branch">/app</tspan><tspan class="cmd" dx="10">#</tspan></text>
+  <rect x="884" y="508" width="11" height="20" fill="#E6EDF3" opacity="0.85"/>
+</svg>
