@@ -63,11 +63,14 @@ homebrew_casks:
     license: GPL-3.0
     # No tap secret configured yet? Generate the cask but do not try to push it,
     # so a release never fails on a missing HOMEBREW_TAP_GITHUB_TOKEN.
-    skip_upload: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    # `index` returns "" for a key that is absent entirely, where
+    # .Env.HOMEBREW_TAP_GITHUB_TOKEN would abort templating with
+    # "map has no entry for key".
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
     repository:
       owner: rahacloud
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: '{{ index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}'
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
