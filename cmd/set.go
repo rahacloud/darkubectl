@@ -12,6 +12,7 @@ func newSetCommand() *cli.Command {
 		Usage: "Update specific fields of a resource",
 		Commands: []*cli.Command{
 			newSetEnvCommand(),
+			newSetDomainCommand(),
 		},
 	}
 }

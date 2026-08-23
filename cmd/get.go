@@ -53,6 +53,7 @@ func newGetCommand() *cli.Command {
 				Action: getAppsAction,
 			},
 			newGetEnvCommand(),
+			newGetDomainsCommand(),
 			{
 				Name:    "tenants",
 				Aliases: []string{"tenant", "orgs", "org", "organizations"},
