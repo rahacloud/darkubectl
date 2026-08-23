@@ -66,7 +66,7 @@ type App struct {
 	Replicas            int       `json:"replicas"`
 	IsEnabled           bool      `json:"is_enabled"`
 	IsDeployable        bool      `json:"is_deployable"`
-	IsHPAEnabled        bool      `json:"is_hpa_enbaled"` // API spells it this way
+	IsHPAEnabled        bool      `json:"is_hpa_enabled"`
 	RAMLimit            string    `json:"ram_limit"`
 	CPURequest          string    `json:"cpu_request"`
 	CustomDomainAddress string    `json:"custom_domain_address"`
