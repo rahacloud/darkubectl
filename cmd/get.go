@@ -54,6 +54,8 @@ func newGetCommand() *cli.Command {
 			},
 			newGetEnvCommand(),
 			newGetDomainsCommand(),
+			newGetNotificationsCommand(),
+			newGetAlertsCommand(),
 			{
 				Name:    "tenants",
 				Aliases: []string{"tenant", "orgs", "org", "organizations"},

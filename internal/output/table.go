@@ -75,8 +75,13 @@ func StateColor(state string) color.Color {
 	switch {
 	case strings.Contains(s, "healthy"), strings.Contains(s, "running"), strings.Contains(s, "ready"):
 		return ColorSuccess
-	case strings.Contains(s, "error"), strings.Contains(s, "fail"), strings.Contains(s, "crash"):
+	case strings.Contains(s, "resolved"):
+		return ColorSuccess
+	case strings.Contains(s, "error"), strings.Contains(s, "fail"), strings.Contains(s, "crash"),
+		strings.Contains(s, "critical"), strings.Contains(s, "firing"):
 		return ColorDanger
+	case strings.Contains(s, "warning"):
+		return ColorNumber
 	case strings.Contains(s, "disabled"), strings.Contains(s, "pending"), strings.Contains(s, "stopped"):
 		return ColorMuted
 	default:
@@ -92,6 +97,18 @@ func BoolColor(value string) color.Color {
 	case "false":
 		return ColorMuted
 	default:
+		return nil
+	}
+}
+
+// StateCells builds a CellColor that colors every listed column by StateColor.
+// Use it when a table has more than one state-like column (severity and status,
+// say), which StatusCells cannot express.
+func StateCells(cols ...int) CellColor {
+	return func(col int, value string) color.Color {
+		if slices.Contains(cols, col) {
+			return StateColor(value)
+		}
 		return nil
 	}
 }
