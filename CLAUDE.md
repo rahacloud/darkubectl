@@ -15,7 +15,7 @@ golangci-lint run ./...   # must report 0 issues before committing
 gofmt -w .
 ```
 
-CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.13.0) and `go test -race` on push to `main` and on PRs, using the Go version from `go.mod`.
+CI (`.github/workflows/ci.yml`) runs `golangci-lint` (v2.13.1) and `go test -race` on push to `main` and on PRs, using the Go version from `go.mod`.
 
 ## Architecture
 
