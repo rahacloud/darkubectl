@@ -11,7 +11,7 @@ import (
 const appsPathV1 = "/api/v1/darkube/apps/"
 
 // ErrNoOrganizationID is returned when the numeric org id can't be derived.
-var ErrNoOrganizationID = errors.New("could not determine the organization id (no existing app to read it from)")
+var ErrNoOrganizationID = errors.New("could not determine the numeric organization id")
 
 // Port is one entry of svc.ports, keyed by name in the API ("main", "amqp", …).
 type Port struct {
@@ -133,9 +133,23 @@ func buildCreatePayload(in CreateAppInput) map[string]any {
 }
 
 // OrganizationID returns the current tenant's numeric organization id, which the
-// create payload requires. It is read from an existing app's v1 detail (the app
-// list does not include it).
+// create payload requires.
+//
+// The user profile is the authoritative source and, crucially, works for a
+// tenant that holds no apps yet — the case the app-detail fallback below cannot
+// serve, which used to make it impossible to create the *first* app in a new
+// organization.
 func (c *Client) OrganizationID(ctx context.Context) (int, error) {
+	if org, err := c.Organization(ctx); err == nil && org.ID != 0 {
+		return org.ID, nil
+	}
+	return c.organizationIDFromApp(ctx)
+}
+
+// organizationIDFromApp derives the organization id from an existing app's v1
+// detail. It is the fallback for credentials that cannot read the profile, and
+// fails on a tenant with no apps.
+func (c *Client) organizationIDFromApp(ctx context.Context) (int, error) {
 	q := url.Values{}
 	q.Set("limit", "1")
 	q.Set("fields", "id")
