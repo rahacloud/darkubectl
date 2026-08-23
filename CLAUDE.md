@@ -4,7 +4,7 @@ Guidance for AI assistants (Claude Code) working in this repository. Human usage
 
 ## What this is
 
-`darkubectl` — a kubectl-like CLI for the Hamravesh **Darkube** platform. Go 1.26, built on `urfave/cli/v3` (not Cobra). It talks to the Hamravesh REST API and an exec websocket.
+`darkubectl` — a kubectl-like CLI for the Hamravesh **Darkube** platform. Go 1.27, built on `urfave/cli/v3` (not Cobra). It talks to the Hamravesh REST API and an exec websocket.
 
 ## Build / test / lint
 
