@@ -52,6 +52,7 @@ func newGetCommand() *cli.Command {
 				},
 				Action: getAppsAction,
 			},
+			newGetEnvCommand(),
 			{
 				Name:    "tenants",
 				Aliases: []string{"tenant", "orgs", "org", "organizations"},

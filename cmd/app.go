@@ -83,6 +83,7 @@ func NewApp() *cli.Command {
 			newPatchCommand(),
 			newDeleteCommand(),
 			newCreateCommand(),
+			newSetCommand(),
 			newLoginCommand(),
 			newLogsCommand(),
 			newExecCommand(),
