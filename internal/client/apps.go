@@ -105,27 +105,6 @@ func (c *Client) DeployToken(ctx context.Context, id string) (string, error) {
 	return out.Token, nil
 }
 
-// PatchApp applies a partial update (PATCH) to an app and returns the updated raw object.
-//
-// Caveat observed 2026-08-11 against a freshly created app: PATCH returned 500
-// with an empty body for every field tried — a scalar (`readiness_probe_path`),
-// `replicas`, and the nested `svc` — on both the v1 and v2 detail routes. So the
-// v1-for-writes rule that `create` follows does not rescue PATCH, and callers
-// (including `scale app`) should expect it to fail. Setting `disk`, `svc.ports`
-// and `envs` currently requires the console.
-func (c *Client) PatchApp(ctx context.Context, id string, patch map[string]any) (map[string]any, error) {
-	data, err := c.do(ctx, http.MethodPatch, appsPathV2+url.PathEscape(id)+"/", nil, patch)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	// Some endpoints return the object; tolerate an empty body.
-	if len(data) > 0 {
-		_ = decodeInto(data, &out)
-	}
-	return out, nil
-}
-
 // DeleteApp deletes an app by UUID.
 func (c *Client) DeleteApp(ctx context.Context, id string) error {
 	_, err := c.do(ctx, http.MethodDelete, appsPathV2+url.PathEscape(id)+"/", nil, nil)

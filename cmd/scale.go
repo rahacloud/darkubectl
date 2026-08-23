@@ -60,11 +60,15 @@ func scaleAppAction(ctx context.Context, cmd *cli.Command) error {
 
 	fmt.Fprintf(os.Stderr, "About to scale app %q (%s) in tenant %q: %d -> %d replicas.\n",
 		app.Name, app.ID, c.Org, app.Replicas, replicas)
-	if !cmd.Bool(flagYes) && !confirm("Proceed?") {
+	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
 
-	if _, err := c.PatchApp(ctx, app.ID, map[string]any{"replicas": replicas}); err != nil {
+	_, err = c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
+		raw["replicas"] = replicas
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s scaled to %d replicas\n", app.Name, replicas)

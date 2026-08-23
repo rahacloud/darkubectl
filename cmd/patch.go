@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 
 	"github.com/rahacloud/darkubectl/internal/output"
@@ -13,16 +14,19 @@ import (
 func newPatchCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "patch",
-		Usage: "Apply a raw JSON merge patch to a resource",
+		Usage: "Merge a JSON object into a resource",
 		Commands: []*cli.Command{
 			{
 				Name:      cmdApp,
 				Aliases:   []string{aliasApp},
-				Usage:     "Patch an app with a JSON object (HTTP PATCH)",
+				Usage:     "Merge a JSON object into an app",
 				ArgsUsage: argRefUsage,
-				Description: "The JSON is sent verbatim as an HTTP PATCH to the app. Use this for\n" +
-					"fields not covered by dedicated commands, e.g.:\n\n" +
-					`  darkubectl patch app my-api -p '{"ram_limit": 1024, "cpu_request": 500}'`,
+				Description: "The JSON is merged into the app's current object and written back. Use\n" +
+					"this for fields not covered by dedicated commands, e.g.:\n\n" +
+					`  darkubectl patch app my-api -p '{"ram_limit": "1024M", "cpu_request": "500m"}'` + "\n\n" +
+					"The API implements no partial update, so this is a read-modify-write of the\n" +
+					"whole app rather than an HTTP PATCH. A concurrent console edit between the\n" +
+					"read and the write is therefore lost.",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "patch",
@@ -65,13 +69,16 @@ func patchAppAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "About to PATCH app %q (%s) in tenant %q with: %s\n",
+	fmt.Fprintf(os.Stderr, "About to update app %q (%s) in tenant %q with: %s\n",
 		app.Name, app.ID, c.Org, patchJSON)
-	if !cmd.Bool(flagYes) && !confirm("Proceed?") {
+	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
 
-	updated, err := c.PatchApp(ctx, app.ID, patch)
+	updated, err := c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
+		maps.Copy(raw, patch)
+		return nil
+	})
 	if err != nil {
 		return err
 	}

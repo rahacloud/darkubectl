@@ -105,7 +105,7 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 
 	fmt.Fprintf(os.Stderr, "About to create app %q in tenant %q: namespace=%s plan=%s image=%s:%s replicas=%d\n",
 		spec.Name, c.Org, spec.Namespace, spec.Plan, repo, tag, spec.Replicas)
-	if !cmd.Bool(flagYes) && !confirm("Proceed?") {
+	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
 

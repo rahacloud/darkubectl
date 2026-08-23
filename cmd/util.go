@@ -19,10 +19,10 @@ var (
 	errAborted       = errors.New("aborted")
 )
 
-// confirm prompts for a yes/no answer on stderr, reading a line from stdin.
+// confirm asks the user to approve the change just described on stderr.
 // Returns false on EOF or anything other than y/yes.
-func confirm(prompt string) bool {
-	fmt.Fprintf(os.Stderr, "%s [y/N]: ", prompt)
+func confirm() bool {
+	fmt.Fprint(os.Stderr, "Proceed? [y/N]: ")
 	line, ok := readLine()
 	if !ok {
 		return false
