@@ -101,8 +101,7 @@ const (
 // ErrorCode returns the API error code carried by err, or "" if err is not an
 // *APIError.
 func ErrorCode(err error) string {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.Code
 	}
 	return ""

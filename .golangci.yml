@@ -8,6 +8,7 @@ linters:
   default: all
   disable:
     - exhaustruct      # we intentionally build partial structs (API models, cobra cmds)
+    - exhaustruct_v5  # same linter, renamed in golangci-lint 2.13
     - wsl             # opinionated whitespace rules
     - wsl_v5
     - nlreturn        # forced blank line before return
