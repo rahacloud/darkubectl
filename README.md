@@ -141,6 +141,17 @@ darkubectl describe app <name|id> -o yaml
 darkubectl get namespaces              # projects (derived from apps)
 darkubectl get certificates
 darkubectl get plans
+darkubectl whoami                      # the account, its tenants, and their numeric ids
+
+# App configuration
+darkubectl get env <name|id>           # environment variables (secrets listed by name)
+darkubectl get domains <name|id>       # custom domains + the CNAME target to point DNS at
+
+# Notifications and monitoring
+darkubectl get notifications           # account feed (spans every tenant)
+darkubectl get notifications --unread
+darkubectl get alerts                  # monitoring alerts for the current tenant
+darkubectl get alerts --firing         # only what has not resolved
 
 # CI credentials — the pair `darkube deploy` needs in a pipeline
 darkubectl get deploy-token <name|id>          # app id + trigger deploy token
@@ -152,6 +163,10 @@ darkubectl get orphans --context <ctx> --namespace <ns>
 
 # Mutations (all prompt for confirmation; pass -y to skip)
 darkubectl scale app <name|id> --replicas 3
+darkubectl set env <name|id> LOG_LEVEL=debug PORT=8080
+darkubectl set env <name|id> --remove LOG_LEVEL
+darkubectl set domain <name|id> --add api.example.com
+darkubectl set domain <name|id> --remove old.example.com
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
 darkubectl delete app <name|id>
 
@@ -204,7 +219,7 @@ secretEnvs:
   - {name: RabbitMq__Password, value: hunter2}
 ```
 
-**Set these at creation time or not at all.** `PATCH` on an existing app currently returns 500 for every field, so `patch app` and `scale app` do not work and an app created without its ports, disk or environment cannot be completed through the API — only through the console. Getting the spec right up front avoids a delete-and-recreate.
+These can also be changed after the fact. The API has no partial update — `PATCH` is unimplemented and returns 500 — so every mutation is a read-modify-write of the whole app, which `darkubectl` does for you. Environment and domains have dedicated commands (`set env`, `set domain`); anything else goes through `patch app`, which merges your JSON into the current object and writes it back. The one caveat of that approach: a console edit made between the read and the write is lost.
 
 Namespaces resolve by name when they already contain an app; a brand-new empty project has to be referenced by id, which `get namespaces` prints.
 
@@ -250,10 +265,15 @@ The account API key **cannot** open a pod terminal or create apps — the exec w
 
 The Darkube API has no public documentation; every endpoint here was reverse-engineered against a live account and is noted as confirmed or not in [`CLAUDE.md`](CLAUDE.md). Two things to know up front:
 
-- **`PATCH` is broken server-side** — it returns 500 for every field on both API versions, which makes `patch app` and `scale app` non-functional. Configuration has to be right at creation time.
-- **Delete is asynchronous and orphans releases** — see [Orphaned releases](#orphaned-releases). `get orphans` exists because this is the common case, not the edge case.
+- **There is no partial update** — `PATCH` is not implemented and returns a bodyless 500 on both API versions, so every write is a read-modify-write of the entire app via `PUT`. `darkubectl` handles that; the visible consequence is that a console edit racing your command is lost.
+- **Delete is asynchronous and orphans releases** — see [Orphaned releases](#orphaned-releases). `get orphans` exists because this is the common case, not the edge case. Editing an app in place is safer than delete-and-recreate, which is what strands releases.
 
-Everything else — listing, describing, logs, exec, terminals, create, deploy tokens — is confirmed working.
+Two things the API will not let you do, whatever the CLI offers:
+
+- **Secret environment values are write-only.** They are vault-backed and always read back empty, so `get env` lists secrets by name only, and `set env` refuses to shadow one. Changing a secret's value needs the console.
+- **You cannot mount an arbitrary config file into a docker-image app.** `custom_config` is the app's Helm chart values and is silently filtered against the chart's schema — for a docker-image app only `hpa` and `container` (probes) survive. The `config.files` mechanism that would render a ConfigMap exists only on marketplace charts like redis and postgres. Use environment variables, or bake the file into the image.
+
+Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
 
 ## Development
 

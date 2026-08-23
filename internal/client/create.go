@@ -44,9 +44,9 @@ type EnvVar struct {
 // CreateAppInput describes a Docker-image app to create. Names have already been
 // resolved to ids by the caller.
 //
-// Everything below Replicas is optional and, crucially, can only be set here:
-// PATCH on an existing app 500s, so an app created without its ports, disk or
-// environment cannot be completed through the API afterwards.
+// Everything below Replicas is optional. It can also be changed afterwards
+// through UpdateApp, which PUTs the whole object back — the API has no partial
+// update, but it is not read-only either.
 type CreateAppInput struct {
 	Name           string
 	NamespaceID    int

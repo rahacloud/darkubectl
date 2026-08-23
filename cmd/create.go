@@ -34,9 +34,9 @@ type appSpec struct {
 	Command   string `yaml:"command"` // entrypoint override
 	Args      string `yaml:"args"`
 
-	// The fields below are only settable at creation time — PATCH on an
-	// existing app 500s — so they are --file/-f only, where the nesting is
-	// expressible. See the example in `create app --help`.
+	// The fields below are nested, so they are --file/-f only, where the shape
+	// is expressible. Env and domains can also be changed later with
+	// `set env` / `set domain`. See the example in `create app --help`.
 	SvcType    string                 `yaml:"svcType"`
 	Ports      map[string]client.Port `yaml:"ports"`
 	Disk       *client.Disk           `yaml:"disk"`
@@ -163,8 +163,8 @@ func explainCreateError(ctx context.Context, c *client.Client, spec appSpec, err
 				"and the API exposes no way to remove it: there is no force/overwrite flag on create\n"+
 				"and no release endpoint. Clear it from the Darkube console, or ask Hamravesh support\n"+
 				"to drop the orphaned release, then retry.\n\n"+
-				"To avoid this: an app's ports, disk and environment can only be set at creation\n"+
-				"(PATCH is broken), so get the spec right first time rather than delete-and-recreate.\n",
+				"To avoid this: prefer editing an app in place (`set env`, `set domain`, `scale`,\n"+
+				"`patch`) over delete-and-recreate, which is what strands the release.\n",
 			spec.Name)
 	}
 	return err
