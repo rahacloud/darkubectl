@@ -38,7 +38,8 @@ func newGetNotificationsCommand() *cli.Command {
 		Aliases: []string{"notification", "notifs"},
 		Usage:   "List account notifications",
 		Description: "The feed spans every organization this account belongs to, so it is not\n" +
-			"filtered by the active tenant. Messages are Persian prose from the console.",
+			"filtered by the active tenant and needs no tenant selected. Messages are\n" +
+			"Persian prose from the console.",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: flagLimit, Value: defaultNotificationLimit, Usage: "how many notifications to fetch"},
 			&cli.BoolFlag{Name: "unread", Usage: "only show unread notifications"},
@@ -48,7 +49,7 @@ func newGetNotificationsCommand() *cli.Command {
 }
 
 func getNotificationsAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(ctx, cmd)
+	c, err := newGlobalClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

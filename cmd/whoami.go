@@ -18,13 +18,14 @@ func newWhoamiCommand() *cli.Command {
 		Usage: "Show the signed-in account and the tenants it can reach",
 		Description: "Lists the organizations this credential belongs to, straight from the API\n" +
 			"rather than from the local config, along with the numeric id each one uses\n" +
-			"in an app create payload.",
+			"in an app create payload.\n\n" +
+			"Needs no tenant: this is the command that tells you which tenants exist.",
 		Action: whoamiAction,
 	}
 }
 
 func whoamiAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(ctx, cmd)
+	c, err := newGlobalClient(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -62,5 +63,11 @@ func whoamiAction(ctx context.Context, cmd *cli.Command) error {
 		sort.Strings(roles)
 		rows = append(rows, []string{marker, o.Name, strconv.Itoa(o.ID), dash(strings.Join(roles, ","))})
 	}
-	return output.StyledTable(os.Stdout, []string{"CURRENT", colName, "ID", "ROLES"}, rows, nil)
+	if err := output.StyledTable(os.Stdout, []string{"CURRENT", colName, "ID", "ROLES"}, rows, nil); err != nil {
+		return err
+	}
+	if c.Org == "" && len(orgs) > 0 {
+		fmt.Fprintf(os.Stderr, "\nno tenant selected; pick one with `darkubectl config use-tenant %s`\n", orgs[0].Name)
+	}
+	return nil
 }

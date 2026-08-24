@@ -110,8 +110,9 @@ func newGetCommand() *cli.Command {
 				Action:  getCertificatesAction,
 			},
 			{
-				Name:  "plans",
-				Usage: "List app plans available for `create app` (--all for every plan)",
+				Name:        "plans",
+				Usage:       "List app plans available for `create app` (--all for every plan)",
+				Description: "The plan catalogue is global, so this needs no tenant selected.",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "all", Usage: "show every plan, not just create-eligible app plans"},
 				},
@@ -456,7 +457,7 @@ func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
 }
 
 func getPlansAction(ctx context.Context, cmd *cli.Command) error {
-	c, err := newClient(ctx, cmd)
+	c, err := newGlobalClient(ctx, cmd)
 	if err != nil {
 		return err
 	}

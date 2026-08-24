@@ -106,12 +106,14 @@ A few lines in your `CLAUDE.md` or `AGENTS.md` are usually enough to teach an ag
 
 ## Authentication
 
-Every request is scoped to an active **tenant** (organization) via the `X-Organization: <tenant-slug>` header, and carries one of two credentials:
+Almost every request is scoped to an active **tenant** (organization) via the `X-Organization: <tenant-slug>` header, and carries one of two credentials:
 
 - an **account API key** — `Authorization: Api-key <token>`; or
 - a **Console JWT** from `darkubectl login` — `Authorization: Bearer <jwt>`.
 
 Either credential drives the whole REST API. The Api-key is the simplest for scripting; a login is required additionally for the **terminal/exec** websocket (the Api-key cannot open it). If both are configured, the Api-key is used for REST and the JWT for the terminal.
+
+Three commands need no tenant at all, because the endpoints behind them are account-wide rather than tenant-scoped: `whoami` (the account and its organizations), `get notifications` (a feed that spans every organization) and `get plans` (a global catalogue). That is what makes the first run work — `whoami` is how you find out which tenant slugs exist before selecting one. Everything else fails fast with `no tenant selected` rather than sending a request the API would answer with `403 permission_denied`.
 
 Config is stored at `~/.darkube/config.yaml` (override with `$DARKUBE_CONFIG`), written `0600`. Values can also be supplied via environment or flags, which take precedence:
 
@@ -126,7 +128,8 @@ Config is stored at `~/.darkube/config.yaml` (override with `$DARKUBE_CONFIG`), 
 
 ```sh
 # Tenants (organizations)
-darkubectl get tenants
+darkubectl whoami                      # no tenant needed: the account, its tenants, their numeric ids
+darkubectl get tenants                 # the tenants in the local config
 darkubectl config use-tenant talaland
 
 # Apps
@@ -140,15 +143,14 @@ darkubectl describe app <name|id> -o yaml
 # Other resources
 darkubectl get namespaces              # projects (derived from apps)
 darkubectl get certificates
-darkubectl get plans
-darkubectl whoami                      # the account, its tenants, and their numeric ids
+darkubectl get plans                   # no tenant needed: the plan catalogue is global
 
 # App configuration
 darkubectl get env <name|id>           # environment variables (secrets listed by name)
 darkubectl get domains <name|id>       # custom domains + the CNAME target to point DNS at
 
 # Notifications and monitoring
-darkubectl get notifications           # account feed (spans every tenant)
+darkubectl get notifications           # no tenant needed: account feed, spans every tenant
 darkubectl get notifications --unread
 darkubectl get alerts                  # monitoring alerts for the current tenant
 darkubectl get alerts --firing         # only what has not resolved

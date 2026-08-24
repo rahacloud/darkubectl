@@ -39,7 +39,8 @@ const (
 var (
 	errNoCredentials = errors.New("no credentials: set an API key with `darkubectl config set-token` " +
 		"(or --token/$DARKUBE_TOKEN), or run `darkubectl login`")
-	errNoTenant = errors.New("no tenant selected: set one with `darkubectl config use-tenant <name>`, --org, or $DARKUBE_ORG")
+	errNoTenant = errors.New("no tenant selected: run `darkubectl whoami` to list the tenants this account can reach, " +
+		"then select one with `darkubectl config use-tenant <name>`, --org, or $DARKUBE_ORG")
 )
 
 // NewApp builds the root command with its persistent flags and subcommands.
@@ -49,7 +50,9 @@ func NewApp() *cli.Command {
 		Usage: "kubectl-like access to the Hamravesh Darkube platform",
 		Description: "Tenants are Darkube organizations, selected with --org or a config context.\n" +
 			"Authentication uses an account API key (Authorization: Api-key) plus the\n" +
-			"active tenant (X-Organization).",
+			"active tenant (X-Organization).\n\n" +
+			"`whoami`, `get notifications` and `get plans` are account-wide and need no\n" +
+			"tenant; run `whoami` first to find out which tenants this account can reach.",
 		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -159,15 +162,41 @@ func buildClient(ctx context.Context, cmd *cli.Command) (*client.Client, *config
 	if err != nil {
 		return nil, nil, err
 	}
-	org := resolveOrg(cmd, cfg)
-	if org == "" {
+	if resolveOrg(cmd, cfg) == "" {
 		return nil, nil, errNoTenant
 	}
-	auth, err := resolveAuth(ctx, cmd, cfg)
+	c, err := clientFor(ctx, cmd, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	return client.New(resolveBaseURL(cmd, cfg), auth, org), cfg, nil
+	return c, cfg, nil
+}
+
+// newGlobalClient builds a client for the handful of endpoints that are *not*
+// tenant-scoped, so they work before any tenant is selected — which is the point,
+// since `whoami` is how you find out which tenants exist.
+//
+// Confirmed against the live API with a JWT and no X-Organization header:
+// /api/v2/users/profile, /api/v1/notifications/all_list/ and /api/v1/darkube/plans/
+// all answer 200, while apps, namespaces and certificates 403 and the alert feed
+// 400s with "Organization is required". A tenant is still passed through when one
+// is selected — these endpoints ignore it — so `whoami` can mark the current one.
+func newGlobalClient(ctx context.Context, cmd *cli.Command) (*client.Client, error) {
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return clientFor(ctx, cmd, cfg)
+}
+
+// clientFor resolves credentials and builds the REST client for cfg's tenant
+// (which may be empty, for the endpoints that do not need one).
+func clientFor(ctx context.Context, cmd *cli.Command, cfg *config.Config) (*client.Client, error) {
+	auth, err := resolveAuth(ctx, cmd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return client.New(resolveBaseURL(cmd, cfg), auth, resolveOrg(cmd, cfg)), nil
 }
 
 // resolveAuth chooses REST authentication: an Api-key if one is configured,
