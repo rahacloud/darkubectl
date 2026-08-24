@@ -104,11 +104,11 @@ func pickContainer(cmd *cli.Command, pod appstate.Pod) string {
 	if cmd.IsSet(flagContainer) {
 		return containerFlag(cmd)
 	}
-	if len(pod.Containers) > 0 {
-		if slices.Contains(pod.Containers, defaultContainer) {
+	if names := pod.ContainerNames(); len(names) > 0 {
+		if slices.Contains(names, defaultContainer) {
 			return defaultContainer
 		}
-		return pod.Containers[0]
+		return names[0]
 	}
 	return defaultContainer
 }

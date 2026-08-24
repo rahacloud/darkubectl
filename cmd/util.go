@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 )
@@ -71,6 +73,43 @@ func yesNo(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// hoursPerDay is the divisor that turns an elapsed hour count into days.
+const hoursPerDay = 24
+
+// age renders how long ago t was, in the compact kubectl style (90d, 13d, 5h,
+// 12m, 45s). A zero or future timestamp renders as "-".
+func age(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	d := time.Since(t)
+	if d < 0 {
+		return "-"
+	}
+	switch {
+	case d < time.Minute:
+		return strconv.Itoa(int(d.Seconds())) + "s"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + "m"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h"
+	default:
+		return strconv.Itoa(int(d.Hours()/hoursPerDay)) + "d"
+	}
+}
+
+// ageOf renders an API timestamp string (RFC 3339) as a relative age.
+func ageOf(timestamp string) string {
+	if timestamp == "" {
+		return "-"
+	}
+	t, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return "-"
+	}
+	return age(t)
 }
 
 func dash(s string) string {

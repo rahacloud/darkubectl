@@ -33,6 +33,7 @@ const (
 	appStateCol   = 2
 	appEnabledCol = 4
 	certStateCol  = 3
+	podStatusCol  = 2
 
 	appGroupedStateCol   = 1
 	appGroupedEnabledCol = 3
@@ -348,11 +349,60 @@ func getPodsAction(ctx context.Context, cmd *cli.Command) error {
 		fmt.Fprintln(os.Stderr, "no running pods for", app.Name)
 		return nil
 	}
+	return printPodsTable(pods, format == output.Wide)
+}
+
+// printPodsTable renders pods the way `kubectl get pods` does — READY, STATUS,
+// RESTARTS and AGE — because the aggregate app state only ever says "not ready"
+// and hides whether the pod is crash-looping, and if so for how long.
+func printPodsTable(pods []appstate.Pod, wide bool) error {
+	header := []string{colName, "READY", "STATUS", "RESTARTS", "AGE"}
+	if wide {
+		header = append(header, "CONTAINERS", "LAST-STATE", colNamespace)
+	}
 	rows := make([][]string, 0, len(pods))
 	for _, p := range pods {
-		rows = append(rows, []string{p.Name, dash(strings.Join(p.Containers, ","))})
+		ready, total := p.ReadyCount()
+		row := []string{
+			p.Name,
+			fmt.Sprintf("%d/%d", ready, total),
+			podStatus(p),
+			strconv.Itoa(p.Restarts()),
+			age(p.CreatedAt),
+		}
+		if wide {
+			row = append(row,
+				dash(strings.Join(p.ContainerNames(), ",")),
+				dash(lastState(p)),
+				dash(p.Namespace),
+			)
+		}
+		rows = append(rows, row)
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "CONTAINERS"}, rows, nil)
+	return output.StyledTable(os.Stdout, header, rows, output.StatusCells(podStatusCol))
+}
+
+// podStatus is the pod's live phase, with a pod on its way out called out as
+// such: a terminating pod still reports phase Running.
+func podStatus(p appstate.Pod) string {
+	if p.Terminating {
+		return "terminating"
+	}
+	if s := p.State; s != "" {
+		return s
+	}
+	return dash(p.Phase)
+}
+
+// lastState reports why the pod's containers last ended, which is the only
+// clue the stream gives about a crash loop's cause.
+func lastState(p appstate.Pod) string {
+	for _, c := range p.Containers {
+		if c.LastState != "" {
+			return c.LastState
+		}
+	}
+	return ""
 }
 
 func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {

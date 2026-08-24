@@ -185,7 +185,8 @@ darkubectl logs app <name> --timestamps --pod <p> -c <container>
 
 # Terminal / exec — needs a JWT login (separate from the Api-key)
 darkubectl login                          # email + password + TOTP → stores a refresh token
-darkubectl get pods <name>                # an app's running pods (via the app-state stream)
+darkubectl get pods <name>                # an app's pods: READY, STATUS, RESTARTS, AGE
+darkubectl get pods <name> -o wide        # plus the containers and why they last died
 darkubectl exec app <name> -- ls -la      # run a command in a pod
 darkubectl terminal app <name>            # interactive shell (auto-detects the pod; alias: shell)
 darkubectl terminal app <name> --pod <p> -c <container>
