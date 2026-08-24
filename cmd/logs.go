@@ -26,28 +26,38 @@ func newLogsCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "logs",
 		Usage:     "Print a container's logs",
-		ArgsUsage: "[APP]",
+		ArgsUsage: "APP|ID",
 		Description: "Reads one container's stdout/stderr. The pod is auto-detected from the\n" +
 			"app-pods stream unless --pod is given, the same way `exec` picks one.\n\n" +
 			"Use --previous to read the container instance that died, which is the\n" +
 			"only way to see why a crashlooping app failed — a crashed pod cannot be\n" +
-			"exec'd into.",
+			"exec'd into.\n\n" +
+			"`darkubectl logs NAME` is the kubectl-shaped shorthand for `logs app NAME`.",
+		Flags:  logsFlags(),
+		Action: logsAppAction,
 		Commands: []*cli.Command{
 			{
 				Name:      cmdApp,
 				Aliases:   []string{aliasApp},
 				Usage:     "Print an app container's logs",
 				ArgsUsage: argRefUsage,
-				Flags: append(podFlags(),
-					&cli.IntFlag{Name: flagTail, Value: defaultTail, Usage: "number of lines from the end of the log"},
-					&cli.BoolFlag{Name: flagFollow, Aliases: []string{"f"}, Usage: "stream new lines as they arrive"},
-					&cli.BoolFlag{Name: flagPrevious, Aliases: []string{"p"}, Usage: "logs of the previous container instance (after a crash/restart)"},
-					&cli.BoolFlag{Name: flagTimestamps, Usage: "prefix every line with its API timestamp"},
-				),
-				Action: logsAppAction,
+				Flags:     logsFlags(),
+				Action:    logsAppAction,
 			},
 		},
 	}
+}
+
+// logsFlags builds the log-reading flag set. It is built twice — once for the
+// `logs app NAME` form and once for the bare `logs NAME` shorthand — because
+// urfave/cli does not share a parent's non-persistent flags with a subcommand.
+func logsFlags() []cli.Flag {
+	return append(podFlags(),
+		&cli.IntFlag{Name: flagTail, Value: defaultTail, Usage: "number of lines from the end of the log"},
+		&cli.BoolFlag{Name: flagFollow, Aliases: []string{"f"}, Usage: "stream new lines as they arrive"},
+		&cli.BoolFlag{Name: flagPrevious, Aliases: []string{"p"}, Usage: "logs of the previous container instance (after a crash/restart)"},
+		&cli.BoolFlag{Name: flagTimestamps, Usage: "prefix every line with its API timestamp"},
+	)
 }
 
 func logsAppAction(ctx context.Context, cmd *cli.Command) error {

@@ -178,10 +178,10 @@ darkubectl create app -f spec.yaml         # from a YAML spec (ports, disk, env)
 darkubectl create app -i                   # interactive prompts
 
 # Logs
-darkubectl logs app <name>                # last 100 lines (pod auto-detected)
-darkubectl logs app <name> --tail 500 -f  # follow
-darkubectl logs app <name> --previous     # the container instance that crashed
-darkubectl logs app <name> --timestamps --pod <p> -c <container>
+darkubectl logs <name>                    # last 100 lines (pod auto-detected; `logs app <name>` also works)
+darkubectl logs <name> --tail 500 -f      # follow
+darkubectl logs <name> --previous         # the container instance that crashed
+darkubectl logs <name> --timestamps --pod <p> -c <container>
 
 # Terminal / exec — needs a JWT login (separate from the Api-key)
 darkubectl login                          # email + password + TOTP → stores a refresh token
