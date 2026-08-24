@@ -203,7 +203,7 @@ func printAppsTable(apps []client.App, wide bool) error {
 func printAppsFlatTable(apps []client.App, wide bool) error {
 	header := []string{colName, colNamespace, colState, "REPLICAS", "ENABLED"}
 	if wide {
-		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
+		header = append(header, "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
 	}
 	rows := make([][]string, 0, len(apps))
 	for _, a := range apps {
@@ -217,9 +217,11 @@ func printAppsFlatTable(apps []client.App, wide bool) error {
 		if wide {
 			row = append(row,
 				a.Namespace.Cluster.Name,
+				dash(a.Image()),
 				dash(a.RAMLimit),
 				dash(a.CPURequest),
 				dash(a.CustomDomainAddress),
+				ageOf(a.UpdatedAt),
 				a.ID,
 			)
 		}
@@ -233,7 +235,7 @@ func printAppsFlatTable(apps []client.App, wide bool) error {
 func printAppsGroupTable(apps []client.App, wide bool) error {
 	header := []string{colName, colState, "REPLICAS", "ENABLED"}
 	if wide {
-		header = append(header, "CLUSTER", "RAM", "CPU", "DOMAIN", "ID")
+		header = append(header, "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
 	}
 	rows := make([][]string, 0, len(apps))
 	for _, a := range apps {
@@ -246,9 +248,11 @@ func printAppsGroupTable(apps []client.App, wide bool) error {
 		if wide {
 			row = append(row,
 				a.Namespace.Cluster.Name,
+				dash(a.Image()),
 				dash(a.RAMLimit),
 				dash(a.CPURequest),
 				dash(a.CustomDomainAddress),
+				ageOf(a.UpdatedAt),
 				a.ID,
 			)
 		}

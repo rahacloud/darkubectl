@@ -71,4 +71,22 @@ type App struct {
 	CPURequest          string    `json:"cpu_request"`
 	CustomDomainAddress string    `json:"custom_domain_address"`
 	EnableSSL           bool      `json:"enable_SSL"`
+	ImageRepo           string    `json:"image_repo"`
+	ImageTag            string    `json:"image_tag"`
+	CreationTime        string    `json:"creation_time"`
+	UpdatedAt           string    `json:"updated_at"`
+}
+
+// Image is the container image the app runs, as repo:tag. The v2 list route
+// returns the whole object, so this costs no extra request — which is what
+// makes "which build is each app on?" answerable for a whole namespace at once.
+func (a App) Image() string {
+	switch {
+	case a.ImageRepo == "":
+		return ""
+	case a.ImageTag == "":
+		return a.ImageRepo
+	default:
+		return a.ImageRepo + ":" + a.ImageTag
+	}
 }
