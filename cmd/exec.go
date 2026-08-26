@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,6 +17,11 @@ import (
 	"github.com/rahacloud/darkubectl/internal/wsexec"
 	"github.com/urfave/cli/v3"
 )
+
+// errSessionEndedEarly reports that the shell closed before the command's
+// status came back. The command may well have succeeded; the point is that
+// nothing observed it, so no caller may treat it as success.
+var errSessionEndedEarly = errors.New("remote session ended before the command reported a status")
 
 const (
 	flagUpload = "upload"
@@ -116,8 +122,14 @@ func execAppAction(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 
-	code, err := runRemote(sigCtx, sess, strings.Join(command, " "))
+	code, err := runRemote(sigCtx, sess, joinCommand(command))
 	if err != nil {
+		// The shell going away before the marker is not a command failure and
+		// has no status to report, but it must not read as success either.
+		if errors.Is(err, errSessionEndedEarly) {
+			fmt.Fprintln(os.Stderr, "darkubectl: "+err.Error())
+			return nil
+		}
 		return err
 	}
 	if code != 0 {
@@ -203,7 +215,7 @@ func runRemote(ctx context.Context, sess *wsexec.Session, command string) (int, 
 			// arrived: flush what we have rather than swallowing it.
 			emit(pending)
 			if isSessionEnd(rerr) {
-				return 0, nil
+				return 0, errSessionEndedEarly
 			}
 			return 0, fmt.Errorf("read exec stream: %w", rerr)
 		}
@@ -249,6 +261,22 @@ func exitMarkerLine(command, nonce string) string {
 // on its own, so it is deliberately dropped rather than propagated.
 func emit(p []byte) {
 	_, _ = os.Stdout.Write(p)
+}
+
+// joinCommand rebuilds an argv as a line for the remote shell.
+//
+// The remote end is a shell, so the argv has to survive being re-parsed by one.
+// Joining on spaces does not: `-- sh -c 'wc -c /etc/passwd'` arrives as
+// `sh -c wc -c /etc/passwd`, where the shell takes `wc` as the whole -c script
+// and the rest as its positional arguments — so it reads stdin and prints
+// nothing, having looked like it ran. Quoting every argument keeps the argv the
+// caller wrote.
+func joinCommand(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = shellQuote(a)
+	}
+	return strings.Join(quoted, " ")
 }
 
 func isSessionEnd(err error) bool {
