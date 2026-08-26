@@ -6,9 +6,18 @@
 //	Sec-WebSocket-Protocol: terminal, <console-jwt-access>, <org-slug>
 //	Origin: https://console.hamravesh.com
 //
-// The *frame* format (how stdin, stdout and resize are encoded on the wire) is
-// not yet confirmed; it is isolated in encodeInput/encodeResize/decodeOutput
-// below and marked with TODO(protocol) pending a Messages-tab capture.
+// The frame format is the Kubernetes remotecommand channel protocol: a 1-byte
+// channel id then the payload. Channels 0 (stdin) and 1 (stdout) are confirmed
+// in practice — a 1029-byte file was carried across channel 0 as base64 and read
+// back byte-identical, through `exec --upload`. Channels 2 (stderr), 3 (exit
+// status) and 4 (resize) are implemented from the same protocol but have not
+// been exercised against this server, so they stay marked below.
+//
+// What the server puts on the other end is an interactive shell on a PTY, not a
+// command runner: it echoes its input, draws a prompt, and applies terminal line
+// discipline. Callers get no completion signal, which is why cmd/exec.go has to
+// synthesise one, and long input lines are truncated, which is why nothing here
+// should send one.
 package wsexec
 
 import (
