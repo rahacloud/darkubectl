@@ -29,6 +29,22 @@ const (
 	otpHeader = "x-otp"
 
 	requestTimeout = 30 * time.Second
+
+	// Refresh retry budget. api.hamravesh.com returns intermittent 500s and bare
+	// EOFs from the refresh endpoint, often enough to make the whole CLI look
+	// broken: every tenant-scoped command mints an access token first, so one
+	// flaky refresh fails the command outright. Observed repeatedly on
+	// 2026-08-27, where the identical command succeeded seconds later each time.
+	//
+	// Four attempts over ~3.5s of backoff. Only transient failures are retried —
+	// a rejected refresh token fails immediately, because no amount of waiting
+	// turns an expired login into a valid one.
+	defaultRefreshAttempts = 4
+	defaultRefreshBackoff  = 500 * time.Millisecond
+
+	// serverErrorFloor is the status at and above which a response is treated as
+	// the server's fault, and therefore worth retrying.
+	serverErrorFloor = 500
 )
 
 // Errors returned by the authenticator.
@@ -46,6 +62,12 @@ type Tokens struct {
 // Client mints tokens against the Hamravesh API.
 type Client struct {
 	http *resty.Client
+
+	// Retry policy for Refresh. Exported-in-package so tests can shrink the
+	// backoff; callers get the defaults from New.
+	refreshAttempts int
+	refreshBackoff  time.Duration
+	sleep           func(time.Duration)
 }
 
 // New builds an auth client for the given API base URL.
@@ -54,7 +76,12 @@ func New(baseURL string) *Client {
 		SetBaseURL(strings.TrimRight(baseURL, "/")).
 		SetTimeout(requestTimeout).
 		SetHeader("Accept", "application/json")
-	return &Client{http: rc}
+	return &Client{
+		http:            rc,
+		refreshAttempts: defaultRefreshAttempts,
+		refreshBackoff:  defaultRefreshBackoff,
+		sleep:           time.Sleep,
+	}
 }
 
 // Close releases the underlying transport.
@@ -79,8 +106,55 @@ func (c *Client) Login(ctx context.Context, email, password, otp string) (*Token
 	return &out, nil
 }
 
-// Refresh mints a new access token from a stored refresh token.
+// Refresh mints a new access token from a stored refresh token, retrying
+// transient upstream failures.
+//
+// A transport error or a 5xx is the server's problem and is retried with linear
+// backoff; anything else (notably a 401 for an expired or revoked refresh token)
+// is returned immediately. See defaultRefreshAttempts for why this exists.
 func (c *Client) Refresh(ctx context.Context, refresh string) (string, error) {
+	attempts := max(c.refreshAttempts, 1)
+
+	var lastErr error
+	for attempt := range attempts {
+		if attempt > 0 {
+			// Linear backoff: 0.5s, 1s, 1.5s. Bounded and short, because a human
+			// is usually waiting on the command that triggered this.
+			if err := c.wait(ctx, time.Duration(attempt)*c.refreshBackoff); err != nil {
+				return "", err
+			}
+		}
+		access, err, retryable := c.refreshOnce(ctx, refresh)
+		if err == nil {
+			return access, nil
+		}
+		lastErr = err
+		if !retryable {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("%w after %d attempts", lastErr, attempts)
+}
+
+// wait sleeps for d, or returns early if the context is cancelled first.
+func (c *Client) wait(ctx context.Context, d time.Duration) error {
+	if c.sleep != nil {
+		c.sleep(d)
+		return ctx.Err()
+	}
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// refreshOnce performs a single refresh, reporting whether a failure is worth
+// retrying.
+//
+//nolint:revive // the trailing retryable flag reads better here than a sentinel error
+func (c *Client) refreshOnce(ctx context.Context, refresh string) (string, error, bool) {
 	var out Tokens
 	var apiErr apiError
 	resp, err := c.http.R().SetContext(ctx).
@@ -89,12 +163,15 @@ func (c *Client) Refresh(ctx context.Context, refresh string) (string, error) {
 		SetResultError(&apiErr).
 		Post(refreshPath)
 	if err != nil {
-		return "", fmt.Errorf("refresh request: %w", err)
+		// Transport-level failure — a dropped connection or a bare EOF, both of
+		// which this endpoint produces. Retry unless the caller gave up.
+		return "", fmt.Errorf("refresh request: %w", err), ctx.Err() == nil
 	}
 	if resp.IsStatusFailure() {
-		return "", fmt.Errorf("%w: %s", ErrRefreshFailed, apiErr.message(resp.Status()))
+		return "", fmt.Errorf("%w: %s", ErrRefreshFailed, apiErr.message(resp.Status())),
+			resp.StatusCode() >= serverErrorFloor
 	}
-	return out.Access, nil
+	return out.Access, nil, false
 }
 
 type apiError struct {
