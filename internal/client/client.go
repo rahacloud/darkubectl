@@ -96,6 +96,12 @@ const (
 	// exists in the namespace. The API distinguishes this from
 	// CodeSameHelmReleaseName, which is the orphaned-release case.
 	CodeDuplicateReleaseAndNamespace = "DuplicateReleaseAndNamespaceException"
+	// CodeGithubAuth and CodeGitlabAuth mean the git provider has not been
+	// connected to this Hamravesh account, so Darkube cannot read the repository
+	// it is being asked to build. Creating a git-backed app has an account-level
+	// prerequisite that creating an image-backed one does not.
+	CodeGithubAuth = "GithubAuthException"
+	CodeGitlabAuth = "GitlabAuthException"
 )
 
 // ErrorCode returns the API error code carried by err, or "" if err is not an
@@ -105,6 +111,27 @@ func ErrorCode(err error) string {
 		return apiErr.Code
 	}
 	return ""
+}
+
+// IsNotFound reports whether err is an API 404. This is the distinction
+// `wait --for deleted` turns on: "the app is gone" versus "the request failed".
+func IsNotFound(err error) bool {
+	apiErr, ok := errors.AsType[*APIError](err)
+	return ok && apiErr.StatusCode == http.StatusNotFound
+}
+
+// IsTransient reports whether err is worth retrying: a transport failure, or a
+// 5xx from the API. Polling loops use it so that a flaky minute — which this API
+// does produce — does not abort a wait that would otherwise have succeeded.
+func IsTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
+		return apiErr.StatusCode >= http.StatusInternalServerError
+	}
+	// Not an APIError at all, so the request never produced a response.
+	return true
 }
 
 // do issues a request and returns the raw response body on 2xx, or an *APIError.

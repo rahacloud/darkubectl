@@ -17,11 +17,13 @@ import (
 
 const (
 	flagFile        = "file"
+	flagGitRepo     = "git-repo"
 	defaultImageTag = "latest"
 	uuidLength      = 36
 )
 
-var errIncompleteSpec = errors.New("incomplete app spec: name, namespace, plan and image are required")
+var errIncompleteSpec = errors.New(
+	"incomplete app spec: name, namespace, plan and one of image or git.repoUrl are required")
 
 // appSpec is the friendly Docker-image app definition shared by all three input
 // modes (flags, --file YAML, interactive).
@@ -31,8 +33,12 @@ type appSpec struct {
 	Plan      string `yaml:"plan"`      // plan name, code name, or id
 	Image     string `yaml:"image"`     // repo:tag
 	Replicas  int    `yaml:"replicas"`
-	Command   string `yaml:"command"` // entrypoint override
-	Args      string `yaml:"args"`
+
+	// Command is split on whitespace by the platform; Args is not. Both accept
+	// either a string or a list. See appargs.go — that asymmetry is the sharpest
+	// edge in this API and costs a crash loop to rediscover.
+	Command shellWords `yaml:"command"` // entrypoint override
+	Args    shellWords `yaml:"args"`
 
 	// The fields below are nested, so they are --file/-f only, where the shape
 	// is expressible. Env and domains can also be changed later with
@@ -42,6 +48,10 @@ type appSpec struct {
 	Disk       *client.Disk           `yaml:"disk"`
 	Envs       []client.EnvVar        `yaml:"envs"`
 	SecretEnvs []client.EnvVar        `yaml:"secretEnvs"`
+
+	// Git is set for apps Darkube builds from a repository rather than pulling a
+	// prebuilt image. See gitSpec.
+	Git *gitSpec `yaml:"git"`
 }
 
 func newCreateCommand() *cli.Command {
@@ -56,18 +66,34 @@ func newCreateAppCommand() *cli.Command {
 	return &cli.Command{
 		Name:      cmdApp,
 		Aliases:   []string{aliasApp},
-		Usage:     "Create an app from a Docker image",
+		Usage:     "Create an app from a Docker image or a git repository",
 		ArgsUsage: "[NAME]",
 		Description: "Provide the app three ways: command-line flags, a YAML spec (--file),\n" +
-			"or interactively (--interactive, or run with no flags on a terminal).",
+			"or interactively (--interactive, or run with no flags on a terminal).\n\n" +
+			"An app is sourced either from a prebuilt image (--image) or from a repository\n" +
+			"Darkube builds for you (--git-repo), never both. The git form is what the console\n" +
+			"calls creation_method git_repo_url; Darkube builds the image, pushes it to the\n" +
+			"tenant registry and fills in image_repo/image_tag itself.\n\n" +
+			"On --command and --args, which are not symmetric:\n" +
+			"  command is SPLIT on whitespace   -> [\"/bin/sh\", \"-c\"]\n" +
+			"  args    is NOT split, ever       -> [\"<the whole string>\"]\n" +
+			"So a flag belongs in command, not args. `--command /bin/sh --args \"-c echo hi\"`\n" +
+			"hands the container one argument \"-c echo hi\" and crash-loops with\n" +
+			"`/bin/sh: illegal option -`; `--command \"/bin/sh -c\" --args \"<script>\"` works.\n" +
+			"Both fields accept a YAML list in a spec file.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagFile, Aliases: []string{"f"}, Usage: "create from a YAML spec file (- for stdin)"},
 			&cli.StringFlag{Name: "namespace", Aliases: []string{"ns"}, Usage: "namespace (project) name or id"},
 			&cli.StringFlag{Name: "plan", Usage: "plan name, code name, or id"},
-			&cli.StringFlag{Name: "image", Usage: "docker image (repo:tag)"},
+			&cli.StringFlag{Name: "image", Usage: "docker image (repo:tag); omit when building from git"},
 			&cli.IntFlag{Name: flagReplicas, Value: 1, Usage: "replica count"},
-			&cli.StringFlag{Name: "command", Usage: "container command (entrypoint override)"},
-			&cli.StringFlag{Name: "args", Usage: "container args"},
+			&cli.StringFlag{Name: "command", Usage: "container command (entrypoint override); SPLIT on whitespace"},
+			&cli.StringFlag{Name: "args", Usage: "container args; passed as ONE argument, never split"},
+			&cli.StringFlag{Name: flagGitRepo, Usage: "build from this git repository instead of an image"},
+			&cli.StringFlag{Name: "git-branch", Usage: "branch to build (default main)"},
+			&cli.StringFlag{Name: "git-dockerfile", Usage: "Dockerfile path within the repo (default ./Dockerfile)"},
+			&cli.StringFlag{Name: "git-context", Usage: "docker build context within the repo (default .)"},
+			&cli.StringFlag{Name: "git-provider", Usage: "Github or Gitlab (default: inferred from the URL)"},
 			&cli.BoolFlag{Name: flagInteractive, Aliases: []string{"i"}, Usage: "prompt for each field"},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
@@ -82,6 +108,15 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 	}
 	if !spec.complete() {
 		return errIncompleteSpec
+	}
+	if err := spec.validate(); err != nil {
+		return err
+	}
+	// Warnings, not errors: each describes a shape that is legal but almost
+	// certainly not what was meant. They go to stderr before the confirmation
+	// prompt so there is still a chance to answer no.
+	for _, w := range entrypointWarnings(spec.Command.String(), spec.Args.String()) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 
 	c, _, err := buildClient(ctx, cmd)
@@ -101,10 +136,16 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	repo, tag := splitImage(spec.Image)
+	var repo, tag, source string
+	if spec.Git != nil {
+		source = "git=" + spec.Git.describe()
+	} else {
+		repo, tag = splitImage(spec.Image)
+		source = fmt.Sprintf("image=%s:%s", repo, tag)
+	}
 
-	fmt.Fprintf(os.Stderr, "About to create app %q in tenant %q: namespace=%s plan=%s image=%s:%s replicas=%d\n",
-		spec.Name, c.Org, spec.Namespace, spec.Plan, repo, tag, spec.Replicas)
+	fmt.Fprintf(os.Stderr, "About to create app %q in tenant %q: namespace=%s plan=%s %s replicas=%d\n",
+		spec.Name, c.Org, spec.Namespace, spec.Plan, source, spec.Replicas)
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
@@ -116,14 +157,15 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 		PlanID:         planID,
 		ImageRepo:      repo,
 		ImageTag:       tag,
-		Command:        spec.Command,
-		Args:           spec.Args,
+		Command:        spec.Command.String(),
+		Args:           spec.Args.String(),
 		Replicas:       spec.Replicas,
 		SvcType:        spec.SvcType,
 		Ports:          spec.Ports,
 		Disk:           spec.Disk,
 		Envs:           spec.Envs,
 		SecretEnvs:     spec.SecretEnvs,
+		Git:            spec.Git.toClient(),
 	})
 	if err != nil {
 		return explainCreateError(ctx, c, spec, err)
@@ -145,8 +187,21 @@ func explainCreateError(ctx context.Context, c *client.Client, spec appSpec, err
 
 	case client.CodeTerminatingApp:
 		fmt.Fprintf(os.Stderr,
-			"\nAn app named %q is still being deleted. Deletion is asynchronous — wait and retry.\n",
-			spec.Name)
+			"\nAn app named %q is still being deleted. Deletion is asynchronous — wait and retry.\n"+
+				"`darkubectl wait app %s --for deleted` blocks until it is gone.\n",
+			spec.Name, spec.Name)
+
+	case client.CodeGithubAuth, client.CodeGitlabAuth:
+		// The Persian detail says only "unauthorized access; install the Darkube
+		// app in your account's Integration section". Worth restating, because
+		// nothing about the command is wrong: building from a repository has an
+		// account-level prerequisite that pulling an image does not.
+		fmt.Fprintf(os.Stderr,
+			"\nDarkube cannot read that repository. Building from git requires connecting the git\n"+
+				"provider to your Hamravesh account first: install the Darkube app under the\n"+
+				"Integration section of your GitHub/GitLab account and grant it access to this\n"+
+				"repository. The app spec itself was accepted — only the authorization is missing.\n\n"+
+				"Creating from a prebuilt image (--image) has no such prerequisite.\n")
 
 	case client.CodeSameHelmReleaseName:
 		// Distinguish a real name clash from an orphaned Helm release: if no app
@@ -170,8 +225,26 @@ func explainCreateError(ctx context.Context, c *client.Client, spec appSpec, err
 	return err
 }
 
+// complete reports whether the spec names everything the API requires. An app
+// is sourced either from a prebuilt image or from a repository Darkube builds,
+// so exactly one of those must be present.
 func (s appSpec) complete() bool {
-	return s.Name != "" && s.Namespace != "" && s.Plan != "" && s.Image != ""
+	hasSource := s.Image != "" || (s.Git != nil && s.Git.RepoURL != "")
+	return s.Name != "" && s.Namespace != "" && s.Plan != "" && hasSource
+}
+
+// validate rejects the spec shapes the API cannot express, before sending them.
+func (s appSpec) validate() error {
+	if err := validateArgs(s.Args); err != nil {
+		return err
+	}
+	if s.Git == nil {
+		return nil
+	}
+	if s.Image != "" {
+		return errGitAndImage
+	}
+	return s.Git.validate()
 }
 
 // gatherAppSpec builds the spec from --file, interactive prompts, or flags.
@@ -180,7 +253,7 @@ func gatherAppSpec(cmd *cli.Command) (appSpec, error) {
 		return loadAppSpecFile(f)
 	}
 
-	flagsGiven := cmd.Args().First() != "" || cmd.String("image") != ""
+	flagsGiven := cmd.Args().First() != "" || cmd.String("image") != "" || cmd.String(flagGitRepo) != ""
 	if cmd.Bool(flagInteractive) || (!flagsGiven && term.IsTerminal(int(os.Stdin.Fd()))) {
 		return promptAppSpec()
 	}
@@ -191,9 +264,30 @@ func gatherAppSpec(cmd *cli.Command) (appSpec, error) {
 		Plan:      cmd.String("plan"),
 		Image:     cmd.String("image"),
 		Replicas:  cmd.Int(flagReplicas),
-		Command:   cmd.String("command"),
-		Args:      cmd.String("args"),
+		Command:   newShellWords(cmd.String("command")),
+		Args:      newShellWords(cmd.String("args")),
+		Git:       gitSpecFromFlags(cmd),
 	}, nil
+}
+
+// gitSpecFromFlags builds the git block from --git-* flags, or nil if none were
+// given.
+func gitSpecFromFlags(cmd *cli.Command) *gitSpec {
+	repo := cmd.String(flagGitRepo)
+	if repo == "" {
+		return nil
+	}
+	provider := cmd.String("git-provider")
+	if provider == "" {
+		provider = guessProvider(repo)
+	}
+	return &gitSpec{
+		RepoURL:    repo,
+		Branch:     cmd.String("git-branch"),
+		Provider:   provider,
+		Dockerfile: cmd.String("git-dockerfile"),
+		Context:    cmd.String("git-context"),
+	}
 }
 
 func loadAppSpecFile(path string) (appSpec, error) {
@@ -229,9 +323,11 @@ func promptAppSpec() (appSpec, error) {
 	if s.Image, err = prompt("Docker image (repo:tag): "); err != nil {
 		return s, err
 	}
-	if s.Command, err = prompt("Command (entrypoint override, blank for image default): "); err != nil {
+	command, err := prompt("Command (entrypoint override, blank for image default): ")
+	if err != nil {
 		return s, err
 	}
+	s.Command = newShellWords(command)
 	if s.Replicas, err = promptInt("Replicas [1]: ", 1); err != nil {
 		return s, err
 	}

@@ -63,6 +63,78 @@ type CreateAppInput struct {
 	Disk       *Disk
 	Envs       []EnvVar
 	SecretEnvs []EnvVar
+
+	// Git, when non-nil, switches the app from pulling a prebuilt image to being
+	// built by Darkube from a repository. ImageRepo/ImageTag are then chosen by
+	// the platform (it pushes to registry.hamdocker.ir/<tenant>/<app>) and must
+	// be left empty.
+	Git *GitSource
+}
+
+// GitSource describes a repository Darkube builds the app from, producing
+// creation_method "git_repo_url" rather than "docker_image".
+//
+// Every field maps to one the API returns on such an app; the zero values are
+// filled from the defaults the console uses, so RepoURL alone is enough.
+type GitSource struct {
+	RepoURL    string
+	Branch     string
+	Provider   string // Github | Gitlab
+	Dockerfile string
+	Context    string
+	Workdir    string
+	Builder    string // dockerfile | heroku_buildpacks
+	// BuildMethod is gitlabci or webhook. Autodeploy has a pointer type so an
+	// explicit false is distinguishable from "unset".
+	BuildMethod string
+	Autodeploy  *bool
+}
+
+// Valid values for the enumerated build fields, as advertised by OPTIONS on
+// /api/v1/darkube/apps/ (confirmed 2026-08-28).
+const (
+	CreationMethodDockerImage = "docker_image"
+	CreationMethodGitRepoURL  = "git_repo_url"
+
+	ProviderGithub = "Github"
+	ProviderGitlab = "Gitlab"
+
+	BuilderDockerfile      = "dockerfile"
+	BuilderHerokuBuildpack = "heroku_buildpacks"
+
+	BuildMethodGitlabCI = "gitlabci"
+	BuildMethodWebhook  = "webhook"
+)
+
+// withDefaults fills the fields the console always sends, so a caller supplying
+// only a repository URL still produces a payload the API accepts.
+func (g GitSource) withDefaults() GitSource {
+	if g.Branch == "" {
+		g.Branch = "main"
+	}
+	if g.Provider == "" {
+		g.Provider = ProviderGitlab
+	}
+	if g.Dockerfile == "" {
+		g.Dockerfile = "./Dockerfile"
+	}
+	if g.Context == "" {
+		g.Context = "."
+	}
+	if g.Workdir == "" {
+		g.Workdir = "."
+	}
+	if g.Builder == "" {
+		g.Builder = BuilderDockerfile
+	}
+	if g.BuildMethod == "" {
+		g.BuildMethod = BuildMethodGitlabCI
+	}
+	if g.Autodeploy == nil {
+		yes := true
+		g.Autodeploy = &yes
+	}
+	return g
 }
 
 // CreateApp creates a Docker-image app and returns the created object. The
@@ -106,10 +178,10 @@ func buildCreatePayload(in CreateAppInput) map[string]any {
 		"namespace":            in.NamespaceID,
 		"organization":         in.OrganizationID,
 		"plan":                 in.PlanID,
-		"creation_method":      "docker_image",
+		"creation_method":      CreationMethodDockerImage,
 		"image_repo":           in.ImageRepo,
 		"image_tag":            in.ImageTag,
-		"builder":              "dockerfile",
+		"builder":              BuilderDockerfile,
 		"command":              in.Command,
 		"args":                 in.Args,
 		"replicas":             in.Replicas,
@@ -119,6 +191,24 @@ func buildCreatePayload(in CreateAppInput) map[string]any {
 		"backup_config":        nil,
 		"deploy_context":       nil,
 		"ssl_challenge_type":   "dns01",
+	}
+	if in.Git != nil {
+		// A git-built app names no image: Darkube builds one and pushes it to the
+		// tenant's registry, then fills image_repo/image_tag itself.
+		g := in.Git.withDefaults()
+		payload["creation_method"] = CreationMethodGitRepoURL
+		payload["builder"] = g.Builder
+		payload["git_repo_url"] = g.RepoURL
+		payload["git_branch_name"] = g.Branch
+		payload["git_provider_type"] = g.Provider
+		payload["git_build_dockerfile"] = g.Dockerfile
+		payload["git_build_context"] = g.Context
+		payload["git_build_workdir"] = g.Workdir
+		payload["git_build_args"] = []any{}
+		payload["build_method"] = g.BuildMethod
+		payload["autodeploy_on_git_push"] = *g.Autodeploy
+		delete(payload, "image_repo")
+		delete(payload, "image_tag")
 	}
 	if in.Disk != nil && in.Disk.SizeInGi > 0 {
 		payload["disk"] = in.Disk
