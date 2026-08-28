@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -46,19 +47,12 @@ var putRelationFields = []string{"plan", "namespace", "organization"}
 // handed to mutate, and PUT in full. Callers therefore change one field without
 // having to reconstruct the other seventy.
 func (c *Client) UpdateApp(ctx context.Context, id string, mutate func(app map[string]any) error) (map[string]any, error) {
-	path := appsPathV1 + url.PathEscape(id) + "/"
-
-	var app map[string]any
-	if err := c.getJSON(ctx, path, nil, &app); err != nil {
-		return nil, err
-	}
-	normalizeForPut(app)
-
-	if err := mutate(app); err != nil {
+	_, after, err := c.PrepareAppUpdate(ctx, id, mutate)
+	if err != nil {
 		return nil, err
 	}
 
-	data, err := c.do(ctx, http.MethodPut, path, nil, app)
+	data, err := c.do(ctx, http.MethodPut, appsPathV1+url.PathEscape(id)+"/", nil, after)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +61,47 @@ func (c *Client) UpdateApp(ctx context.Context, id string, mutate func(app map[s
 		_ = decodeInto(data, &out)
 	}
 	return out, nil
+}
+
+// PrepareAppUpdate performs every step of UpdateApp except the write, returning
+// the normalized object as it stands now and as it would be sent.
+//
+// This is what makes a dry run possible, and it matters more here than it would
+// on an API with a real partial update: every write is a full-object PUT rebuilt
+// from a read, so a mistake in the mutate step can rewrite fields nobody meant
+// to touch, and the request body alone does not show which of its seventy
+// fields actually changed.
+func (c *Client) PrepareAppUpdate(
+	ctx context.Context, id string, mutate func(app map[string]any) error,
+) (map[string]any, map[string]any, error) {
+	path := appsPathV1 + url.PathEscape(id) + "/"
+
+	var app map[string]any
+	if err := c.getJSON(ctx, path, nil, &app); err != nil {
+		return nil, nil, err
+	}
+	normalizeForPut(app)
+
+	// Snapshot before mutating, so the caller can diff the two.
+	before := deepCopy(app)
+	if err := mutate(app); err != nil {
+		return nil, nil, err
+	}
+	return before, app, nil
+}
+
+// deepCopy clones a decoded JSON object by round-tripping it. These objects come
+// straight from the decoder, so they hold only JSON-representable values.
+func deepCopy(in map[string]any) map[string]any {
+	data, err := json.Marshal(in)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // normalizeForPut rewrites a freshly read app into the shape PUT accepts:

@@ -26,13 +26,20 @@ func newPatchCommand() *cli.Command {
 					`  darkubectl patch app my-api -p '{"ram_limit": "1024M", "cpu_request": "500m"}'` + "\n\n" +
 					"The API implements no partial update, so this is a read-modify-write of the\n" +
 					"whole app rather than an HTTP PATCH. A concurrent console edit between the\n" +
-					"read and the write is therefore lost.",
+					"read and the write is therefore lost.\n\n" +
+					"--dry-run shows which fields the write would actually change and sends nothing.\n" +
+					"That is worth more here than on an API with a real partial update: the request\n" +
+					"body is the whole app, so it does not show which of its seventy fields moved.",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "patch",
 						Aliases:  []string{"p"},
 						Required: true,
 						Usage:    "JSON object to merge-patch onto the app",
+					},
+					&cli.BoolFlag{
+						Name:  flagDryRun,
+						Usage: "show what would change and exit without writing",
 					},
 					&cli.BoolFlag{
 						Name:    flagYes,
@@ -69,16 +76,32 @@ func patchAppAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	apply := func(raw map[string]any) error {
+		maps.Copy(raw, patch)
+		return nil
+	}
+
+	if cmd.Bool(flagDryRun) {
+		before, after, err := c.PrepareAppUpdate(ctx, app.ID, apply)
+		if err != nil {
+			return err
+		}
+		changes := diffApps(before, after)
+		if handled, err := output.Structured(os.Stdout, format, changes); handled {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "app/%s: dry run, nothing was sent\n", app.Name)
+		writeDiff(os.Stdout, changes)
+		return nil
+	}
+
 	fmt.Fprintf(os.Stderr, "About to update app %q (%s) in tenant %q with: %s\n",
 		app.Name, app.ID, c.Org, patchJSON)
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
 
-	updated, err := c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
-		maps.Copy(raw, patch)
-		return nil
-	})
+	updated, err := c.UpdateApp(ctx, app.ID, apply)
 	if err != nil {
 		return err
 	}
