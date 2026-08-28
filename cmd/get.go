@@ -27,6 +27,13 @@ const colNamespace = "NAMESPACE"
 // flagNamespace filters `get apps` to a single namespace (name or id).
 const flagNamespace = "namespace"
 
+// flagType and flagManaged filter `get apps` by creation_method — the field that
+// tells a managed/oneclick service apart from a plain workload.
+const (
+	flagType    = "type"
+	flagManaged = "managed"
+)
+
 // Column indices used for status-aware coloring. The grouped-by-namespace
 // table drops the NAMESPACE column, shifting STATE/ENABLED left by one.
 const (
@@ -48,8 +55,16 @@ func newGetCommand() *cli.Command {
 				Name:    "apps",
 				Aliases: []string{cmdApp, "applications"},
 				Usage:   "List apps in the current tenant",
+				Description: "Managed (\"oneclick\") services are ordinary apps here — a Redis, Postgres,\n" +
+					"Grafana or Prometheus deployment appears in this list with a creation_method\n" +
+					"naming the service. -o wide shows it as TYPE, and --type filters on it:\n\n" +
+					"  darkubectl get apps --type redisnew     # just the Redis services\n" +
+					"  darkubectl get apps --managed           # every managed service\n" +
+					"  darkubectl get apps --type docker_image # just plain image workloads",
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: flagNamespace, Aliases: []string{"ns"}, Usage: "only show apps in this namespace (name or id)"},
+					&cli.StringFlag{Name: flagType, Usage: "only show apps with this creation_method (e.g. redisnew, grafana, docker_image)"},
+					&cli.BoolFlag{Name: flagManaged, Usage: "only show managed/oneclick services (Redis, Postgres, Grafana, …)"},
 				},
 				Action: getAppsAction,
 			},
@@ -148,6 +163,18 @@ func getAppsAction(ctx context.Context, cmd *cli.Command) error {
 			return fmt.Errorf("no app in namespace %q in tenant %q", ns, c.Org)
 		}
 	}
+	if t := cmd.String(flagType); t != "" {
+		apps = filterAppsByType(apps, t)
+		if len(apps) == 0 {
+			return fmt.Errorf("no app of type %q in tenant %q", t, c.Org)
+		}
+	}
+	if cmd.Bool(flagManaged) {
+		apps = filterManagedApps(apps)
+		if len(apps) == 0 {
+			return fmt.Errorf("no managed services in tenant %q", c.Org)
+		}
+	}
 
 	if handled, err := output.Structured(os.Stdout, format, apps); handled {
 		return err
@@ -165,6 +192,29 @@ func filterAppsByName(apps []client.App, name string) []client.App {
 	var out []client.App
 	for _, a := range apps {
 		if a.Name == name || a.ID == name {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// filterAppsByType keeps apps whose creation_method matches, which is how a
+// managed service names itself (redisnew, grafana, …).
+func filterAppsByType(apps []client.App, want string) []client.App {
+	var out []client.App
+	for _, a := range apps {
+		if strings.EqualFold(a.CreationMethod, want) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// filterManagedApps keeps only marketplace/oneclick services.
+func filterManagedApps(apps []client.App) []client.App {
+	var out []client.App
+	for _, a := range apps {
+		if a.IsManagedService() {
 			out = append(out, a)
 		}
 	}
@@ -204,7 +254,7 @@ func printAppsTable(apps []client.App, wide bool) error {
 func printAppsFlatTable(apps []client.App, wide bool) error {
 	header := []string{colName, colNamespace, colState, "REPLICAS", "ENABLED"}
 	if wide {
-		header = append(header, "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
+		header = append(header, "TYPE", "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
 	}
 	rows := make([][]string, 0, len(apps))
 	for _, a := range apps {
@@ -217,6 +267,7 @@ func printAppsFlatTable(apps []client.App, wide bool) error {
 		}
 		if wide {
 			row = append(row,
+				dash(a.CreationMethod),
 				a.Namespace.Cluster.Name,
 				dash(a.Image()),
 				dash(a.RAMLimit),
@@ -236,7 +287,7 @@ func printAppsFlatTable(apps []client.App, wide bool) error {
 func printAppsGroupTable(apps []client.App, wide bool) error {
 	header := []string{colName, colState, "REPLICAS", "ENABLED"}
 	if wide {
-		header = append(header, "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
+		header = append(header, "TYPE", "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
 	}
 	rows := make([][]string, 0, len(apps))
 	for _, a := range apps {
@@ -248,6 +299,7 @@ func printAppsGroupTable(apps []client.App, wide bool) error {
 		}
 		if wide {
 			row = append(row,
+				dash(a.CreationMethod),
 				a.Namespace.Cluster.Name,
 				dash(a.Image()),
 				dash(a.RAMLimit),

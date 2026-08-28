@@ -75,6 +75,37 @@ type App struct {
 	ImageTag            string    `json:"image_tag"`
 	CreationTime        string    `json:"creation_time"`
 	UpdatedAt           string    `json:"updated_at"`
+
+	// CreationMethod is how the app came to exist, and it is the field that
+	// separates a plain workload from a managed service. There is no separate
+	// "managed services" API: a oneclick Redis, Postgres, Grafana or Prometheus is
+	// an ordinary app in this same list, carrying creation_method "redisnew",
+	// "postgresqlnew", "grafana", "prometheus" and so on. Without surfacing it
+	// there is no way to tell the two apart, which is why `get apps -o wide`
+	// prints it and `--type` filters on it.
+	CreationMethod string `json:"creation_method"`
+}
+
+// plainCreationMethods are the methods that produce an ordinary workload: an
+// image pulled from a registry, a repository Darkube builds, or an upload.
+// Every other value in the enum names a marketplace/oneclick service.
+//
+// The full set, from OPTIONS /api/v1/darkube/apps/ on 2026-08-28: confluence,
+// docker_image, elasticsearch, file_upload, gitlab_runner, git_repo_url, grafana,
+// jira, jirasm, jupyter, kafka, kibana, keycloak, mariadb, metabase, minio,
+// minionew, mongodb, mssql, mysql, nextcloud, nginx, postgresql, postgresqlnew,
+// prometheus, pyroscope, rabbitmq, redis, redisnew, stolon, rocketchat,
+// wordpress, kenar_divar.
+var plainCreationMethods = map[string]bool{
+	CreationMethodDockerImage: true,
+	CreationMethodGitRepoURL:  true,
+	"file_upload":             true,
+}
+
+// IsManagedService reports whether the app is a marketplace/oneclick service
+// (Redis, Postgres, Grafana, …) rather than a workload someone built.
+func (a App) IsManagedService() bool {
+	return a.CreationMethod != "" && !plainCreationMethods[a.CreationMethod]
 }
 
 // Image is the container image the app runs, as repo:tag. The v2 list route
