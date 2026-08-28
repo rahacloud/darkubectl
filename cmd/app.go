@@ -31,6 +31,7 @@ const (
 	flagYes      = "yes"
 	aliasYes     = "y"
 	flagReplicas = "replicas"
+	flagDryRun   = "dry-run"
 
 	usageSkipConfirm = "skip the confirmation prompt"
 )
@@ -87,6 +88,7 @@ func NewApp() *cli.Command {
 			newDeleteCommand(),
 			newCreateCommand(),
 			newSetCommand(),
+			newWaitCommand(),
 			newLoginCommand(),
 			newWhoamiCommand(),
 			newLogsCommand(),
