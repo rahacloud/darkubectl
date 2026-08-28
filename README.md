@@ -134,7 +134,9 @@ darkubectl config use-tenant talaland
 
 # Apps
 darkubectl get apps                    # table
-darkubectl get apps -o wide            # + cluster, RAM, CPU, domain, id
+darkubectl get apps -o wide            # + type, cluster, RAM, CPU, domain, id
+darkubectl get apps --managed          # only managed services (Redis, Postgres, Grafana, …)
+darkubectl get apps --type redisnew    # only apps with this creation_method
 darkubectl get apps -o json
 darkubectl describe app <name|id>      # colorized key/value view
 darkubectl describe app <name|id> -i   # interactive: scroll + / search
@@ -167,10 +169,17 @@ darkubectl get orphans --context <ctx> --namespace <ns>
 darkubectl scale app <name|id> --replicas 3
 darkubectl set env <name|id> LOG_LEVEL=debug PORT=8080
 darkubectl set env <name|id> --remove LOG_LEVEL
-darkubectl set domain <name|id> --add api.example.com
+darkubectl set domain <name|id> --add api.example.com      # a domain you own
 darkubectl set domain <name|id> --remove old.example.com
+darkubectl set subdomain <name|id> my-api                  # -> my-api.darkube.app, with a cert
+darkubectl set subdomain <name|id> --remove
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
+darkubectl patch app <name|id> -p '{"replicas": 3}' --dry-run   # show the diff, send nothing
 darkubectl delete app <name|id>
+
+# Block until a deploy has actually landed, instead of sleeping and hoping
+darkubectl wait app <name|id> --for ready --timeout 10m
+darkubectl wait app <name|id> --for deleted
 
 # Create an app from a Docker image (needs a JWT login; see below)
 darkubectl get plans                       # pick a plan (NAME column → --plan)
@@ -178,6 +187,11 @@ darkubectl get namespaces                  # pick a namespace (ID column → --n
 darkubectl create app my-api --namespace <ns> --plan 1 --image nginx:latest
 darkubectl create app -f spec.yaml         # from a YAML spec (ports, disk, env)
 darkubectl create app -i                   # interactive prompts
+
+# Or let Darkube build the image from a repository (creation_method git_repo_url).
+# Needs the git provider connected to the Hamravesh account under Integration.
+darkubectl create app my-api --namespace <ns> --plan 1 \
+  --git-repo https://github.com/acme/my-api --git-branch main
 
 # Logs
 darkubectl logs <name>                    # last 100 lines (pod auto-detected; `logs app <name>` also works)
@@ -220,6 +234,27 @@ envs:
   - {name: RabbitMq__Host, value: masstransit-dev.talaland-dev.svc}
 secretEnvs:
   - {name: RabbitMq__Password, value: hunter2}
+```
+
+**`command` is split on whitespace; `args` is not.** This is the sharpest edge in the API and it is not documented anywhere upstream:
+
+```yaml
+command: /bin/sh -c      # SPLIT   -> ["/bin/sh", "-c"]
+args:    echo$IFS'hi'    # NOT split -> ["echo$IFS'hi'"], one single argument
+```
+
+The arrangement everyone writes first — `command: /bin/sh` with `args: -c echo hi` — hands the container `"-c echo hi"` as one token, and busybox reads the space as another flag: `/bin/sh: illegal option -`, crash-looping, with nothing in the API response pointing at the cause. Put the words that need splitting in `command`; because that is split, the script in `args` must then contain no whitespace at all, which is what `$IFS` is doing above. `create app` warns when `args` contains whitespace and refuses a multi-element `args` list.
+
+Both fields accept a string or a list, so `command: ["/bin/sh", "-c"]` works too.
+
+For an app Darkube builds itself, replace `image` with a `git` block:
+
+```yaml
+git:
+  repoUrl: https://github.com/acme/my-api
+  branch: main
+  dockerfile: ./Dockerfile     # default
+  provider: Github             # default: inferred from the URL
 ```
 
 These can also be changed after the fact. The API has no partial update — `PATCH` is unimplemented and returns 500 — so every mutation is a read-modify-write of the whole app, which `darkubectl` does for you. Environment and domains have dedicated commands (`set env`, `set domain`); anything else goes through `patch app`, which merges your JSON into the current object and writes it back. The one caveat of that approach: a console edit made between the read and the write is lost.
@@ -270,6 +305,8 @@ The Darkube API has no public documentation; every endpoint here was reverse-eng
 
 - **There is no partial update** — `PATCH` is not implemented and returns a bodyless 500 on both API versions, so every write is a read-modify-write of the entire app via `PUT`. `darkubectl` handles that; the visible consequence is that a console edit racing your command is lost.
 - **Delete is asynchronous and orphans releases** — see [Orphaned releases](#orphaned-releases). `get orphans` exists because this is the common case, not the edge case. Editing an app in place is safer than delete-and-recreate, which is what strands releases.
+
+**Managed services are ordinary apps.** A oneclick Redis, Postgres, Grafana or Prometheus is not a separate resource with a separate endpoint — it is an app in the same list, distinguished only by its `creation_method` (`redisnew`, `postgresqlnew`, `grafana`, …). Probing for a dedicated managed-services API in 2026-08 found nothing but 404s. `get apps -o wide` shows the type, `--type` and `--managed` filter on it, and `logs`, `describe` and `get env` work on them like any other app. The caveat is access: a service provisioned under an organization your account cannot see will not appear at all, no matter what you know its URL to be.
 
 Two things the API will not let you do, whatever the CLI offers:
 
