@@ -16,7 +16,10 @@ import (
 // flagAdd names a domain to route to an app.
 const flagAdd = "add"
 
-var errNoDomainChange = errors.New("nothing to do: pass --add and/or --remove")
+var (
+	errNoDomainChange    = errors.New("nothing to do: pass --add and/or --remove")
+	errPlatformSubdomain = errors.New("that is a platform subdomain, not an external host")
+)
 
 func newGetDomainsCommand() *cli.Command {
 	return &cli.Command{
@@ -139,6 +142,15 @@ func setDomainAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	current, err := c.GetApp(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	// Catch the platform-subdomain mistake here, rather than letting the API
+	// answer it with an opaque 400 InvalidExternalHost.
+	if err := rejectPlatformSubdomains(additions, clusterBaseDomain(current)); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(os.Stderr, "About to update domains on app %q (%s) in tenant %q: %s\n",
 		app.Name, app.ID, c.Org, describeDomainChange(additions, removals))
@@ -155,6 +167,32 @@ func setDomainAction(ctx context.Context, cmd *cli.Command) error {
 	fmt.Fprintf(os.Stdout, "app/%s domains updated\n", app.Name)
 	if target := rawString(updated, "ingress_cname_address"); target != "" && len(additions) > 0 {
 		fmt.Fprintf(os.Stderr, "note: point each added domain's DNS at %s\n", target)
+	}
+	return nil
+}
+
+// rejectPlatformSubdomains refuses hosts under the cluster's own base domain.
+//
+// external_hosts is for domains you own and CNAME in; a <label>.darkube.app name
+// is the platform's own subdomain and belongs in custom_subdomain_addr. The API
+// distinguishes them but reports the difference only as 400 InvalidExternalHost
+// with a Persian detail, which is not enough to act on.
+func rejectPlatformSubdomains(additions []string, base string) error {
+	if base == "" {
+		return nil
+	}
+	for _, h := range additions {
+		if !strings.HasSuffix(strings.ToLower(h), "."+strings.ToLower(base)) {
+			continue
+		}
+		label := strings.TrimSuffix(h, "."+base)
+		return fmt.Errorf(
+			"%w: %q is a subdomain of the cluster's own domain %q, which the API will not accept as an "+
+				"external host (400 InvalidExternalHost).\n"+
+				"  Use the dedicated command instead:\n"+
+				"      darkubectl set subdomain <app> %s\n"+
+				"  `set domain --add` is for domains you own and point at the cluster with a CNAME",
+			errPlatformSubdomain, h, base, label)
 	}
 	return nil
 }

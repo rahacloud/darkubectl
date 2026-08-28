@@ -13,6 +13,7 @@ func newSetCommand() *cli.Command {
 		Commands: []*cli.Command{
 			newSetEnvCommand(),
 			newSetDomainCommand(),
+			newSetSubdomainCommand(),
 		},
 	}
 }
