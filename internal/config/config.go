@@ -53,9 +53,29 @@ type Config struct {
 	// to mint short-lived access tokens for the terminal/exec websocket. The
 	// account API key cannot open the terminal, so this is a separate credential.
 	RefreshToken string `koanf:"refresh-token"`
+	// Tunnels maps a chisel tunnel's "<tenant>/<app>" key to its user:pass
+	// credential. It is stored here because the API cannot give it back: secret
+	// envs are write-only, so the value handed to the server at creation is
+	// readable exactly once, and a client that cannot reproduce it cannot
+	// connect. See cmd/tunnel.go.
+	Tunnels map[string]string `koanf:"tunnels"`
 
 	path string
 }
+
+// TunnelAuth returns the stored credential for a tunnel key, empty if unknown.
+func (c *Config) TunnelAuth(key string) string { return c.Tunnels[key] }
+
+// SetTunnelAuth records a tunnel credential, allocating the map on first use.
+func (c *Config) SetTunnelAuth(key, auth string) {
+	if c.Tunnels == nil {
+		c.Tunnels = map[string]string{}
+	}
+	c.Tunnels[key] = auth
+}
+
+// ForgetTunnel drops a tunnel credential.
+func (c *Config) ForgetTunnel(key string) { delete(c.Tunnels, key) }
 
 // DefaultPath returns the config path, honoring $DARKUBE_CONFIG then ~/.darkube/config.yaml.
 func DefaultPath() (string, error) {

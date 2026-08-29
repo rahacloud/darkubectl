@@ -14,6 +14,7 @@ func newSetCommand() *cli.Command {
 			newSetEnvCommand(),
 			newSetDomainCommand(),
 			newSetSubdomainCommand(),
+			newSetSvcTypeCommand(),
 		},
 	}
 }

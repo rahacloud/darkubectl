@@ -88,6 +88,7 @@ func NewApp() *cli.Command {
 			newDeleteCommand(),
 			newCreateCommand(),
 			newSetCommand(),
+			newTunnelCommand(),
 			newWaitCommand(),
 			newLoginCommand(),
 			newWhoamiCommand(),

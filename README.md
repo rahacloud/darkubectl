@@ -37,6 +37,7 @@ darkubectl get orphans               # something the console cannot tell you at 
 | 🔎 **Familiar verbs** | `get`, `describe`, `logs`, `exec`, `create`, `delete` — the kubectl muscle memory carries over. |
 | 🧭 **Real terminals** | `terminal app <name>` opens an interactive shell over the exec websocket, resize and all. `exec` runs one-off commands. |
 | 📜 **Logs that pipe** | `logs -f` to follow, `--previous` for the container that just crashed, `--timestamps` for correlation. |
+| 🔌 **Tunnels, not exposure** | `tunnel up` runs a [chisel](https://github.com/jpillora/chisel) server as an app and `tunnel connect` forwards local ports through it, so you can reach a ClusterIP database from a laptop without a public LoadBalancer and without cluster credentials. |
 | 👻 **Orphan detection** | `get orphans` reconciles your tenant against a live cluster and finds the Helm releases Darkube left behind on delete. Nothing else surfaces these. |
 | 🎨 **Readable output** | Colorized tables and a `describe -i` interactive viewer with search, degrading to plain text the moment you pipe it. |
 | 🤖 **Scriptable** | `-o json`, `-o yaml`, `-o name` on everything, config via flags, env or file, and `get deploy-token` to wire a CI pipeline without the console. |
@@ -173,6 +174,8 @@ darkubectl set domain <name|id> --add api.example.com      # a domain you own
 darkubectl set domain <name|id> --remove old.example.com
 darkubectl set subdomain <name|id> my-api                  # -> my-api.darkube.app, with a cert
 darkubectl set subdomain <name|id> --remove
+darkubectl set svc-type <name|id> LoadBalancer            # expose it; ports are preserved
+darkubectl set svc-type <name|id> ClusterIP --dry-run    # show the diff, send nothing
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
 darkubectl patch app <name|id> -p '{"replicas": 3}' --dry-run   # show the diff, send nothing
 darkubectl delete app <name|id>
@@ -180,6 +183,12 @@ darkubectl delete app <name|id>
 # Block until a deploy has actually landed, instead of sleeping and hoping
 darkubectl wait app <name|id> --for ready --timeout 10m
 darkubectl wait app <name|id> --for deleted
+
+# Reach a ClusterIP service from your laptop, without exposing it (needs the
+# chisel client on PATH for `connect`; the server side installs nothing)
+darkubectl tunnel up --namespace talaland-dev --subdomain tld-tunnel
+darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433 5432:postgres-dev.talaland-dev.svc:5432
+darkubectl tunnel down
 
 # Create an app from a Docker image (needs a JWT login; see below)
 darkubectl get plans                       # pick a plan (NAME column → --plan)
@@ -262,6 +271,43 @@ These can also be changed after the fact. The API has no partial update — `PAT
 Namespaces resolve by name when they already contain an app; a brand-new empty project has to be referenced by id, which `get namespaces` prints.
 
 **A multi-port spec is not proven to work.** The example above is the real `masstransit-dev` spec, and the app it produced has no container ports and no Service at all — `darkube deploy` reported success and said nothing. Every single-port app created alongside it got its Service, so `main` on its own is the shape known to work. Treat the second port as unverified rather than broken: that app was later deleted and its release orphaned (see below), which is a second candidate explanation nobody has separated from the first.
+
+### Reaching a service from outside
+
+There are two ways, and they are not equivalent.
+
+**`set svc-type <app> LoadBalancer`** asks the cluster for a public address. It is one command, needs nothing installed, and changes the running app in place — the type is a field on the app object like any other, so there is no delete-and-recreate and no risk of stranding the Helm release. Use it for something that is meant to be public.
+
+Two things about it are worth knowing before you reach for it. The first is that **the port that answers is the allocated `nodePort`, not the `servicePort`.** Hamravesh fronts LoadBalancer services with a shared gateway, so an app whose `servicePort` is 5432 is reached on something like `:30410`, and the `servicePort` itself refuses connections — which reads as a broken exposure rather than a wrong port. The command prints the endpoint that actually works, and `describe app` reports it as `svc.externalAddress` alongside the per-port `nodePort`:
+
+```sh
+darkubectl set svc-type postgres-dev LoadBalancer
+```
+
+```text
+app/postgres-dev service type set to LoadBalancer
+
+reachable at:
+  c41ac067-….hsvc.ir:30410   (main, container port 5432)
+note: that is the nodePort, not the service port. The gateway is shared, so the
+      service port itself refuses connections.
+```
+
+The second is that there is now **nothing between the internet and the app but whatever authentication the app itself asks for**. For a database reachable with a superuser account, that is usually the wrong trade, which is what the other option is for.
+
+**`tunnel`** runs a [chisel](https://github.com/jpillora/chisel) server as an ordinary app and forwards local ports through it. Nothing is published: the tunnel rides the HTTP ingress the app already has, and only someone holding the credential minted at `tunnel up` can use it.
+
+```sh
+darkubectl tunnel up --namespace talaland-dev --subdomain tld-tunnel
+darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433
+# -> localhost:1433 reaches the in-cluster database
+```
+
+`REMOTEHOST` is resolved inside the cluster, so it is the in-cluster address — `describe app` reports it as `svc.internalAddress`. Forwarding to `localhost` is rejected, because it would resolve to the tunnel pod's own (empty) loopback and produce a tunnel that connects and then refuses everything.
+
+The credential is stored in the config file at creation, and that is the only copy: **secret envs are write-only**, so the API will not give it back. `--auth` and `$DARKUBE_TUNNEL_AUTH` override it, which is what a CI job or a second machine wants.
+
+The point of the tunnel is that it needs no cluster credentials at all. `kubectl port-forward` is the obvious alternative and often is not available: on Hamravesh it means an OIDC exec plugin and a browser login, and the RBAC a Darkube user is given is frequently read-only or absent — so the person who can deploy the app cannot necessarily reach it. `tunnel connect` needs the chisel client binary on PATH; the server side installs nothing anywhere.
 
 ### Orphaned releases
 
