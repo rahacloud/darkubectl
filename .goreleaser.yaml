@@ -65,12 +65,19 @@ homebrew_casks:
     # so a release never fails on a missing HOMEBREW_TAP_GITHUB_TOKEN.
     # `index` returns "" for a key that is absent entirely, where
     # .Env.HOMEBREW_TAP_GITHUB_TOKEN would abort templating with
-    # "map has no entry for key".
+    # "map has no entry for key". It also returns "" for a key that is present
+    # and empty, which is what the workflow produces when the secret is unset.
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
     repository:
       owner: rahacloud
       name: homebrew-tap
-      token: '{{ index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}'
+      # This one field takes ONLY `{{ .Env.VAR }}` — GoReleaser validates the
+      # token template separately and rejects anything else with "expected
+      # {{ .Env.VAR_NAME }} only (no plain-text or other interpolation)", which
+      # is what failed the v0.5.0 release *after* it had already published every
+      # binary. Safe despite the note above because the release workflow always
+      # defines the variable, empty or not.
+      token: '{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}'
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
