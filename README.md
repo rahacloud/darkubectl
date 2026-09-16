@@ -37,7 +37,7 @@ darkubectl get orphans               # something the console cannot tell you at 
 | 🔎 **Familiar verbs** | `get`, `describe`, `logs`, `exec`, `create`, `delete` — the kubectl muscle memory carries over. |
 | 🧭 **Real terminals** | `terminal app <name>` opens an interactive shell over the exec websocket, resize and all. `exec` runs one-off commands. |
 | 📜 **Logs that pipe** | `logs -f` to follow, `--previous` for the container that just crashed, `--timestamps` for correlation. |
-| 🔌 **Tunnels, not exposure** | `tunnel up` runs a [chisel](https://github.com/jpillora/chisel) server as an app and `tunnel connect` forwards local ports through it, so you can reach a ClusterIP database from a laptop without a public LoadBalancer and without cluster credentials. |
+| 🔌 **Tunnels, not exposure** | `tunnel up` runs a [chisel](https://github.com/jpillora/chisel) server as an app and `tunnel connect` forwards local ports through it, so you can reach a ClusterIP database from a laptop without a public LoadBalancer and without cluster credentials. The client is built in, and `connect --host … --auth …` works for someone with no Darkube account at all. |
 | 👻 **Orphan detection** | `get orphans` reconciles your tenant against a live cluster and finds the Helm releases Darkube left behind on delete. Nothing else surfaces these. |
 | 🎨 **Readable output** | Colorized tables and a `describe -i` interactive viewer with search, degrading to plain text the moment you pipe it. |
 | 🤖 **Scriptable** | `-o json`, `-o yaml`, `-o name` on everything, config via flags, env or file, and `get deploy-token` to wire a CI pipeline without the console. |
@@ -307,7 +307,18 @@ darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433
 
 The credential is stored in the config file at creation, and that is the only copy: **secret envs are write-only**, so the API will not give it back. `--auth` and `$DARKUBE_TUNNEL_AUTH` override it, which is what a CI job or a second machine wants.
 
-The point of the tunnel is that it needs no cluster credentials at all. `kubectl port-forward` is the obvious alternative and often is not available: on Hamravesh it means an OIDC exec plugin and a browser login, and the RBAC a Darkube user is given is frequently read-only or absent — so the person who can deploy the app cannot necessarily reach it. `tunnel connect` needs the chisel client binary on PATH; the server side installs nothing anywhere.
+The point of the tunnel is that it needs no cluster credentials at all. `kubectl port-forward` is the obvious alternative and often is not available: on Hamravesh it means an OIDC exec plugin and a browser login, and the RBAC a Darkube user is given is frequently read-only or absent — so the person who can deploy the app cannot necessarily reach it. Neither side of the tunnel installs anything: the server is an app, and the chisel client is linked into this binary. `--chisel-binary` runs an external one instead, for a different version or a patched build.
+
+**Handing a tunnel to someone else** is `--host`, and it is the flag that makes this useful beyond your own laptop:
+
+```sh
+darkubectl tunnel connect --host tld-tunnel.darkube.app --auth tunnel:… \
+    27017:mongodb-stage.talaland-stage.svc:27017
+```
+
+With `--host` the command makes no API call, so whoever runs it needs no Darkube account, no tenant and no login — only this binary, the hostname and the credential. Without it the tunnel app is looked up by name, which needs all three. `tunnel up` prints the exact `--host` line to pass on, credential included.
+
+The hostname has to be one the other side can actually resolve. A platform subdomain (`--subdomain`, `*.darkube.app`) answers with a **private** address and is reachable only from inside Hamravesh's network, so for an outside collaborator the tunnel needs either a real domain CNAMEd at the cluster (`--host` on `tunnel up`, pointed at the `ingress_cname_address` from `get domains`) or a LoadBalancer on the tunnel app — which exposes chisel rather than the database, and chisel's own SSH layer keeps the forwarded traffic encrypted even over plain `http://`. `--host` accepts `host`, `host:port` or a full URL, and keeps an explicit scheme.
 
 ### Orphaned releases
 

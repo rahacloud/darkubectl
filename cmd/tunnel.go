@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
+	chclient "github.com/jpillora/chisel/client"
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/urfave/cli/v3"
 )
@@ -30,6 +32,16 @@ import (
 // A tunnel needs neither: it rides the HTTP ingress that already exists, and it
 // is reachable only by someone holding the credential minted at `tunnel up`.
 //
+// The client half is chisel's own Go package, linked in rather than executed.
+// It used to shell out to a `chisel` binary on PATH, on the same reasoning as
+// internal/kube shelling out to kubectl, and that reasoning does not survive the
+// use case: the person who needs `tunnel connect` is usually a developer at a
+// client company who has been handed a hostname and a credential. Telling them
+// to fetch a second binary from GitHub releases -- frequently blocked from Iran,
+// which is where every user of this tool is -- turns a one-line instruction into
+// a support thread. Linking it in costs a few MB and a dependency tree to track;
+// --chisel-binary still runs an external one for anybody who wants that.
+//
 // Two platform details shape the implementation. The chisel image is built FROM
 // scratch, so there is no shell in it and `command` must name the binary
 // directly — which is fine, because `command` is split on whitespace while
@@ -38,14 +50,30 @@ import (
 // credential is stored in the 0600 config file at creation or it is lost.
 
 const (
-	chiselImage = "jpillora/chisel:v1.10.1"
+	// The Docker Hub tags carry no "v" — `jpillora/chisel:v1.12.1` is a manifest
+	// unknown, which surfaces as a Pending pod with an empty log and nothing in
+	// the API naming the tag as the cause. Keep this in step with the module
+	// version in go.mod: client and server negotiate a protocol version, and a
+	// mismatch is refused at the handshake.
+	chiselImage = "jpillora/chisel:1.12.1"
+	// chiselBinaryPath is where the binary sits INSIDE that image, and it moves:
+	// 1.10 shipped /app/chisel, 1.12 is ko-built and ships /ko-app/chisel with
+	// WorkingDir /app. The image has an ENTRYPOINT, but it cannot be used —
+	// `args` is never split, so the flags would arrive as one argv element — so
+	// the path is named here and has to be rechecked whenever the tag moves.
+	// Getting it wrong is a CreateContainerError, which the API reports as a
+	// Pending pod with no logs at all.
+	chiselBinaryPath = "/ko-app/chisel"
 	// chiselPort is both the container port and the service port. The ingress
 	// routes to the service port, and keeping them equal is the shape every
 	// working app in the wild uses.
 	chiselPort = 8080
 	// chiselKeepalive keeps the websocket alive through proxies that drop idle
 	// connections. Traefik's default idle timeout is well under a working day.
-	chiselKeepalive = "25s"
+	chiselKeepalive = 25 * time.Second
+	// chiselMaxRetryInterval caps the backoff between reconnects. chisel's own
+	// default is five minutes, which is a long time to stare at a dead forward.
+	chiselMaxRetryInterval = 30 * time.Second
 
 	defaultTunnelName = "darkube-tunnel"
 	defaultTunnelPlan = "1"
@@ -67,8 +95,8 @@ const (
 
 var (
 	errChiselMissing = errors.New(
-		"chisel not found on PATH: install it from https://github.com/jpillora/chisel/releases " +
-			"(or `go install github.com/jpillora/chisel@latest`), or point at it with --chisel-binary")
+		"the --chisel-binary given was not found on PATH; drop the flag to use the client " +
+			"built into darkubectl, which needs nothing installed")
 	errNoNamespace  = errors.New("--namespace is required")
 	errNoForwards   = errors.New("at least one forward is required, e.g. 1433:mssql-dev.talaland-dev.svc:1433")
 	errNoTunnelAuth = errors.New(
@@ -89,8 +117,9 @@ func newTunnelCommand() *cli.Command {
 			"  darkubectl tunnel up --namespace talaland-dev --subdomain tld-tunnel\n" +
 			"  darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433\n" +
 			"  darkubectl tunnel down\n\n" +
-			"`connect` needs the chisel client binary on PATH; the server side needs nothing\n" +
-			"installed anywhere.",
+			"Neither side needs anything installed: the chisel server runs as an app and the\n" +
+			"client is linked into this binary. `connect --host … --auth …` needs no Darkube\n" +
+			"account either, so a tunnel can be handed to someone outside the tenant.",
 		Commands: []*cli.Command{
 			newTunnelUpCommand(),
 			newTunnelConnectCommand(),
@@ -194,6 +223,16 @@ func tunnelUpAction(ctx context.Context, cmd *cli.Command) error {
 
 	fmt.Fprintf(os.Stdout, "\ncredential: %s   (saved to the config file; the API cannot return it again)\n", auth)
 	fmt.Fprintf(os.Stdout, "next:       darkubectl tunnel connect --name %s LOCALPORT:REMOTEHOST:REMOTEPORT\n", name)
+	// The line worth copying: it names the hostname and the credential, so it
+	// works for someone with neither a login nor this tool's config file. The
+	// hostname is read back rather than assembled, because the base domain is the
+	// cluster's and not ours to guess.
+	if h := tunnelHostAfterCreate(ctx, c, name, host); h != "" {
+		fmt.Fprintf(os.Stdout, "hand over:  darkubectl tunnel connect --host %s --auth %s LOCALPORT:REMOTEHOST:REMOTEPORT\n", h, auth)
+		fmt.Fprintf(os.Stderr, "            (that form makes no API call, so the other side needs no Darkube account)\n")
+	} else if subdomain != "" {
+		fmt.Fprintf(os.Stderr, "            (the hostname is not readable yet; `get domains %s` prints it once it is)\n", name)
+	}
 	fmt.Fprintf(os.Stderr,
 		"\nnote: the hostname and its certificate take a few minutes. `darkubectl wait app %s\n"+
 			"      --for ready` waits for the app; the ingress may lag behind it.\n", name)
@@ -223,6 +262,25 @@ func attachTunnelHost(ctx context.Context, c *client.Client, name, subdomain, ho
 	return err
 }
 
+// tunnelHostAfterCreate reads the hostname back off the freshly created app. A
+// custom --host is already known; a platform subdomain becomes a hostname the
+// cluster decides, and it can lag the create by a moment, so a miss here is
+// normal and not an error.
+func tunnelHostAfterCreate(ctx context.Context, c *client.Client, name, host string) string {
+	if host != "" {
+		return host
+	}
+	app, err := c.ResolveApp(ctx, name)
+	if err != nil {
+		return ""
+	}
+	raw, err := c.GetApp(ctx, app.ID)
+	if err != nil {
+		return ""
+	}
+	return tunnelHost(raw)
+}
+
 // ------------------------------------------------------------ tunnel connect
 
 func newTunnelConnectCommand() *cli.Command {
@@ -231,14 +289,21 @@ func newTunnelConnectCommand() *cli.Command {
 		Usage:     "Forward local ports through the tunnel (runs the chisel client)",
 		ArgsUsage: "LOCALPORT:REMOTEHOST:REMOTEPORT [more…]",
 		Description: "  darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433\n" +
-			"  darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433 5432:postgres-dev.talaland-dev.svc:5432\n\n" +
+			"  darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433 5432:postgres-dev.talaland-dev.svc:5432\n" +
+			"  darkubectl tunnel connect --host tld-tunnel.darkube.app --auth tunnel:… 27017:mongodb-stage.talaland-stage.svc:27017\n\n" +
 			"REMOTEHOST is resolved inside the cluster, so it is the in-cluster address —\n" +
 			"`get app <name>` reports it as svc.internalAddress. Runs in the foreground until\n" +
-			"interrupted.",
+			"interrupted.\n\n" +
+			"The chisel client is built in; nothing has to be installed. With --host and\n" +
+			"--auth this makes no API call at all, so it works for someone who has the\n" +
+			"hostname and the credential but no Darkube account — which is the normal case\n" +
+			"for a developer at a client company. Without --host the tunnel app is looked up\n" +
+			"by name, which needs a login and a tenant.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagName, Value: defaultTunnelName, Usage: "app name of the tunnel server"},
+			&cli.StringFlag{Name: flagHost, Usage: "tunnel `hostname` (skips the API lookup, and with it the need to log in)"},
 			&cli.StringFlag{Name: flagAuth, Usage: "user:pass (defaults to the stored credential or $" + envTunnelAuth + ")"},
-			&cli.StringFlag{Name: flagBinary, Value: "chisel", Usage: "chisel client binary"},
+			&cli.StringFlag{Name: flagBinary, Usage: "run this external chisel `binary` instead of the built-in client"},
 		},
 		Action: tunnelConnectAction,
 	}
@@ -254,45 +319,118 @@ func tunnelConnectAction(ctx context.Context, cmd *cli.Command) error {
 			return err
 		}
 	}
-	name := cmd.String(flagName)
 
-	c, cfg, err := buildClient(ctx, cmd)
+	host, auth, err := resolveConnectTarget(ctx, cmd)
 	if err != nil {
 		return err
 	}
-	auth := resolveTunnelAuth(cmd, cfg, c.Org, name)
-	if auth == "" {
-		return errNoTunnelAuth
-	}
-	app, err := c.ResolveApp(ctx, name)
-	if err != nil {
-		return err
-	}
-	raw, err := c.GetApp(ctx, app.ID)
-	if err != nil {
-		return err
-	}
-	host := tunnelHost(raw)
-	if host == "" {
-		return errNoTunnelHost
-	}
 
-	bin, err := exec.LookPath(cmd.String(flagBinary))
-	if err != nil {
-		return errChiselMissing
-	}
-
-	argv := chiselClientArgs(host, auth, forwards)
-	fmt.Fprintf(os.Stderr, "tunnelling through https://%s — press ctrl-c to stop\n", host)
+	fmt.Fprintf(os.Stderr, "tunnelling through %s — press ctrl-c to stop\n", chiselServerURL(host))
 	for _, f := range forwards {
 		local, _, _ := strings.Cut(f, ":")
 		fmt.Fprintf(os.Stderr, "  localhost:%s\n", local)
 	}
 
+	if bin := cmd.String(flagBinary); bin != "" {
+		return runChiselBinary(ctx, bin, host, auth, forwards)
+	}
+	return runChiselClient(ctx, host, auth, forwards)
+}
+
+// resolveConnectTarget answers which hostname to dial and with which credential.
+//
+// The --host path deliberately touches no API: given a hostname and a credential
+// this command is self-contained, which is what lets a tunnel be handed to
+// somebody outside the tenant. The lookup path is the convenience for whoever
+// ran `tunnel up`, whose config already holds both.
+func resolveConnectTarget(ctx context.Context, cmd *cli.Command) (string, string, error) {
+	if host := trimHost(cmd.String(flagHost)); host != "" {
+		auth := cmd.String(flagAuth)
+		if auth == "" {
+			auth = os.Getenv(envTunnelAuth)
+		}
+		if auth == "" {
+			return "", "", errNoTunnelAuth
+		}
+		return host, auth, nil
+	}
+
+	name := cmd.String(flagName)
+	c, cfg, err := buildClient(ctx, cmd)
+	if err != nil {
+		return "", "", err
+	}
+	auth := resolveTunnelAuth(cmd, cfg, c.Org, name)
+	if auth == "" {
+		return "", "", errNoTunnelAuth
+	}
+	app, err := c.ResolveApp(ctx, name)
+	if err != nil {
+		return "", "", err
+	}
+	raw, err := c.GetApp(ctx, app.ID)
+	if err != nil {
+		return "", "", err
+	}
+	host := tunnelHost(raw)
+	if host == "" {
+		return "", "", errNoTunnelHost
+	}
+	return host, auth, nil
+}
+
+// trimHost accepts what someone actually pastes: a bare hostname, a host:port,
+// or the whole URL they were sent, trailing slash and all. The scheme is kept
+// when it is given, because it is not always https — a tunnel reached through a
+// LoadBalancer answers plain HTTP on a nodePort, and chisel tunnels are
+// encrypted by their own SSH layer either way, so http there is not a downgrade
+// of the forwarded traffic.
+func trimHost(s string) string {
+	return strings.TrimSuffix(strings.TrimSpace(s), "/")
+}
+
+// chiselServerURL gives the address a scheme if the caller did not.
+func chiselServerURL(host string) string {
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		return host
+	}
+	return "https://" + host
+}
+
+// runChiselClient runs chisel's client in this process. Start returns once the
+// forwards are listening; Wait blocks until the connection loop gives up, which
+// for a client with no retry limit means until the process is interrupted.
+func runChiselClient(ctx context.Context, host, auth string, forwards []string) error {
+	cl, err := chclient.NewClient(&chclient.Config{
+		Server:           chiselServerURL(host),
+		Auth:             auth,
+		KeepAlive:        chiselKeepalive,
+		MaxRetryInterval: chiselMaxRetryInterval,
+		Remotes:          forwards,
+	})
+	if err != nil {
+		return fmt.Errorf("chisel client: %w", err)
+	}
+	// chisel's own logging is the only sign the connection came up or dropped.
+	cl.Info = true
+	if err := cl.Start(ctx); err != nil {
+		return err
+	}
+	return cl.Wait()
+}
+
+// runChiselBinary is the escape hatch: --chisel-binary runs an external client
+// instead of the linked-in one, for a different version or a patched build.
+func runChiselBinary(ctx context.Context, name, host, auth string, forwards []string) error {
+	bin, err := exec.LookPath(name)
+	if err != nil {
+		return errChiselMissing
+	}
 	// Hand over stdio: chisel logs to stderr and this runs until interrupted.
 	// The binary is the --chisel-binary value resolved through exec.LookPath, and
 	// the arguments are validated forwards, so this is the intended indirection.
-	run := exec.CommandContext(ctx, bin, argv...) //nolint:gosec // G204: the binary is an explicit, PATH-resolved flag
+	//nolint:gosec // G204: the binary is an explicit, PATH-resolved flag
+	run := exec.CommandContext(ctx, bin, chiselClientArgs(host, auth, forwards)...)
 	run.Stdin, run.Stdout, run.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return run.Run()
 }
@@ -302,7 +440,7 @@ func tunnelConnectAction(ctx context.Context, cmd *cli.Command) error {
 func chiselClientArgs(host, auth string, forwards []string) []string {
 	const fixedArgs = 6
 	argv := make([]string, 0, fixedArgs+len(forwards))
-	argv = append(argv, "client", "--auth", auth, "--keepalive", chiselKeepalive, "https://"+host)
+	argv = append(argv, "client", "--auth", auth, "--keepalive", chiselKeepalive.String(), chiselServerURL(host))
 	return append(argv, forwards...)
 }
 
@@ -376,7 +514,7 @@ func tunnelDownAction(ctx context.Context, cmd *cli.Command) error {
 // passes the second through as a single argv element. The image is FROM scratch,
 // so there is no shell to fall back on either way.
 func chiselServerCommand() string {
-	return fmt.Sprintf("/app/chisel server --port %d --keepalive %s", chiselPort, chiselKeepalive)
+	return fmt.Sprintf("%s server --port %d --keepalive %s", chiselBinaryPath, chiselPort, chiselKeepalive)
 }
 
 // tunnelKey namespaces a stored credential by tenant, since app names are only

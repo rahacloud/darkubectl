@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 )
 
 // The image is FROM scratch and `args` is never split, so the entire invocation
@@ -15,8 +18,8 @@ func TestChiselServerCommandIsASingleSplittableCommand(t *testing.T) {
 
 	got := chiselServerCommand()
 	fields := strings.Fields(got)
-	if fields[0] != "/app/chisel" {
-		t.Errorf("argv[0] = %q, want the absolute binary path (the image has no shell)", fields[0])
+	if fields[0] != chiselBinaryPath {
+		t.Errorf("argv[0] = %q, want %q — the absolute path inside the image, which has no shell", fields[0], chiselBinaryPath)
 	}
 	if !slices.Contains(fields, "server") {
 		t.Errorf("command = %q, want the server subcommand", got)
@@ -174,5 +177,98 @@ func TestResolveTunnelAuthPrefersEnvOverConfig(t *testing.T) {
 	got := resolveTunnelAuth(newTunnelConnectCommand(), store, "talaland", "darkube-tunnel")
 	if got != "tunnel:from-env" {
 		t.Errorf("resolveTunnelAuth = %q, want the environment to win", got)
+	}
+}
+
+// The --host path is the whole reason this flag exists: it has to resolve
+// without a client, so that someone with no Darkube account can connect.
+func TestResolveConnectTargetWithHostMakesNoAPICall(t *testing.T) {
+	t.Parallel()
+
+	cmd := connectCommandForTest(t, []string{
+		"connect", "--host", "https://tld-tunnel.darkube.app/", "--auth", "tunnel:secret",
+		"27017:mongodb-stage.talaland-stage.svc:27017",
+	})
+
+	// A nil context would panic if this reached the HTTP client at all.
+	host, auth, err := resolveConnectTarget(t.Context(), cmd)
+	if err != nil {
+		t.Fatalf("resolveConnectTarget returned %v", err)
+	}
+	if host != "https://tld-tunnel.darkube.app" {
+		t.Errorf("host = %q, want the pasted URL kept and the trailing slash dropped", host)
+	}
+	if auth != "tunnel:secret" {
+		t.Errorf("auth = %q, want the --auth value", auth)
+	}
+}
+
+// Without a credential there is nothing to try, and saying so beats a 401 from
+// a websocket handshake several seconds later.
+func TestResolveConnectTargetWithHostRequiresAuth(t *testing.T) {
+	t.Setenv(envTunnelAuth, "")
+
+	cmd := connectCommandForTest(t, []string{
+		"connect", "--host", "tld-tunnel.darkube.app",
+		"27017:mongodb-stage.talaland-stage.svc:27017",
+	})
+	if _, _, err := resolveConnectTarget(t.Context(), cmd); !errors.Is(err, errNoTunnelAuth) {
+		t.Errorf("err = %v, want errNoTunnelAuth", err)
+	}
+}
+
+// The environment variable exists so a credential need not appear in shell
+// history or in a screen-shared terminal.
+func TestResolveConnectTargetWithHostFallsBackToEnvAuth(t *testing.T) {
+	t.Setenv(envTunnelAuth, "tunnel:from-env")
+
+	cmd := connectCommandForTest(t, []string{
+		"connect", "--host", "tld-tunnel.darkube.app",
+		"27017:mongodb-stage.talaland-stage.svc:27017",
+	})
+	_, auth, err := resolveConnectTarget(t.Context(), cmd)
+	if err != nil {
+		t.Fatalf("resolveConnectTarget returned %v", err)
+	}
+	if auth != "tunnel:from-env" {
+		t.Errorf("auth = %q, want the value from $%s", auth, envTunnelAuth)
+	}
+}
+
+// connectCommandForTest parses argv through the real connect command, so the
+// flags under test are the ones the CLI actually defines.
+func connectCommandForTest(t *testing.T, argv []string) *cli.Command {
+	t.Helper()
+
+	connect := newTunnelConnectCommand()
+	var parsed *cli.Command
+	connect.Action = func(_ context.Context, cmd *cli.Command) error {
+		parsed = cmd
+		return nil
+	}
+	root := &cli.Command{Name: "tunnel", Commands: []*cli.Command{connect}}
+	if err := root.Run(t.Context(), append([]string{"tunnel"}, argv...)); err != nil {
+		t.Fatalf("parsing %v: %v", argv, err)
+	}
+	if parsed == nil {
+		t.Fatalf("the connect action never ran for %v", argv)
+	}
+	return parsed
+}
+
+// A tunnel behind a LoadBalancer answers plain HTTP on a nodePort, so an
+// explicit scheme has to survive and a bare host has to acquire one.
+func TestChiselServerURLKeepsAnExplicitScheme(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"tld-tunnel.darkube.app":         "https://tld-tunnel.darkube.app",
+		"https://tld-tunnel.darkube.app": "https://tld-tunnel.darkube.app",
+		"http://b591e693.hsvc.ir:31234":  "http://b591e693.hsvc.ir:31234",
+		"b591e693.hsvc.ir:31234":         "https://b591e693.hsvc.ir:31234",
+	} {
+		if got := chiselServerURL(in); got != want {
+			t.Errorf("chiselServerURL(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
