@@ -34,6 +34,7 @@ const (
 	flagDryRun   = "dry-run"
 
 	usageSkipConfirm = "skip the confirmation prompt"
+	usageDryRun      = "show what would change and exit without writing"
 )
 
 // Sentinel errors for command-level validation.

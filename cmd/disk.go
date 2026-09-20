@@ -97,7 +97,7 @@ func newSetDiskCommand() *cli.Command {
 				Required: true,
 				Usage:    "desired size in GiB, which must be larger than the current one",
 			},
-			&cli.BoolFlag{Name: flagDryRun, Usage: "show what would change and exit without writing"},
+			&cli.BoolFlag{Name: flagDryRun, Usage: usageDryRun},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
 		Action: setDiskAction,

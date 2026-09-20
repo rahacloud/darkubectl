@@ -39,7 +39,7 @@ func newPatchCommand() *cli.Command {
 					},
 					&cli.BoolFlag{
 						Name:  flagDryRun,
-						Usage: "show what would change and exit without writing",
+						Usage: usageDryRun,
 					},
 					&cli.BoolFlag{
 						Name:    flagYes,

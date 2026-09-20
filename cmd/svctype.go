@@ -69,7 +69,7 @@ func newSetSvcTypeCommand() *cli.Command {
 			"allocated nodePort, NOT the servicePort — Hamravesh fronts these with a shared\n" +
 			"gateway, so a LoadBalancer app on servicePort 5432 is reached on, say, :30410.",
 		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: flagDryRun, Usage: "show what would change and exit without writing"},
+			&cli.BoolFlag{Name: flagDryRun, Usage: usageDryRun},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
 		Action: setSvcTypeAction,
