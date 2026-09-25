@@ -98,3 +98,19 @@ func TestApplyDiskSizeRejectsDisklessApp(t *testing.T) {
 		}
 	}
 }
+
+// A size that is not a JSON number must fail loudly: read as 0 it would let a
+// shrink through and make the read-back report a resize that was ignored.
+func TestApplyDiskSizeRejectsUnreadableSize(t *testing.T) {
+	t.Parallel()
+
+	for name, disk := range map[string]map[string]any{
+		"missing": {"storage_class_name": "rawfile-btrfs"},
+		"string":  {keyDiskSize: "15"},
+		"null":    {keyDiskSize: nil},
+	} {
+		if err := applyDiskSize(appWithDisk(disk), 40); !errors.Is(err, errDiskSizeUnreadable) {
+			t.Errorf("%s: err = %v, want errDiskSizeUnreadable", name, err)
+		}
+	}
+}

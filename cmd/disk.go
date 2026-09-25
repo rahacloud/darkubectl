@@ -50,6 +50,8 @@ var (
 	errNoDisk = errors.New("this app has no disk, and one cannot be added after creation")
 
 	errDiskSizeRequired = errors.New("--size must be greater than zero")
+
+	errDiskSizeUnreadable = errors.New("the app's disk has no readable size_in_Gi, so a resize cannot be checked")
 )
 
 // errDiskIgnored reports the one outcome that looks like success and is not.
@@ -143,6 +145,12 @@ func setDiskAction(ctx context.Context, cmd *cli.Command) error {
 		fmt.Fprintf(os.Stdout, "app/%s disk is already %dGi\n", app.Name, size)
 		return nil
 	}
+	// applyDiskSize refuses this too, but only inside UpdateApp — after the
+	// prompt has already asked the operator to confirm "growing" to a smaller
+	// number. Refuse before asking.
+	if size < from {
+		return errDiskShrink(from, size)
+	}
 
 	fmt.Fprintf(os.Stderr, "About to grow the disk of app %q (%s) in tenant %q: %dGi -> %dGi.\n",
 		app.Name, app.ID, c.Org, from, size)
@@ -185,8 +193,12 @@ func applyDiskSize(raw map[string]any, size int) error {
 	if !ok || len(disk) == 0 {
 		return errNoDisk
 	}
-	if current := jsonInt(disk[keyDiskSize]); current > size {
-		return errDiskShrink(current, size)
+	current, ok := disk[keyDiskSize].(float64)
+	if !ok {
+		return errDiskSizeUnreadable
+	}
+	if int(current) > size {
+		return errDiskShrink(int(current), size)
 	}
 	disk[keyDiskSize] = size
 	return nil
@@ -211,5 +223,12 @@ func currentDiskSize(
 	if !ok || len(disk) == 0 {
 		return 0, errNoDisk
 	}
-	return jsonInt(disk[keyDiskSize]), nil
+	// Not jsonInt: its 0 for anything but a number would read as "no disk yet",
+	// let a shrink past the check above and turn the read-back into a false
+	// "the platform ignored the resize".
+	size, ok := disk[keyDiskSize].(float64)
+	if !ok {
+		return 0, errDiskSizeUnreadable
+	}
+	return int(size), nil
 }

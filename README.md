@@ -176,6 +176,7 @@ darkubectl set subdomain <name|id> my-api                  # -> my-api.darkube.a
 darkubectl set subdomain <name|id> --remove
 darkubectl set svc-type <name|id> LoadBalancer            # expose it; ports are preserved
 darkubectl set svc-type <name|id> ClusterIP --dry-run    # show the diff, send nothing
+darkubectl set disk <name|id> --size 40                   # grow only; re-read to confirm it took
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
 darkubectl patch app <name|id> -p '{"replicas": 3}' --dry-run   # show the diff, send nothing
 darkubectl delete app <name|id>
@@ -184,8 +185,8 @@ darkubectl delete app <name|id>
 darkubectl wait app <name|id> --for ready --timeout 10m
 darkubectl wait app <name|id> --for deleted
 
-# Reach a ClusterIP service from your laptop, without exposing it (needs the
-# chisel client on PATH for `connect`; the server side installs nothing)
+# Reach a ClusterIP service from your laptop, without exposing it (the chisel
+# client is built in, and the server side installs nothing)
 darkubectl tunnel up --namespace talaland-dev --subdomain tld-tunnel
 darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433 5432:postgres-dev.talaland-dev.svc:5432
 darkubectl tunnel down
