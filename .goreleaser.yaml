@@ -81,14 +81,22 @@ homebrew_casks:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    hooks:
-      post:
-        # The release binaries are unsigned, so macOS would otherwise quarantine
-        # them and refuse the first run.
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/darkubectl"]
+    # The release binaries are unsigned, so macOS would otherwise quarantine
+    # them and refuse the first run. This is a `custom_block` rather than
+    # `hooks.post.install` because GoReleaser renders the hook as a Ruby
+    # `postflight do` block, which Homebrew deprecated in favor of the
+    # declarative `postflight_steps` ("Calling `postflight` is deprecated!" on
+    # every install). Steps take literal arguments only, so the path is
+    # Homebrew's own `{{staged_path}}` token — escaped here, since GoReleaser
+    # runs this field through its template engine first.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          if_path_exists "/usr/bin/xattr" do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/darkubectl"], must_succeed: false
           end
+        end
+      end
 
 release:
   draft: false
