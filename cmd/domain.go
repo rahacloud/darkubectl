@@ -14,11 +14,20 @@ import (
 )
 
 // flagAdd names a domain to route to an app.
-const flagAdd = "add"
+const (
+	flagAdd           = "add"
+	flagChallenge     = "challenge"
+	flagRedirectHTTPS = "redirect-https"
+	flagNoReconcile   = "no-reconcile"
+
+	challengeHTTP01 = "http01"
+	challengeDNS01  = "dns01"
+)
 
 var (
 	errNoDomainChange    = errors.New("nothing to do: pass --add and/or --remove")
 	errPlatformSubdomain = errors.New("that is a platform subdomain, not an external host")
+	errBadChallenge      = errors.New("--challenge must be http01 or dns01")
 )
 
 func newGetDomainsCommand() *cli.Command {
@@ -113,10 +122,22 @@ func newSetDomainCommand() *cli.Command {
 		Description: "  darkubectl set domain my-api --add api.example.com\n" +
 			"  darkubectl set domain my-api --remove old.example.com\n\n" +
 			"Point the domain's DNS at the cluster CNAME target from `get domains` before\n" +
-			"adding it, or certificate issuance will not complete.",
+			"adding it, or certificate issuance will not complete.\n\n" +
+			"Adding a domain also sets the ACME challenge to http01 unless you ask otherwise,\n" +
+			"because the platform default of dns01 fails SILENTLY on any zone Hamravesh does\n" +
+			"not host: it waits for an _acme-challenge TXT record nobody will write, the site\n" +
+			"keeps serving plain HTTP, and nothing reports an error. http01 validates over the\n" +
+			"domain you just pointed at the cluster. A wildcard (*.example.com) can only be\n" +
+			"issued over dns01, so wildcards keep it and say so.\n\n" +
+			"The ingress is only re-rendered when the app is deployed, so a change here is\n" +
+			"followed by a no-op write that triggers one. --no-reconcile skips that if you are\n" +
+			"about to deploy anyway.",
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{Name: flagAdd, Usage: "domain to route to this app (repeatable)"},
 			&cli.StringSliceFlag{Name: flagRemove, Usage: "domain to stop routing (repeatable)"},
+			&cli.StringFlag{Name: flagChallenge, Usage: "ACME challenge: http01 or dns01"},
+			&cli.BoolFlag{Name: flagRedirectHTTPS, Usage: "redirect plain HTTP to HTTPS"},
+			&cli.BoolFlag{Name: flagNoReconcile, Usage: "do not trigger the deploy that re-renders the ingress"},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
 		Action: setDomainAction,
@@ -152,23 +173,118 @@ func setDomainAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	challenge, challengeNote, err := challengeFor(
+		cmd.String(flagChallenge), additions, rawString(current, "ssl_challenge_type"))
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintf(os.Stderr, "About to update domains on app %q (%s) in tenant %q: %s\n",
 		app.Name, app.ID, c.Org, describeDomainChange(additions, removals))
+	if challenge != "" {
+		fmt.Fprintf(os.Stderr, "  ssl challenge: %s -> %s%s\n",
+			rawString(current, "ssl_challenge_type"), challenge, challengeNote)
+	}
+	if cmd.Bool(flagRedirectHTTPS) && !rawBool(current, "redirect_SSL") {
+		fmt.Fprintf(os.Stderr, "  redirect http -> https: enabled\n")
+	}
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
 
 	updated, err := c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
-		return applyDomainChange(raw, additions, removals)
+		if err := applyDomainChange(raw, additions, removals); err != nil {
+			return err
+		}
+		applyIngressSettings(raw, challenge, cmd.Bool(flagRedirectHTTPS))
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s domains updated\n", app.Name)
+	if challenge != "" {
+		fmt.Fprintf(os.Stderr, "ssl challenge: %s%s\n", challenge, challengeNote)
+	}
 	if target := rawString(updated, "ingress_cname_address"); target != "" && len(additions) > 0 {
 		fmt.Fprintf(os.Stderr, "note: point each added domain's DNS at %s\n", target)
 	}
+
+	// The ingress is rendered at deploy time, so the change above is inert until
+	// the app is deployed again. A no-op write is the cheapest trigger; without
+	// it a corrected challenge type sits in the API doing nothing, which is
+	// exactly the silent failure this command exists to avoid.
+	return reconcileIngress(ctx, c, app.ID, cmd.Bool(flagNoReconcile))
+}
+
+// reconcileIngress triggers the deploy that re-renders the ingress.
+//
+// Every write here is a full-object PUT rebuilt from a read, so a mutation that
+// changes nothing still sends the whole app back and counts as a deploy. That
+// is the entire trick: without it a corrected challenge type sits in the API
+// doing nothing while the site keeps serving plain HTTP.
+func reconcileIngress(ctx context.Context, c *client.Client, id string, skip bool) error {
+	if skip {
+		fmt.Fprintf(os.Stderr, "note: not reconciled — the ingress re-renders on the app's next deploy\n")
+		return nil
+	}
+	if _, err := c.UpdateApp(ctx, id, func(map[string]any) error { return nil }); err != nil {
+		return fmt.Errorf("domains updated but the reconcile deploy failed: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "reconciled: ingress re-rendered\n")
 	return nil
+}
+
+// challengeFor decides which ACME challenge an app should use after these
+// domains are added.
+//
+// The platform defaults new apps to dns01, which is the wrong default for any
+// zone Hamravesh does not host: issuance waits on an _acme-challenge TXT record
+// that nobody will write, and reports nothing while the site serves plain HTTP.
+// http01 validates over the domain that must already point at the cluster for
+// the ingress to serve it at all, so it is correct whenever the domain works.
+//
+// The exception is a wildcard, which Let's Encrypt will only issue over dns01 —
+// there is no host to answer an HTTP challenge on. Those keep dns01 and the
+// caller is told why.
+//
+// An explicit --challenge always wins; returning "" means leave the app alone.
+func challengeFor(explicit string, additions []string, current string) (string, string, error) {
+	switch explicit {
+	case challengeHTTP01, challengeDNS01:
+		return explicit, "", nil
+	case "":
+	default:
+		return "", "", fmt.Errorf("%w: got %q", errBadChallenge, explicit)
+	}
+	if len(additions) == 0 {
+		return "", "", nil
+	}
+	for _, h := range additions {
+		if strings.HasPrefix(h, "*.") {
+			if current == challengeDNS01 {
+				return "", "", nil
+			}
+			return challengeDNS01, " (a wildcard can only be issued over dns01)", nil
+		}
+	}
+	if current == challengeHTTP01 {
+		return "", "", nil
+	}
+	return challengeHTTP01, " (dns01 would wait for a TXT record nobody writes)", nil
+}
+
+// applyIngressSettings writes the ingress fields that decide whether a domain
+// ever gets a certificate. Both are no-ops when unset, so this is safe to call
+// on every update.
+func applyIngressSettings(raw map[string]any, challenge string, redirect bool) {
+	if challenge != "" {
+		raw["ssl_challenge_type"] = challenge
+		raw["enable_SSL"] = true
+	}
+	if redirect {
+		raw["redirect_SSL"] = true
+	}
 }
 
 // rejectPlatformSubdomains refuses hosts under the cluster's own base domain.
