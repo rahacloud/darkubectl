@@ -174,9 +174,9 @@ func buildCreatePayload(in CreateAppInput) map[string]any {
 	}
 
 	payload := map[string]any{
-		"name":                 in.Name,
+		fieldName:              in.Name,
 		"namespace":            in.NamespaceID,
-		"organization":         in.OrganizationID,
+		fieldOrganization:      in.OrganizationID,
 		"plan":                 in.PlanID,
 		"creation_method":      CreationMethodDockerImage,
 		"image_repo":           in.ImageRepo,

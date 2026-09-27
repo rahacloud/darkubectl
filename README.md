@@ -45,6 +45,8 @@ darkubectl get orphans               # something the console cannot tell you at 
 | 🔐 **Two auth modes** | An account API key for scripting, or a full 2FA Console login (TOTP) for terminals and app creation. |
 | 📦 **One static binary** | Go, no client-go, no runtime deps. Linux, macOS and Windows on amd64 and arm64. |
 
+Namespaces are here too: `create namespace <name> --cluster <name|id>` and `delete namespace <name|id>`. Both need a Console JWT rather than an account key, which is why they live in the CLI and not in a curl one-liner. Two rules the API will not tell you: the name **must start with the tenant slug** (`acme` can create `acme-production`, never `production`), and every rejection — bad prefix, bad charset, bad length — comes back as the same opaque `400 نام انتخاب شده درست نیست`. The prefix is checked locally so the error names the rule. Delete refuses while a namespace still holds apps; the API does not check, and deleting a populated project takes its workloads with it.
+
 ## Install
 
 **Homebrew** (macOS):

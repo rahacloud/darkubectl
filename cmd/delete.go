@@ -13,6 +13,7 @@ func newDeleteCommand() *cli.Command {
 		Name:  "delete",
 		Usage: "Delete a resource",
 		Commands: []*cli.Command{
+			newDeleteNamespaceCommand(),
 			{
 				Name:      cmdApp,
 				Aliases:   []string{aliasApp},
