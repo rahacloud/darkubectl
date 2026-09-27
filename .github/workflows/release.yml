@@ -26,3 +26,6 @@ jobs:
           # Optional: a PAT with contents:write on rahacloud/homebrew-tap.
           # Unset, the Homebrew cask is built but not published (see .goreleaser.yaml).
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Optional: the passphrase-less SSH private key registered on the AUR
+          # account. Unset, the darkubectl-bin PKGBUILD is built but not pushed.
+          AUR_KEY: ${{ secrets.AUR_KEY }}

@@ -98,6 +98,34 @@ homebrew_casks:
         end
       end
 
+# AUR package `darkubectl-bin`, the Linux counterpart of the cask above. The
+# package was created by hand at 0.6.0; from then on every tag regenerates its
+# PKGBUILD and .SRCINFO and pushes them. Publishing needs an AUR_KEY secret
+# holding the private key of an SSH key registered on the maintainer's AUR
+# account, WITHOUT a passphrase — GoReleaser runs `ssh -i` non-interactively and
+# has no way to supply one. Unset, the package is generated but not pushed, the
+# same arrangement as HOMEBREW_TAP_GITHUB_TOKEN.
+aurs:
+  - name: darkubectl-bin
+    ids: [default]
+    homepage: https://github.com/rahacloud/darkubectl
+    description: kubectl-like access to the Hamravesh Darkube platform
+    license: GPL-3.0-only
+    maintainers:
+      - "Parham Alvani <parham.alvani@gmail.com>"
+    provides: [darkubectl]
+    conflicts: [darkubectl]
+    skip_upload: '{{ if index .Env "AUR_KEY" }}false{{ else }}true{{ end }}'
+    private_key: '{{ index .Env "AUR_KEY" }}'
+    git_url: ssh://aur@aur.archlinux.org/darkubectl-bin.git
+    commit_author:
+      name: Parham Alvani
+      email: parham.alvani@gmail.com
+    commit_msg_template: "Update to {{ .Tag }}"
+    package: |-
+      install -Dm755 "./darkubectl" "${pkgdir}/usr/bin/darkubectl"
+      install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+
 release:
   draft: false
   prerelease: auto
