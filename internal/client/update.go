@@ -104,6 +104,10 @@ func deepCopy(in map[string]any) map[string]any {
 	return out
 }
 
+// NormalizeForPut is normalizeForPut for callers comparing a fresh read with an
+// object they wrote: the read nests relations the write sent as bare ids.
+func NormalizeForPut(app map[string]any) { normalizeForPut(app) }
+
 // normalizeForPut rewrites a freshly read app into the shape PUT accepts:
 // nested relations collapsed to their ids, server-owned fields removed.
 func normalizeForPut(app map[string]any) {

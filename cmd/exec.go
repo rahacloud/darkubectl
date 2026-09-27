@@ -178,7 +178,9 @@ func uploadFile(ctx context.Context, sess *wsexec.Session, local, remote string)
 	verify := fmt.Sprintf(
 		`if [ "$(wc -c < %s)" -eq %d ]; then mv %s %s; else rm -f %s; false; fi`,
 		tmp, len(data), tmp, shellQuote(remote), tmp)
-	code, err := runRemote(ctx, sess, verify)
+	// The shell echoes every payload line back; that echo is the file again, in
+	// base64, and is discarded rather than scrolled past the user.
+	code, err := runRemoteTo(ctx, sess, verify, discard)
 	if err != nil {
 		return err
 	}
@@ -197,6 +199,12 @@ func uploadFile(ctx context.Context, sess *wsexec.Session, local, remote string)
 // echo of the command line cannot match the pattern the loop is looking for —
 // which it would if the marker were written out in full.
 func runRemote(ctx context.Context, sess *wsexec.Session, command string) (int, error) {
+	return runRemoteTo(ctx, sess, command, emit)
+}
+
+// runRemoteTo is runRemote with the command's output handed to sink rather than
+// written to stdout, for callers that need to read it.
+func runRemoteTo(ctx context.Context, sess *wsexec.Session, command string, sink func([]byte)) (int, error) {
 	nonce, err := newNonce()
 	if err != nil {
 		return 0, err
@@ -213,7 +221,7 @@ func runRemote(ctx context.Context, sess *wsexec.Session, command string) (int, 
 		if rerr != nil {
 			// The shell closed (or the user interrupted) before the marker
 			// arrived: flush what we have rather than swallowing it.
-			emit(pending)
+			sink(pending)
 			if isSessionEnd(rerr) {
 				return 0, errSessionEndedEarly
 			}
@@ -222,7 +230,7 @@ func runRemote(ctx context.Context, sess *wsexec.Session, command string) (int, 
 		pending = append(pending, data...)
 
 		if m := marker.FindSubmatchIndex(pending); m != nil {
-			emit(pending[:m[0]])
+			sink(pending[:m[0]])
 			code, cerr := strconv.Atoi(string(pending[m[2]:m[3]]))
 			if cerr != nil {
 				return 0, fmt.Errorf("parse remote exit status: %w", cerr)
@@ -231,7 +239,7 @@ func runRemote(ctx context.Context, sess *wsexec.Session, command string) (int, 
 		}
 		// Hold back only as much as a marker could still be split across.
 		if keep := len(marker.String()) + markerSlack; len(pending) > keep {
-			emit(pending[:len(pending)-keep])
+			sink(pending[:len(pending)-keep])
 			pending = pending[len(pending)-keep:]
 		}
 	}

@@ -89,8 +89,14 @@ func newGetCommand() *cli.Command {
 				Aliases:   []string{"pod"},
 				Usage:     "List an app's running pods",
 				ArgsUsage: "APP|ID",
+				Description: "  darkubectl get pods my-api\n" +
+					"  darkubectl get pods my-api -w        # print a line whenever a pod changes\n\n" +
+					"--watch keeps the pod stream open, like `kubectl get pods -w`: a line per pod\n" +
+					"that appears, changes state, restarts or goes away, until interrupted.\n" +
+					"With -o json it prints one JSON document per update instead.",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: flagDebug, Usage: "dump raw app-state JSON to stderr"},
+					&cli.BoolFlag{Name: flagWatch, Aliases: []string{"w"}, Usage: "keep watching and print changes"},
 				},
 				Action: getPodsAction,
 			},
@@ -142,9 +148,13 @@ func getAppsAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	format, err := outputFormat(cmd)
-	if err != nil {
-		return err
+	// -o spec is particular to apps, so it is caught before the shared parser.
+	asSpec := cmd.String(flagOutput) == outputSpec
+	format := output.YAML
+	if !asSpec {
+		if format, err = outputFormat(cmd); err != nil {
+			return err
+		}
 	}
 
 	apps, err := c.ListApps(ctx)
@@ -176,6 +186,9 @@ func getAppsAction(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
+	if asSpec {
+		return exportSpecs(ctx, c, apps)
+	}
 	if handled, err := output.Structured(os.Stdout, format, apps); handled {
 		return err
 	}
@@ -388,13 +401,17 @@ func getPodsAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	pods, _, err := appstate.FetchPods(ctx, appstate.Options{
+	opts := appstate.Options{
 		BaseURL:     resolveBaseURL(cmd, cfg),
 		AccessToken: access,
 		Org:         resolveOrg(cmd, cfg),
 		AppID:       app.ID,
 		Debug:       cmd.Bool(flagDebug),
-	})
+	}
+	if cmd.Bool(flagWatch) {
+		return watchPods(ctx, opts, format)
+	}
+	pods, _, err := appstate.FetchPods(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -413,30 +430,40 @@ func getPodsAction(ctx context.Context, cmd *cli.Command) error {
 // RESTARTS and AGE — because the aggregate app state only ever says "not ready"
 // and hides whether the pod is crash-looping, and if so for how long.
 func printPodsTable(pods []appstate.Pod, wide bool) error {
+	rows := make([][]string, 0, len(pods))
+	for _, p := range pods {
+		rows = append(rows, podRow(p, wide))
+	}
+	return output.StyledTable(os.Stdout, podHeader(wide), rows, output.StatusCells(podStatusCol))
+}
+
+// podHeader is the column set of `get pods`.
+func podHeader(wide bool) []string {
 	header := []string{colName, "READY", "STATUS", "RESTARTS", "AGE"}
 	if wide {
 		header = append(header, "CONTAINERS", "LAST-STATE", colNamespace)
 	}
-	rows := make([][]string, 0, len(pods))
-	for _, p := range pods {
-		ready, total := p.ReadyCount()
-		row := []string{
-			p.Name,
-			fmt.Sprintf("%d/%d", ready, total),
-			podStatus(p),
-			strconv.Itoa(p.Restarts()),
-			age(p.CreatedAt),
-		}
-		if wide {
-			row = append(row,
-				dash(strings.Join(p.ContainerNames(), ",")),
-				dash(lastState(p)),
-				dash(p.Namespace),
-			)
-		}
-		rows = append(rows, row)
+	return header
+}
+
+// podRow renders one pod in podHeader's columns.
+func podRow(p appstate.Pod, wide bool) []string {
+	ready, total := p.ReadyCount()
+	row := []string{
+		p.Name,
+		fmt.Sprintf("%d/%d", ready, total),
+		podStatus(p),
+		strconv.Itoa(p.Restarts()),
+		age(p.CreatedAt),
 	}
-	return output.StyledTable(os.Stdout, header, rows, output.StatusCells(podStatusCol))
+	if wide {
+		row = append(row,
+			dash(strings.Join(p.ContainerNames(), ",")),
+			dash(lastState(p)),
+			dash(p.Namespace),
+		)
+	}
+	return row
 }
 
 // podStatus is the pod's live phase, with a pod on its way out called out as

@@ -47,7 +47,7 @@ var (
 
 // NewApp builds the root command with its persistent flags and subcommands.
 func NewApp() *cli.Command {
-	return &cli.Command{
+	return withAppCompletion(&cli.Command{
 		Name:  "darkubectl",
 		Usage: "kubectl-like access to the Hamravesh Darkube platform",
 		Description: "Tenants are Darkube organizations, selected with --org or a config context.\n" +
@@ -56,6 +56,12 @@ func NewApp() *cli.Command {
 			"`whoami`, `get notifications` and `get plans` are account-wide and need no\n" +
 			"tenant; run `whoami` first to find out which tenants this account can reach.",
 		Version: version,
+		// `darkubectl completion bash|zsh|fish|pwsh` prints the script. It is
+		// hidden by default in urfave/cli; shown here so --help advertises it.
+		EnableShellCompletion: true,
+		ConfigureShellCompletionCommand: func(c *cli.Command) {
+			c.Hidden = false
+		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  flagConfig,
@@ -78,16 +84,19 @@ func NewApp() *cli.Command {
 				Name:    flagOutput,
 				Aliases: []string{"o"},
 				Value:   string(output.Table),
-				Usage:   "output format: table|wide|json|yaml|name",
+				Usage:   "output format: table|wide|json|yaml|name, or spec for `get apps` (a create/apply file)",
 			},
 		},
 		Commands: []*cli.Command{
 			newGetCommand(),
 			newDescribeCommand(),
 			newScaleCommand(),
+			newAutoscaleCommand(),
+			newRolloutCommand(),
 			newPatchCommand(),
 			newDeleteCommand(),
 			newCreateCommand(),
+			newApplyCommand(),
 			newSetCommand(),
 			newTunnelCommand(),
 			newWaitCommand(),
@@ -95,11 +104,12 @@ func NewApp() *cli.Command {
 			newWhoamiCommand(),
 			newLogsCommand(),
 			newExecCommand(),
+			newCpCommand(),
 			newTerminalCommand(),
 			newConfigCommand(),
 			newVersionCommand(),
 		},
-	}
+	})
 }
 
 func newVersionCommand() *cli.Command {

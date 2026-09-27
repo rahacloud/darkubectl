@@ -110,3 +110,17 @@ func (c *Client) DeleteApp(ctx context.Context, id string) error {
 	_, err := c.do(ctx, http.MethodDelete, appsPathV2+url.PathEscape(id)+"/", nil, nil)
 	return err
 }
+
+// RestartApp rolls an app's pods, the platform's equivalent of
+// `kubectl rollout restart`.
+//
+// POST /api/v1/darkube/apps/<id>/restart/ answers 200 with the bare string "ok"
+// and the Deployment moves to a new ReplicaSet — confirmed 2026-09-27 on a
+// throwaway app in the rahacloud org, whose pod went from one ReplicaSet hash
+// to another within seconds. The body is ignored; OPTIONS on the route
+// describes the whole app serializer, which is a DRF artefact rather than a
+// sign that anything in it is read.
+func (c *Client) RestartApp(ctx context.Context, id string) error {
+	_, err := c.do(ctx, http.MethodPost, appsPathV1+url.PathEscape(id)+"/restart/", nil, map[string]any{})
+	return err
+}

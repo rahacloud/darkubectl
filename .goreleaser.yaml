@@ -6,6 +6,10 @@ project_name: darkubectl
 before:
   hooks:
     - go mod tidy
+    # Shell completion scripts, shipped in every archive and installed by the
+    # cask and the AUR package. Generated from the binary so they cannot drift
+    # from the command tree.
+    - sh -c 'mkdir -p completions && for s in bash zsh fish; do go run . completion "$s" > "completions/darkubectl.$s"; done'
 
 builds:
   - id: darkubectl
@@ -34,6 +38,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - completions/*
 
 checksum:
   name_template: checksums.txt
@@ -57,6 +62,10 @@ changelog:
 homebrew_casks:
   - name: darkubectl
     binaries: [darkubectl]
+    completions:
+      bash: completions/darkubectl.bash
+      zsh: completions/darkubectl.zsh
+      fish: completions/darkubectl.fish
     directory: Casks
     homepage: https://github.com/rahacloud/darkubectl
     description: kubectl-like access to the Hamravesh Darkube platform
@@ -125,6 +134,9 @@ aurs:
     package: |-
       install -Dm755 "./darkubectl" "${pkgdir}/usr/bin/darkubectl"
       install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+      install -Dm644 "./completions/darkubectl.bash" "${pkgdir}/usr/share/bash-completion/completions/darkubectl"
+      install -Dm644 "./completions/darkubectl.zsh" "${pkgdir}/usr/share/zsh/site-functions/_darkubectl"
+      install -Dm644 "./completions/darkubectl.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/darkubectl.fish"
 
 release:
   draft: false

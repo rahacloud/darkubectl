@@ -29,7 +29,14 @@ const (
 	consoleOrigin   = "https://console.hamravesh.com"
 
 	fetchTimeout = 15 * time.Second
-	maxMessages  = 10
+
+	// settleWindow is how long FetchPods keeps reading after the first pod
+	// list, to get past the stale one the server leads with.
+	settleWindow = 750 * time.Millisecond
+
+	// podsFrameType is the type of the frame that carries the pod list.
+	podsFrameType = "app_pods_update"
+	maxMessages   = 10
 )
 
 // Options configures an app-state fetch.
@@ -99,17 +106,114 @@ func (p Pod) Restarts() int {
 }
 
 // FetchPods connects to the app-state websocket and returns the app's pods. It
-// also returns the raw JSON of the last message read (useful for --debug and
-// for refining the parser). An app with no running pods yields (nil, raw, nil).
+// also returns the raw JSON of the frame it used (useful for --debug and for
+// refining the parser). An app with no running pods yields (nil, raw, nil).
+//
+// The first frame after connecting is not to be trusted. Observed 2026-09-27,
+// three connections out of three during a rollout: the server first sends a
+// stale list — one pod, missing the replacement being brought up — and the
+// complete one 100-200ms later. Taking the first frame is what made `get pods`
+// show one pod while the rollout had two, and exec/logs pick their pod from
+// the same read. So the read carries on for settleWindow after the first pod
+// list and returns the last one seen.
 func FetchPods(ctx context.Context, opts Options) ([]Pod, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
-	endpoint, err := buildURL(opts.BaseURL, opts.AppID)
+	conn, err := dial(ctx, opts)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
+	// Phase one: wait for the first pod list, however long the server takes.
+	var pods []Pod
+	var lastRaw []byte
+	for range maxMessages {
+		data, rerr := readFrame(ctx, conn, opts.Debug)
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("read app-state: %w", rerr)
+		}
+		if isPodsFrame(data) {
+			pods, lastRaw = ParsePods(data), data
+			break
+		}
+	}
+	if lastRaw == nil {
+		return nil, nil, nil
+	}
+
+	// Phase two: keep the latest list the server sends within the window.
+	settled, stop := context.WithTimeout(ctx, settleWindow)
+	defer stop()
+	for range maxMessages {
+		data, rerr := readFrame(settled, conn, opts.Debug)
+		if rerr != nil {
+			break // the window closed, or the stream ended after a list
+		}
+		if isPodsFrame(data) {
+			pods, lastRaw = ParsePods(data), data
+		}
+	}
+	return pods, lastRaw, nil
+}
+
+// WatchPods streams the app's pods, calling onPods with the full pod list each
+// time the server sends one, until ctx ends or the connection drops.
+//
+// The socket is the console's live view: it pushes a fresh app_pods_update on
+// every change to any pod — confirmed 2026-09-27 by watching a rollout go from
+// one pod to two to one. Each frame carries every pod, not a delta, which is why
+// the callback gets the whole list. Frames that carry no pods (the empty list
+// the server sends for an app that has none, and any other message type) are
+// passed through as an empty list, so a caller can show "no pods" as a state.
+func WatchPods(ctx context.Context, opts Options, onPods func([]Pod) error) error {
+	dialCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	conn, err := dial(dialCtx, opts)
+	cancel()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil // the caller ended the watch; that is not a failure
+			}
+			return fmt.Errorf("read app-state: %w", err)
+		}
+		if opts.Debug {
+			fmt.Fprintf(os.Stderr, "[appstate] recv %d bytes: %s\n", len(data), data)
+		}
+		if !isPodsFrame(data) {
+			continue
+		}
+		if err := onPods(ParsePods(data)); err != nil {
+			return err
+		}
+	}
+}
+
+// readFrame reads one frame, echoing it to stderr under --debug.
+func readFrame(ctx context.Context, conn *websocket.Conn, debug bool) ([]byte, error) {
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // callers wrap with their own context
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "[appstate] recv %d bytes: %s\n", len(data), data)
+	}
+	return data, nil
+}
+
+// dial opens the app-pods websocket.
+func dial(ctx context.Context, opts Options) (*websocket.Conn, error) {
+	endpoint, err := buildURL(opts.BaseURL, opts.AppID)
+	if err != nil {
+		return nil, err
+	}
 	httpClient := &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
 	//nolint:bodyclose // coder/websocket owns and closes the upgrade response body
 	conn, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{
@@ -118,29 +222,18 @@ func FetchPods(ctx context.Context, opts Options) ([]Pod, []byte, error) {
 		HTTPHeader:   http.Header{"Origin": {consoleOrigin}},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("dial app-state websocket: %w", err)
+		return nil, fmt.Errorf("dial app-state websocket: %w", err)
 	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 	conn.SetReadLimit(-1)
+	return conn, nil
+}
 
-	var lastRaw []byte
-	for range maxMessages {
-		_, data, rerr := conn.Read(ctx)
-		if rerr != nil {
-			if lastRaw != nil {
-				break // connected and read at least once; just no pods yet
-			}
-			return nil, nil, fmt.Errorf("read app-state: %w", rerr)
-		}
-		lastRaw = data
-		if opts.Debug {
-			fmt.Fprintf(os.Stderr, "[appstate] recv %d bytes: %s\n", len(data), data)
-		}
-		if pods := ParsePods(data); len(pods) > 0 {
-			return pods, data, nil
-		}
+// isPodsFrame reports whether a frame is a pod list, including an empty one.
+func isPodsFrame(data []byte) bool {
+	var head struct {
+		Type string `json:"type"`
 	}
-	return nil, lastRaw, nil
+	return json.Unmarshal(data, &head) == nil && head.Type == podsFrameType
 }
 
 func buildURL(baseURL, appID string) (string, error) {

@@ -29,29 +29,64 @@ var errIncompleteSpec = errors.New(
 // modes (flags, --file YAML, interactive).
 type appSpec struct {
 	Name      string `yaml:"name"`
-	Namespace string `yaml:"namespace"` // project name or id
-	Plan      string `yaml:"plan"`      // plan name, code name, or id
-	Image     string `yaml:"image"`     // repo:tag
-	Replicas  int    `yaml:"replicas"`
+	Namespace string `yaml:"namespace"`       // project name or id
+	Plan      string `yaml:"plan"`            // plan name, code name, or id
+	Image     string `yaml:"image,omitempty"` // repo:tag
+	// Replicas is a pointer so that leaving it out of a spec file means the
+	// default of one, not zero — and, for `apply`, "leave it as it is".
+	Replicas *int `yaml:"replicas,omitempty"`
+
+	// Memory and CPU size the app on a dynamic plan; a fixed plan decides them
+	// itself and the API discards them (see resources.go).
+	Memory string `yaml:"memory,omitempty"`
+	CPU    string `yaml:"cpu,omitempty"`
 
 	// Command is split on whitespace by the platform; Args is not. Both accept
 	// either a string or a list. See appargs.go — that asymmetry is the sharpest
 	// edge in this API and costs a crash loop to rediscover.
-	Command shellWords `yaml:"command"` // entrypoint override
-	Args    shellWords `yaml:"args"`
+	Command shellWords `yaml:"command,omitempty"` // entrypoint override
+	Args    shellWords `yaml:"args,omitempty"`
 
 	// The fields below are nested, so they are --file/-f only, where the shape
 	// is expressible. Env and domains can also be changed later with
 	// `set env` / `set domain`. See the example in `create app --help`.
-	SvcType    string                 `yaml:"svcType"`
-	Ports      map[string]client.Port `yaml:"ports"`
-	Disk       *client.Disk           `yaml:"disk"`
-	Envs       []client.EnvVar        `yaml:"envs"`
-	SecretEnvs []client.EnvVar        `yaml:"secretEnvs"`
+	SvcType    string                 `yaml:"svcType,omitempty"`
+	Ports      map[string]client.Port `yaml:"ports,omitempty"`
+	Disk       *client.Disk           `yaml:"disk,omitempty"`
+	Envs       []client.EnvVar        `yaml:"envs,omitempty"`
+	SecretEnvs []client.EnvVar        `yaml:"secretEnvs,omitempty"`
+
+	// Autoscale and Probes are applied with a PUT after the app exists: the
+	// POST ignores custom_config for an image app, and probes are plain fields
+	// the create payload does not carry.
+	Autoscale *autoscaleSpec `yaml:"autoscale,omitempty"`
+	Probes    *probesSpec    `yaml:"probes,omitempty"`
 
 	// Git is set for apps Darkube builds from a repository rather than pulling a
 	// prebuilt image. See gitSpec.
-	Git *gitSpec `yaml:"git"`
+	Git *gitSpec `yaml:"git,omitempty"`
+}
+
+// autoscaleSpec is the spec-file form of `autoscale app`.
+type autoscaleSpec struct {
+	Min        int `yaml:"min"`
+	Max        int `yaml:"max"`
+	CPUPercent int `yaml:"cpuPercent,omitempty"`
+}
+
+// probesSpec is the spec-file form of `set probe`. An absent path means no
+// probe of that kind.
+type probesSpec struct {
+	Readiness string `yaml:"readiness,omitempty"`
+	Liveness  string `yaml:"liveness,omitempty"`
+}
+
+// replicas is the replica count to create with.
+func (s appSpec) replicas() int {
+	if s.Replicas == nil {
+		return 1
+	}
+	return *s.Replicas
 }
 
 func newCreateCommand() *cli.Command {
@@ -112,16 +147,22 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 	if err := spec.validate(); err != nil {
 		return err
 	}
+	c, _, err := buildClient(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	return createFromSpec(ctx, cmd, c, spec)
+}
+
+// createFromSpec creates the app a complete, validated spec describes, after
+// confirmation. It covers what the POST accepts; `apply` follows it with a PUT
+// for the rest.
+func createFromSpec(ctx context.Context, cmd *cli.Command, c *client.Client, spec appSpec) error {
 	// Warnings, not errors: each describes a shape that is legal but almost
 	// certainly not what was meant. They go to stderr before the confirmation
 	// prompt so there is still a chance to answer no.
 	for _, w := range entrypointWarnings(spec.Command.String(), spec.Args.String()) {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-	}
-
-	c, _, err := buildClient(ctx, cmd)
-	if err != nil {
-		return err
 	}
 
 	nsID, err := resolveNamespaceID(ctx, c, spec.Namespace)
@@ -145,7 +186,7 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "About to create app %q in tenant %q: namespace=%s plan=%s %s replicas=%d\n",
-		spec.Name, c.Org, spec.Namespace, spec.Plan, source, spec.Replicas)
+		spec.Name, c.Org, spec.Namespace, spec.Plan, source, spec.replicas())
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
@@ -159,7 +200,7 @@ func createAppAction(ctx context.Context, cmd *cli.Command) error {
 		ImageTag:       tag,
 		Command:        spec.Command.String(),
 		Args:           spec.Args.String(),
-		Replicas:       spec.Replicas,
+		Replicas:       spec.replicas(),
 		SvcType:        spec.SvcType,
 		Ports:          spec.Ports,
 		Disk:           spec.Disk,
@@ -263,7 +304,7 @@ func gatherAppSpec(cmd *cli.Command) (appSpec, error) {
 		Namespace: cmd.String("namespace"),
 		Plan:      cmd.String("plan"),
 		Image:     cmd.String("image"),
-		Replicas:  cmd.Int(flagReplicas),
+		Replicas:  new(cmd.Int(flagReplicas)),
 		Command:   newShellWords(cmd.String("command")),
 		Args:      newShellWords(cmd.String("args")),
 		Git:       gitSpecFromFlags(cmd),
@@ -328,9 +369,11 @@ func promptAppSpec() (appSpec, error) {
 		return s, err
 	}
 	s.Command = newShellWords(command)
-	if s.Replicas, err = promptInt("Replicas [1]: ", 1); err != nil {
+	replicas, err := promptInt("Replicas [1]: ", 1)
+	if err != nil {
 		return s, err
 	}
+	s.Replicas = &replicas
 	return s, nil
 }
 

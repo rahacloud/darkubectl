@@ -37,8 +37,11 @@ darkubectl get orphans               # something the console cannot tell you at 
 | 🔎 **Familiar verbs** | `get`, `describe`, `logs`, `exec`, `create`, `delete` — the kubectl muscle memory carries over. |
 | 🧭 **Real terminals** | `terminal app <name>` opens an interactive shell over the exec websocket, resize and all. `exec` runs one-off commands. |
 | 📜 **Logs that pipe** | `logs -f` to follow, `--previous` for the container that just crashed, `--timestamps` for correlation. |
+| 🚀 **Deploys that wait** | `set image` changes the running image and `--wait` follows the rollout pod by pod, so a pipeline fails on a crash-looping release instead of passing because the old pod is still up. `rollout restart` and `rollout status` round it out. |
+| 📄 **Apps as files** | `get apps -o spec` exports apps as YAML and `apply -f` makes apps match it — create what is missing, edit what differs, show the diff first. Round-tripped against 79 live apps with no drift. |
 | 🔌 **Tunnels, not exposure** | `tunnel up` runs a [chisel](https://github.com/jpillora/chisel) server as an app and `tunnel connect` forwards local ports through it, so you can reach a ClusterIP database from a laptop without a public LoadBalancer and without cluster credentials. The client is built in, and `connect --host … --auth …` works for someone with no Darkube account at all. |
 | 👻 **Orphan detection** | `get orphans` reconciles your tenant against a live cluster and finds the Helm releases Darkube left behind on delete. Nothing else surfaces these. |
+| 📂 **Files in and out** | `cp` copies files and directories to and from a pod over the exec terminal, with nothing to install on either side. |
 | 🎨 **Readable output** | Colorized tables and a `describe -i` interactive viewer with search, degrading to plain text the moment you pipe it. |
 | 🤖 **Scriptable** | `-o json`, `-o yaml`, `-o name` on everything, config via flags, env or file, and `get deploy-token` to wire a CI pipeline without the console. |
 | 🧠 **Agent-ready** | Non-interactive, JSON-emitting and credentialed from the environment, so a coding agent can run it as a tool and manage Darkube for you. |
@@ -53,6 +56,12 @@ Namespaces are here too: `create namespace <name> --cluster <name|id>` and `dele
 
 ```sh
 brew install rahacloud/tap/darkubectl
+```
+
+**AUR** (Arch Linux):
+
+```sh
+yay -S darkubectl-bin
 ```
 
 **Go**:
@@ -72,6 +81,12 @@ sudo install darkubectl /usr/local/bin/
 
 ```sh
 git clone https://github.com/rahacloud/darkubectl && cd darkubectl && go build -o darkubectl .
+```
+
+**Shell completion** is installed by the Homebrew and AUR packages. Otherwise, load it from the binary — it completes commands, flags, and app names:
+
+```sh
+source <(darkubectl completion bash)     # or: zsh, fish, pwsh
 ```
 
 ## Quickstart
@@ -179,13 +194,26 @@ darkubectl set subdomain <name|id> --remove
 darkubectl set svc-type <name|id> LoadBalancer            # expose it; ports are preserved
 darkubectl set svc-type <name|id> ClusterIP --dry-run    # show the diff, send nothing
 darkubectl set disk <name|id> --size 40                   # grow only; re-read to confirm it took
+darkubectl set image <name|id> registry.hamdocker.ir/acme/api:1.4.2 --wait   # deploy, and follow it
+darkubectl set command <name|id> --command "/bin/sh -c" --args 'cd /app && exec ./worker'
+darkubectl set probe <name|id> --readiness /healthz --liveness /livez
+darkubectl set resources <name|id> --plan 2                    # or a dynamic plan with --memory/--cpu
+darkubectl autoscale app <name|id> --min 2 --max 6 --cpu-percent 70
+darkubectl autoscale app <name|id> --disable
 darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
 darkubectl patch app <name|id> -p '{"replicas": 3}' --dry-run   # show the diff, send nothing
 darkubectl delete app <name|id>
 
 # Block until a deploy has actually landed, instead of sleeping and hoping
+darkubectl rollout restart <name|id> --wait     # new pods, old ones gone, all ready
+darkubectl rollout status <name|id> --timeout 10m
 darkubectl wait app <name|id> --for ready --timeout 10m
 darkubectl wait app <name|id> --for deleted
+
+# Apps as files: export, commit, apply
+darkubectl get apps --namespace prod -o spec > prod.yaml
+darkubectl apply -f prod.yaml --dry-run         # the diff, per app
+darkubectl apply -f prod.yaml                   # create what is missing, edit what differs
 
 # Reach a ClusterIP service from your laptop, without exposing it (the chisel
 # client is built in, and the server side installs nothing)
@@ -215,12 +243,15 @@ darkubectl logs <name> --timestamps --pod <p> -c <container>
 darkubectl login                          # email + password + TOTP → stores a refresh token
 darkubectl get pods <name>                # an app's pods: READY, STATUS, RESTARTS, AGE
 darkubectl get pods <name> -o wide        # plus the containers and why they last died
+darkubectl get pods <name> -w             # a line per change, like kubectl get pods -w
 darkubectl exec app <name> -- ls -la      # run a command in a pod
+darkubectl cp ./site <name>:/usr/share/nginx/html   # files or directories, either way
+darkubectl cp <name>:/var/lib/app/dump.sql ./
 darkubectl terminal app <name>            # interactive shell (auto-detects the pod; alias: shell)
 darkubectl terminal app <name> --pod <p> -c <container>
 ```
 
-Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`, `yaml`, or `name`. Scope any single command to a different tenant with `-n <org>`.
+Output format is controlled by `-o/--output`: `table` (default), `wide`, `json`, `yaml`, or `name` — and, for `get apps`, `spec`, the file `create -f` and `apply -f` read. Scope any single command to a different tenant with `-n <org>`.
 
 ### The app spec file
 
@@ -252,12 +283,24 @@ secretEnvs:
 
 ```yaml
 command: /bin/sh -c      # SPLIT   -> ["/bin/sh", "-c"]
-args:    echo$IFS'hi'    # NOT split -> ["echo$IFS'hi'"], one single argument
+args:    echo hi         # NOT split -> ["echo hi"], one single argument
 ```
 
-The arrangement everyone writes first — `command: /bin/sh` with `args: -c echo hi` — hands the container `"-c echo hi"` as one token, and busybox reads the space as another flag: `/bin/sh: illegal option -`, crash-looping, with nothing in the API response pointing at the cause. Put the words that need splitting in `command`; because that is split, the script in `args` must then contain no whitespace at all, which is what `$IFS` is doing above. `create app` warns when `args` contains whitespace and refuses a multi-element `args` list.
+The arrangement everyone writes first — `command: /bin/sh` with `args: -c echo hi` — hands the container `"-c echo hi"` as one token, and busybox reads the space as another flag: `/bin/sh: illegal option -`, crash-looping, with nothing in the API response pointing at the cause. Put the words that need splitting in `command`, and the script whole in `args`: since `args` is never split, `sh -c` receives it as the single argument it wants, spaces and all. `create app`, `set command` and `apply` warn when `args` contains whitespace and `command` is not a shell ending in `-c`, and refuse a multi-element `args` list.
 
 Both fields accept a string or a list, so `command: ["/bin/sh", "-c"]` works too.
+
+A spec can also carry what the create call itself ignores; `apply -f` sets these with a follow-up write once the app exists:
+
+```yaml
+autoscale: {min: 2, max: 6, cpuPercent: 70}   # replaces replicas: the autoscaler owns the count
+probes: {readiness: /healthz, liveness: /livez}
+plan: dynamic                                 # memory and cpu apply only to a dynamic plan
+memory: 1500M
+cpu: 750m
+```
+
+`replicas` left out means one at creation, and "leave it alone" on `apply`. That goes for every field: `apply` changes what the spec names and leaves the rest, so a trimmed file never resets anything by omission. `get apps -o spec` writes this format — secret values and domains are left out and named on stderr, since the API never returns the first and `set domain` owns the second.
 
 For an app Darkube builds itself, replace `image` with a `git` block:
 
@@ -269,7 +312,7 @@ git:
   provider: Github             # default: inferred from the URL
 ```
 
-These can also be changed after the fact. The API has no partial update — `PATCH` is unimplemented and returns 500 — so every mutation is a read-modify-write of the whole app, which `darkubectl` does for you. Environment and domains have dedicated commands (`set env`, `set domain`); anything else goes through `patch app`, which merges your JSON into the current object and writes it back. The one caveat of that approach: a console edit made between the read and the write is lost.
+These can also be changed after the fact. The API has no partial update — `PATCH` is unimplemented and returns 500 — so every mutation is a read-modify-write of the whole app, which `darkubectl` does for you. Most fields have a dedicated command (`set env`, `set domain`, `set image`, `set command`, `set probe`, `set resources`, `set disk`, `autoscale`), each of which reads the app back afterwards: the API answers 202 to a write it then discards, so a change it silently dropped is reported as an error. Anything else goes through `patch app`, which merges your JSON into the current object and writes it back. The one caveat of that approach: a console edit made between the read and the write is lost.
 
 Namespaces resolve by name when they already contain an app; a brand-new empty project has to be referenced by id, which `get namespaces` prints.
 

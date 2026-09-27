@@ -131,3 +131,21 @@ func TestIsShell(t *testing.T) {
 		}
 	}
 }
+
+// A script after `sh -c` is exactly one argument, spaces and all — which is what
+// args delivers. mssql-log-backup in talaland-production has run this shape
+// healthy for as long as anyone has looked; warning about it was a false alarm.
+func TestEntrypointWarningsAcceptScriptAfterShellDashC(t *testing.T) {
+	t.Parallel()
+
+	for _, command := range []string{"/bin/sh -c", "sh -c", "/bin/bash -c"} {
+		if got := entrypointWarnings(command, "while true; do echo tick; sleep 60; done"); len(got) != 0 {
+			t.Errorf("entrypointWarnings(%q, script) = %v, want none", command, got)
+		}
+	}
+	// A shell with -c somewhere other than last is not running args as its
+	// script, so the whitespace is still suspect.
+	if got := entrypointWarnings("/bin/sh -c true", "echo hi"); len(got) == 0 {
+		t.Error("expected a warning when -c is not the last word of command")
+	}
+}

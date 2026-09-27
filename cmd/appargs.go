@@ -29,10 +29,15 @@ import (
 // working form puts the flag in command, where splitting happens:
 //
 //	command: /bin/sh -c
-//	args:    echo$IFS'hello'
+//	args:    echo hello
 //
-// and since command is split, the script itself must then contain no spaces —
-// $IFS supplies the separators after splitting is done.
+// and because args is never split, the script arrives as the one argument `-c`
+// wants, spaces and all. An earlier reading of this held that the script had
+// to avoid whitespace ($IFS in place of spaces); that was wrong. Corrected
+// 2026-09-27 against mssql-log-backup in talaland-production, which runs
+// `command: /bin/sh -c` with a 48-word script in args, healthy with no
+// restarts. Whitespace in args is only a mistake when nothing is waiting for a
+// single argument — which is what the warning below still catches.
 //
 // None of that is guessable, so the checks below exist to say it out loud at
 // the one moment the user can act on it.
@@ -83,6 +88,18 @@ func (s *shellWords) UnmarshalYAML(node *yaml.Node) error {
 	}
 }
 
+// MarshalYAML writes the value back the way it was given: a list stays a list.
+func (s shellWords) MarshalYAML() (any, error) {
+	if s.IsList {
+		return s.Words, nil
+	}
+	return s.String(), nil
+}
+
+// IsZero reports an absent value, so `omitempty` leaves it out of a spec.
+// An explicitly empty string is not zero: it means "clear the field".
+func (s shellWords) IsZero() bool { return s.Words == nil }
+
 // String renders the value as the single string the API stores.
 func (s shellWords) String() string { return strings.Join(s.Words, " ") }
 
@@ -108,17 +125,19 @@ func validateArgs(args shellWords) error {
 func entrypointWarnings(command, args string) []string {
 	var out []string
 
-	if strings.ContainsFunc(args, isSpace) {
+	// `sh -c` wants its script as exactly one argument, so whitespace in args
+	// is right there. Anywhere else it almost always means words that were
+	// meant to be split.
+	if strings.ContainsFunc(args, isSpace) && !runsScript(command) {
 		out = append(out,
 			"args contains whitespace. Darkube passes args to the container as ONE argument and does "+
 				"not split it, so the container will receive the whole string as a single value — "+
 				"which is almost never intended, and typically crash-loops with an error like "+
 				"`/bin/sh: illegal option -`.\n"+
-				"    Words that need splitting belong in `command`, which IS split on whitespace:\n"+
+				"    Words that need splitting belong in `command`, which IS split on whitespace. To run\n"+
+				"    a script, put the shell and its -c there and the whole script in args:\n"+
 				"        command: \"/bin/sh -c\"\n"+
-				"        args:    \"<script-with-no-spaces>\"\n"+
-				"    Because command is split, the script itself must then avoid spaces — $IFS is the\n"+
-				"    usual way to supply separators after splitting has happened.")
+				"        args:    \"<the script, spaces and all>\"")
 	}
 
 	// A shell invoked with no -c will read from stdin, find none, and exit 0
@@ -130,6 +149,13 @@ func entrypointWarnings(command, args string) []string {
 	}
 
 	return out
+}
+
+// runsScript reports whether command is a shell told to run its next argument
+// as a script: `sh -c`, `/bin/bash -c` and the like, with -c last.
+func runsScript(command string) bool {
+	fields := strings.Fields(command)
+	return len(fields) >= 2 && isShell(command) && fields[len(fields)-1] == "-c"
 }
 
 func isSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }

@@ -16,6 +16,10 @@ func newSetCommand() *cli.Command {
 			newSetSubdomainCommand(),
 			newSetSvcTypeCommand(),
 			newSetDiskCommand(),
+			newSetImageCommand(),
+			newSetCommandCommand(),
+			newSetProbeCommand(),
+			newSetResourcesCommand(),
 		},
 	}
 }
