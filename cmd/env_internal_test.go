@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/rahacloud/darkubectl/internal/client"
@@ -104,5 +106,57 @@ func TestApplyEnvChangeRefusesToShadowASecret(t *testing.T) {
 	err := applyEnvChange(app, []client.EnvVar{{Name: "DB_PASSWORD", Value: "hunter2"}}, nil)
 	if err == nil {
 		t.Fatal("want an error when setting a name that is already a secret")
+	}
+}
+
+func TestMergeEnvs(t *testing.T) {
+	t.Parallel()
+	base := []client.EnvVar{{Name: "A", Value: "1"}, {Name: "B", Value: "2"}}
+
+	got, err := mergeEnvs(base, []client.EnvVar{{Name: "A", Value: "9"}, {Name: "C", Value: "3"}}, []string{"B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []client.EnvVar{{Name: "A", Value: "9"}, {Name: "C", Value: "3"}}
+	if !sameEnvs(got, want) || got[0].Name != "A" {
+		t.Fatalf("got %v, want %v with order kept", got, want)
+	}
+	if base[0].Value != "1" {
+		t.Fatal("mergeEnvs modified its input")
+	}
+
+	if _, err := mergeEnvs(base, nil, []string{"NOPE"}); !errors.Is(err, client.ErrNoSuchEnv) {
+		t.Fatalf("removing a missing name: got %v, want ErrNoSuchEnv", err)
+	}
+}
+
+func TestSameEnvs(t *testing.T) {
+	t.Parallel()
+	a := []client.EnvVar{{Name: "A", Value: "1"}, {Name: "B", Value: "2"}}
+	if !sameEnvs(a, []client.EnvVar{{Name: "B", Value: "2"}, {Name: "A", Value: "1"}}) {
+		t.Error("order should not matter")
+	}
+	if sameEnvs(a, []client.EnvVar{{Name: "A", Value: "1"}, {Name: "B", Value: "3"}}) {
+		t.Error("a different value must not compare equal")
+	}
+	if sameEnvs(a, a[:1]) {
+		t.Error("a missing entry must not compare equal")
+	}
+}
+
+func TestReadAPIBody(t *testing.T) {
+	t.Parallel()
+	if b, err := readAPIBody(""); err != nil || b != nil {
+		t.Fatalf("empty: got %q, %v", b, err)
+	}
+	if b, err := readAPIBody(`{"a":1}`); err != nil || string(b) != `{"a":1}` {
+		t.Fatalf("literal: got %q, %v", b, err)
+	}
+	f := filepath.Join(t.TempDir(), "body.json")
+	if err := os.WriteFile(f, []byte(`{"b":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := readAPIBody("@" + f); err != nil || string(b) != `{"b":2}` {
+		t.Fatalf("@file: got %q, %v", b, err)
 	}
 }

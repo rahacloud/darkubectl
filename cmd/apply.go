@@ -46,7 +46,7 @@ func newApplyCommand() *cli.Command {
 			"first. Beyond `create`, a spec can carry autoscale {min, max, cpuPercent}, probes\n" +
 			"{readiness, liveness}, and memory/cpu for a dynamic plan.\n\n" +
 			"Fields left out are left alone, not reset. Not applied to an existing app, with a\n" +
-			"warning: secretEnvs (settable only at creation). Domains are not part of a spec;\n" +
+			"warning: secretEnvs (use `set env --secret`). Domains are not part of a spec;\n" +
 			"use `set domain`. A disk can grow but not shrink, and an app cannot change\n" +
 			"namespace. Every change is read back, so a field the platform silently drops is\n" +
 			"reported as an error rather than passed off as applied.",
@@ -179,7 +179,7 @@ func updateFromSpec(
 
 	var notes []string
 	if len(spec.SecretEnvs) > 0 {
-		notes = append(notes, "secretEnvs are not applied to an existing app: they can only be set at creation")
+		notes = append(notes, "secretEnvs are not applied to an existing app: change them with `set env --secret`")
 	}
 	if spec.Autoscale != nil && spec.Replicas != nil {
 		notes = append(notes, "replicas ignored: autoscale owns the replica count")

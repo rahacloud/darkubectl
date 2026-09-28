@@ -166,7 +166,7 @@ darkubectl get certificates
 darkubectl get plans                   # no tenant needed: the plan catalogue is global
 
 # App configuration
-darkubectl get env <name|id>           # environment variables (secrets listed by name)
+darkubectl get env <name|id>           # environment variables (secrets by name; --show-secrets for values)
 darkubectl get domains <name|id>       # custom domains + the CNAME target to point DNS at
 
 # Notifications and monitoring
@@ -187,6 +187,8 @@ darkubectl get orphans --context <ctx> --namespace <ns>
 darkubectl scale app <name|id> --replicas 3
 darkubectl set env <name|id> LOG_LEVEL=debug PORT=8080
 darkubectl set env <name|id> --remove LOG_LEVEL
+darkubectl set env <name|id> --secret DB_PASSWORD=s3cret   # a secret variable, kept across deploys
+darkubectl api GET /api/v1/darkube/plans/     # one raw authenticated request, like kubectl get --raw
 darkubectl set domain <name|id> --add api.example.com      # a domain you own
 darkubectl set domain <name|id> --remove old.example.com
 darkubectl set subdomain <name|id> my-api                  # -> my-api.darkube.app, with a cert
@@ -300,7 +302,7 @@ memory: 1500M
 cpu: 750m
 ```
 
-`replicas` left out means one at creation, and "leave it alone" on `apply`. That goes for every field: `apply` changes what the spec names and leaves the rest, so a trimmed file never resets anything by omission. `get apps -o spec` writes this format — secret values and domains are left out and named on stderr, since the API never returns the first and `set domain` owns the second.
+`replicas` left out means one at creation, and "leave it alone" on `apply`. That goes for every field: `apply` changes what the spec names and leaves the rest, so a trimmed file never resets anything by omission. `get apps -o spec` writes this format — secret values and domains are left out and named on stderr, since a spec should not carry secrets in the clear and `set domain` owns the second.
 
 For an app Darkube builds itself, replace `image` with a `git` block:
 
@@ -351,7 +353,7 @@ darkubectl tunnel connect 1433:mssql-dev.talaland-dev.svc:1433
 
 `REMOTEHOST` is resolved inside the cluster, so it is the in-cluster address — `describe app` reports it as `svc.internalAddress`. Forwarding to `localhost` is rejected, because it would resolve to the tunnel pod's own (empty) loopback and produce a tunnel that connects and then refuses everything.
 
-The credential is stored in the config file at creation, and that is the only copy: **secret envs are write-only**, so the API will not give it back. `--auth` and `$DARKUBE_TUNNEL_AUTH` override it, which is what a CI job or a second machine wants.
+The credential is stored in the config file at creation, so `connect` needs no second lookup; `get env --show-secrets` on the tunnel app can recover it if the config is lost. `--auth` and `$DARKUBE_TUNNEL_AUTH` override it, which is what a CI job or a second machine wants.
 
 The point of the tunnel is that it needs no cluster credentials at all. `kubectl port-forward` is the obvious alternative and often is not available: on Hamravesh it means an OIDC exec plugin and a browser login, and the RBAC a Darkube user is given is frequently read-only or absent — so the person who can deploy the app cannot necessarily reach it. Neither side of the tunnel installs anything: the server is an app, and the chisel client is linked into this binary. `--chisel-binary` runs an external one instead, for a different version or a patched build.
 
@@ -413,7 +415,7 @@ The Darkube API has no public documentation; every endpoint here was reverse-eng
 
 Two things the API will not let you do, whatever the CLI offers:
 
-- **Secret environment values are write-only.** They are vault-backed and always read back empty, so `get env` lists secrets by name only, and `set env` refuses to shadow one. Changing a secret's value needs the console.
+- **Secret environment values live in a vault**, and the app read returns them blank. `get env --show-secrets` reads them from the vault and `set env --secret NAME=VALUE` (or `--secret --remove NAME`) changes them, both through the same routes the console uses. A secret write reads every current value and sends the whole list back, and is verified by reading the vault again. `set env` without `--secret` refuses to shadow a secret with a plain variable.
 - **You cannot mount an arbitrary config file into a docker-image app.** `custom_config` is the app's Helm chart values and is silently filtered against the chart's schema — for a docker-image app only `hpa` and `container` (probes) survive. The `config.files` mechanism that would render a ConfigMap exists only on marketplace charts like redis and postgres. Use environment variables, or bake the file into the image.
 
 Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
