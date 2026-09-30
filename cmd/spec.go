@@ -104,7 +104,9 @@ func specFromApp(raw map[string]any, plans []client.Plan, namespaces []client.Na
 	spec.Envs = client.EnvVars(raw)
 
 	if names := client.SecretEnvNames(raw); len(names) > 0 {
-		notes = append(notes, fmt.Sprintf("secret envs %v left out: their values are never returned by the API", names))
+		notes = append(notes, fmt.Sprintf(
+			"secret envs %v left out: the app read returns them blank -- "+
+				"recover the values with `get env --show-secrets`", names))
 	}
 	if hosts := client.ExternalHosts(raw); len(hosts) > 0 {
 		notes = append(notes, fmt.Sprintf("domains %v left out: manage them with `set domain`", hosts))
