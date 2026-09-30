@@ -175,6 +175,16 @@ darkubectl get notifications --unread
 darkubectl get alerts                  # monitoring alerts for the current tenant
 darkubectl get alerts --firing         # only what has not resolved
 
+# Support tickets (the console's پشتیبانی page), for the current tenant
+darkubectl ticket list                 # your tickets; --status open, --org-wide for every member's
+darkubectl ticket view 33421           # the ticket and its thread, staff replies marked
+darkubectl ticket types                # request types to file under
+darkubectl ticket create --type darkube --summary 'Pod stuck in Pending' -f details.md --attach trace.log
+darkubectl ticket reply 33421 -m 'Thanks, that fixed it.'
+darkubectl ticket close 33421
+darkubectl ticket rate 33421 5 --comment 'fast and clear'
+darkubectl ticket download 9001        # an attachment id from `ticket view`
+
 # CI credentials — the pair `darkube deploy` needs in a pipeline
 darkubectl get deploy-token <name|id>          # app id + trigger deploy token
 darkubectl get deploy-token <name|id> -o name  # the bare token, for a CI variable

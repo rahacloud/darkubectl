@@ -21,6 +21,12 @@ const colName = "NAME"
 // colState is the shared state column header across the get tables.
 const colState = "STATE"
 
+// colStatus and colType are further column headers shared across the tables.
+const (
+	colStatus = "STATUS"
+	colType   = "TYPE"
+)
+
 // colNamespace is the shared namespace column header across the get tables.
 const colNamespace = "NAMESPACE"
 
@@ -72,6 +78,7 @@ func newGetCommand() *cli.Command {
 			newGetDomainsCommand(),
 			newGetNotificationsCommand(),
 			newGetAlertsCommand(),
+			newTicketListCommand("tickets", []string{"ticket"}),
 			{
 				Name:    "tenants",
 				Aliases: []string{"tenant", "orgs", "org", "organizations"},
@@ -439,7 +446,7 @@ func printPodsTable(pods []appstate.Pod, wide bool) error {
 
 // podHeader is the column set of `get pods`.
 func podHeader(wide bool) []string {
-	header := []string{colName, "READY", "STATUS", "RESTARTS", "AGE"}
+	header := []string{colName, "READY", colStatus, "RESTARTS", "AGE"}
 	if wide {
 		header = append(header, "CONTAINERS", "LAST-STATE", colNamespace)
 	}

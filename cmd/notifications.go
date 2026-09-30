@@ -87,7 +87,7 @@ func getNotificationsAction(ctx context.Context, cmd *cli.Command) error {
 		}
 		rows = append(rows, []string{marker, shortTime(n.Timestamp), dash(n.TargetType), oneLine(n.Title)})
 	}
-	return output.StyledTable(os.Stdout, []string{"NEW", "TIME", "TYPE", "TITLE"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{"NEW", "TIME", colType, "TITLE"}, rows, nil)
 }
 
 func filterNotifications(items []client.Notification) []client.Notification {
@@ -150,7 +150,7 @@ func getAlertsAction(ctx context.Context, cmd *cli.Command) error {
 			dash(a.Instance), dash(a.Condition), shortTime(a.StartsAt),
 		})
 	}
-	header := []string{"ALERT", "SEVERITY", "STATUS", "INSTANCE", "CONDITION", "STARTED"}
+	header := []string{"ALERT", "SEVERITY", colStatus, "INSTANCE", "CONDITION", "STARTED"}
 	return output.StyledTable(os.Stdout, header, rows,
 		output.StateCells(alertSeverityCol, alertStatusCol))
 }
@@ -165,12 +165,18 @@ func filterFiring(alerts []client.Alert) []client.Alert {
 	return out
 }
 
+// timeLayouts are the timestamp shapes the API returns. The last two are Jira's,
+// from the support platform: a numeric zone without a colon, which RFC 3339
+// rejects (`2026-09-26T08:25:33.000+0000`, and `2026-09-26T11:56:00+0330` on
+// comments).
+var timeLayouts = []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000-0700", "2006-01-02T15:04:05-0700"}
+
 // shortTime renders an API timestamp as a compact local date-time.
 func shortTime(ts string) string {
 	if ts == "" {
 		return "-"
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+	for _, layout := range timeLayouts {
 		if t, err := time.Parse(layout, ts); err == nil {
 			//nolint:gosmopolitan // a CLI renders timestamps in the operator's own zone
 			return t.Local().Format("2006-01-02 15:04")

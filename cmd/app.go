@@ -102,6 +102,7 @@ func NewApp() *cli.Command {
 			newWaitCommand(),
 			newLoginCommand(),
 			newWhoamiCommand(),
+			newTicketCommand(),
 			newAPICommand(),
 			newLogsCommand(),
 			newExecCommand(),
