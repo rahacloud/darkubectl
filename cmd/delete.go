@@ -14,6 +14,7 @@ func newDeleteCommand() *cli.Command {
 		Usage: "Delete a resource",
 		Commands: []*cli.Command{
 			newDeleteNamespaceCommand(),
+			newDeleteAPIKeyCommand(),
 			{
 				Name:      cmdApp,
 				Aliases:   []string{aliasApp},

@@ -171,6 +171,10 @@ darkubectl get services                # marketplace services (Jira, Rocket.Chat
 darkubectl get suggestions <name|id>   # the platform's configuration advice for an app
 darkubectl get balance                 # cash and gift wallets
 darkubectl get invoices                # monthly invoices; the current one is pending
+darkubectl get members                 # the tenant's members and their roles
+darkubectl get apikeys                 # no tenant needed: the account's API keys
+darkubectl create apikey ci-pipeline   # prints the key once; the platform sets a two-year expiry
+darkubectl delete apikey ci-pipeline
 
 # App configuration
 darkubectl get env <name|id>           # environment variables (secrets by name; --show-secrets for values)
@@ -464,7 +468,7 @@ Two things the API will not let you do, whatever the CLI offers:
 
 Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
 
-`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks, `get disks`, `get databases`, `get services`, `get suggestions`, `get balance`, `get invoices` and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
+`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks, `get disks`, `get databases`, `get services`, `get suggestions`, `get balance`, `get invoices`, `get members`, the API key commands and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
 
 ## Development
 
