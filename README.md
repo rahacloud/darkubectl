@@ -164,6 +164,13 @@ darkubectl describe app <name|id> -o yaml
 darkubectl get namespaces              # projects (derived from apps)
 darkubectl get certificates
 darkubectl get plans                   # no tenant needed: the plan catalogue is global
+darkubectl get disks                   # every persistent disk and the app it belongs to
+darkubectl get disks --orphaned        # disks no app accounts for: a deleted app's disk stays billed
+darkubectl get databases               # managed databases (DBaaS), which `get apps` does not list
+darkubectl get services                # marketplace services (Jira, Rocket.Chat, n8n, …)
+darkubectl get suggestions <name|id>   # the platform's configuration advice for an app
+darkubectl get balance                 # cash and gift wallets
+darkubectl get invoices                # monthly invoices; the current one is pending
 
 # App configuration
 darkubectl get env <name|id>           # environment variables (secrets by name; --show-secrets for values)
@@ -457,7 +464,7 @@ Two things the API will not let you do, whatever the CLI offers:
 
 Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
 
-`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
+`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks, `get disks`, `get databases`, `get services`, `get suggestions`, `get balance`, `get invoices` and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
 
 ## Development
 

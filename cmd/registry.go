@@ -236,7 +236,7 @@ func registryTagsAction(ctx context.Context, cmd *cli.Command) error {
 			cut(d.Digest, shortDigest), dash(tagList(d.Tags)), humanBytes(d.Size), ageOf(d.LastPushed),
 		})
 	}
-	return output.StyledTable(os.Stdout, []string{"DIGEST", "TAGS", "SIZE", "PUSHED"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{"DIGEST", "TAGS", colSize, "PUSHED"}, rows, nil)
 }
 
 func registryDeleteAction(ctx context.Context, cmd *cli.Command) error {

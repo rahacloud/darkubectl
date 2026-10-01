@@ -23,10 +23,13 @@ const colState = "STATE"
 
 // colStatus and colType are further column headers shared across the tables.
 const (
-	colStatus = "STATUS"
-	colType   = "TYPE"
-	colAge    = "AGE"
-	colCPU    = "CPU"
+	colStatus  = "STATUS"
+	colType    = "TYPE"
+	colAge     = "AGE"
+	colCPU     = "CPU"
+	colSize    = "SIZE"
+	colEnabled = "ENABLED"
+	colCluster = "CLUSTER"
 )
 
 // colNamespace is the shared namespace column header across the get tables.
@@ -113,6 +116,12 @@ func newGetCommand() *cli.Command {
 			newGetPermissionsCommand(),
 			newGetManifestsCommand(),
 			newGetCIConfigCommand(),
+			newGetDisksCommand(),
+			newGetSuggestionsCommand(),
+			newGetDatabasesCommand(),
+			newGetServicesCommand(),
+			newGetBalanceCommand(),
+			newGetInvoicesCommand(),
 			{
 				Name:      "deploy-token",
 				Aliases:   []string{"deploy-tokens", "deploytoken"},
@@ -278,9 +287,9 @@ func printAppsTable(apps []client.App, wide bool) error {
 }
 
 func printAppsFlatTable(apps []client.App, wide bool) error {
-	header := []string{colName, colNamespace, colState, "REPLICAS", "ENABLED"}
+	header := []string{colName, colNamespace, colState, "REPLICAS", colEnabled}
 	if wide {
-		header = append(header, "TYPE", "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
+		header = append(header, "TYPE", colCluster, "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
 	}
 	rows := make([][]string, 0, len(apps))
 	for _, a := range apps {
@@ -311,9 +320,9 @@ func printAppsFlatTable(apps []client.App, wide bool) error {
 // printAppsGroupTable is printAppsFlatTable without the (now redundant)
 // NAMESPACE column, for use under a per-namespace section header.
 func printAppsGroupTable(apps []client.App, wide bool) error {
-	header := []string{colName, colState, "REPLICAS", "ENABLED"}
+	header := []string{colName, colState, "REPLICAS", colEnabled}
 	if wide {
-		header = append(header, "TYPE", "CLUSTER", "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
+		header = append(header, "TYPE", colCluster, "IMAGE", "RAM", "CPU", "DOMAIN", "UPDATED", "ID")
 	}
 	rows := make([][]string, 0, len(apps))
 	for _, a := range apps {
@@ -522,7 +531,7 @@ func getNamespacesAction(ctx context.Context, cmd *cli.Command) error {
 	for _, n := range ns {
 		rows = append(rows, []string{n.Name, strconv.Itoa(n.ID), n.Cluster.Name, n.Cluster.LocationCountry})
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "ID", "CLUSTER", "LOCATION"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{colName, "ID", colCluster, "LOCATION"}, rows, nil)
 }
 
 func getCertificatesAction(ctx context.Context, cmd *cli.Command) error {
@@ -577,7 +586,7 @@ func getPlansAction(ctx context.Context, cmd *cli.Command) error {
 			p.ID,
 		})
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "RAM", colCPU, "CLUSTER", "ID"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{colName, "RAM", colCPU, colCluster, "ID"}, rows, nil)
 }
 
 func filterCreatablePlans(plans []client.Plan) []client.Plan {
