@@ -29,6 +29,25 @@ const DefaultBaseURL = "https://api.hamravesh.com"
 // requestTimeout bounds every API call.
 const requestTimeout = 60 * time.Second
 
+// maxRedirects bounds how many redirects a read follows.
+const maxRedirects = 10
+
+// ErrWriteRedirected means the server answered a write with a redirect.
+var ErrWriteRedirected = errors.New("the API redirected a write request")
+
+// refuseWriteRedirect stops a write from following a redirect. Go replays a
+// PUT, POST or DELETE redirected with 301/302 as a GET, so the call "succeeds"
+// and nothing is written. Django sends exactly that redirect when a route's
+// trailing slash is missing, as PUT /api/v1/registry-gc-strategies/<id> did on
+// 2026-09-30: the rule read back unchanged, with updated_time untouched.
+func refuseWriteRedirect(req *http.Request, via []*http.Request) error {
+	if orig := via[0].Method; orig != http.MethodGet && orig != http.MethodHead {
+		return fmt.Errorf("%w: %s %s was redirected to %s (a missing trailing slash?)",
+			ErrWriteRedirected, orig, via[0].URL.Path, req.URL.Path)
+	}
+	return nil
+}
+
 // Auth is an HTTP Authorization header value. The Darkube API accepts two
 // schemes: an account Api-key, or a Console JWT (Bearer) obtained from login.
 type Auth string
@@ -58,7 +77,8 @@ func New(baseURL string, auth Auth, org string) *Client {
 		SetBaseURL(baseURL).
 		SetTimeout(requestTimeout).
 		SetHeader("Accept", "application/json").
-		SetHeader("Authorization", string(auth))
+		SetHeader("Authorization", string(auth)).
+		SetRedirectPolicy(resty.RedirectFlexiblePolicy(maxRedirects), resty.RedirectPolicyFunc(refuseWriteRedirect))
 	if org != "" {
 		rc.SetHeader("X-Organization", org)
 	}
