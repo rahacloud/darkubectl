@@ -96,6 +96,7 @@ func NewApp() *cli.Command {
 			newBuildCommand(),
 			newRegistryCommand(),
 			newTopCommand(),
+			newDeployCommand(),
 			newPatchCommand(),
 			newDeleteCommand(),
 			newCreateCommand(),

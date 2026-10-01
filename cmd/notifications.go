@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,9 @@ const flagFiring = "firing"
 
 // flagLimit bounds how many notifications are fetched.
 const flagLimit = "limit"
+
+// flagApp narrows a list to one app.
+const flagApp = "app"
 
 // defaultNotificationLimit is how far back `get notifications` reads.
 const defaultNotificationLimit = 20
@@ -107,6 +111,7 @@ func newGetAlertsCommand() *cli.Command {
 		Usage:   "List monitoring alerts for the current tenant",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: flagFiring, Usage: "only show alerts that have not resolved"},
+			&cli.StringFlag{Name: flagApp, Usage: "only alerts raised against this app or service (matched on the alert's instance)"},
 		},
 		Action: getAlertsAction,
 	}
@@ -127,6 +132,9 @@ func getAlertsAction(ctx context.Context, cmd *cli.Command) error {
 	}
 	if cmd.Bool(flagFiring) {
 		alerts = filterFiring(alerts)
+	}
+	if app := cmd.String(flagApp); app != "" {
+		alerts = slices.DeleteFunc(alerts, func(a client.Alert) bool { return a.Instance != app })
 	}
 
 	if handled, err := output.Structured(os.Stdout, format, alerts); handled {

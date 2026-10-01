@@ -20,6 +20,7 @@ func newSetCommand() *cli.Command {
 			newSetCommandCommand(),
 			newSetProbeCommand(),
 			newSetResourcesCommand(),
+			newSetPermissionsCommand(),
 		},
 	}
 }

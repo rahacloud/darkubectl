@@ -66,7 +66,8 @@ type Client struct {
 	http *resty.Client
 }
 
-// New builds a Client. baseURL may be empty to use DefaultBaseURL.
+// New builds a Client. baseURL may be empty to use DefaultBaseURL, and auth
+// may be empty for the routes that authenticate otherwise.
 func New(baseURL string, auth Auth, org string) *Client {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -77,8 +78,12 @@ func New(baseURL string, auth Auth, org string) *Client {
 		SetBaseURL(baseURL).
 		SetTimeout(requestTimeout).
 		SetHeader("Accept", "application/json").
-		SetHeader("Authorization", string(auth)).
 		SetRedirectPolicy(resty.RedirectFlexiblePolicy(maxRedirects), resty.RedirectPolicyFunc(refuseWriteRedirect))
+	// No credential is a real case: `deploy` authenticates with a deploy token
+	// in the body, and sends no Authorization header at all.
+	if auth != "" {
+		rc.SetHeader("Authorization", string(auth))
+	}
 	if org != "" {
 		rc.SetHeader("X-Organization", org)
 	}

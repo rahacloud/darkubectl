@@ -110,6 +110,9 @@ func newGetCommand() *cli.Command {
 				Action: getPodsAction,
 			},
 			newBuildListCommand("builds", []string{"build"}),
+			newGetPermissionsCommand(),
+			newGetManifestsCommand(),
+			newGetCIConfigCommand(),
 			{
 				Name:      "deploy-token",
 				Aliases:   []string{"deploy-tokens", "deploytoken"},

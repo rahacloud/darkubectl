@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/output"
@@ -19,6 +20,8 @@ const (
 	flagChallenge     = "challenge"
 	flagRedirectHTTPS = "redirect-https"
 	flagNoReconcile   = "no-reconcile"
+
+	flagTLS = "tls"
 
 	challengeHTTP01 = "http01"
 	challengeDNS01  = "dns01"
@@ -36,8 +39,18 @@ func newGetDomainsCommand() *cli.Command {
 		Aliases:   []string{"domain", "ingress"},
 		Usage:     "Show the domains and ingress settings of an app",
 		ArgsUsage: argRefUsage,
-		Description: "Domains live in the app's external_hosts list. Point each one's DNS at the\n" +
-			"cluster's CNAME target, shown here as CNAME-TARGET.",
+		Description: "  darkubectl get domains my-api\n" +
+			"  darkubectl get domains my-api --tls   # also fetch the certificate each host serves\n\n" +
+			"Domains live in the app's external_hosts list. Point each one's DNS at the\n" +
+			"cluster's CNAME target, shown below the table.\n\n" +
+			"DNS says whether the platform sees the name pointing at it. PLATFORM-CERT is the\n" +
+			"certificate the platform issued, which is not necessarily what visitors get: a\n" +
+			"domain fronted by another proxy keeps a stale or missing one here while being\n" +
+			"served fine. --tls connects to each host and reports the certificate it\n" +
+			"actually serves.",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: flagTLS, Usage: "connect to each host on 443 and report the certificate it serves"},
+		},
 		Action: getDomainsAction,
 	}
 }
@@ -74,29 +87,39 @@ func getDomainsAction(ctx context.Context, cmd *cli.Command) error {
 		EnableHTTPV2:     rawBool(raw, "enable_httpv2"),
 	}
 
-	if handled, err := output.Structured(os.Stdout, format, report); handled {
-		return err
-	}
 	if format == output.Name {
 		for _, h := range report.Hosts {
 			fmt.Fprintln(os.Stdout, h)
 		}
 		return nil
 	}
+	report.Status = hostStatuses(ctx, c, app.ID, report.Hosts, cmd.Bool(flagTLS))
+	if handled, err := output.Structured(os.Stdout, format, report); handled {
+		return err
+	}
 
 	if len(report.Hosts) == 0 {
 		fmt.Fprintf(os.Stderr, "app %q serves no custom domains\n", app.Name)
 	} else {
-		rows := make([][]string, 0, len(report.Hosts))
-		for _, h := range report.Hosts {
-			rows = append(rows, []string{h, dash(report.CNAMETarget)})
+		header := []string{"DOMAIN", "DNS", "PLATFORM-CERT"}
+		if cmd.Bool(flagTLS) {
+			header = append(header, "SERVED-CERT")
 		}
-		if err := output.StyledTable(os.Stdout, []string{"DOMAIN", "CNAME-TARGET"}, rows, nil); err != nil {
+		rows := make([][]string, 0, len(report.Status))
+		for _, s := range report.Status {
+			row := []string{s.Host, dnsLabel(s.DNSPointsHere), certLabel(s.PlatformCertExpires, time.Now())}
+			if cmd.Bool(flagTLS) {
+				row = append(row, servedLabel(s.Served, time.Now()))
+			}
+			rows = append(rows, row)
+		}
+		if err := output.StyledTable(os.Stdout, header, rows, nil); err != nil {
 			return err
 		}
+		fmt.Fprintf(os.Stdout, "\nPoint DNS at: %s\n", dash(report.CNAMETarget))
 	}
 
-	fmt.Fprintf(os.Stdout, "\nSSL: %s   redirect-to-https: %s   http/2: %s   challenge: %s   class: %s\n",
+	fmt.Fprintf(os.Stdout, "SSL: %s   redirect-to-https: %s   http/2: %s   challenge: %s   class: %s\n",
 		yesNo(report.EnableSSL), yesNo(report.RedirectSSL), yesNo(report.EnableHTTPV2),
 		dash(report.SSLChallengeType), dash(report.IngressClassName))
 	return nil
@@ -104,13 +127,71 @@ func getDomainsAction(ctx context.Context, cmd *cli.Command) error {
 
 // ingressReport is the -o json|yaml shape of `get domains`.
 type ingressReport struct {
-	Hosts            []string `json:"hosts"                      yaml:"hosts"`
-	CNAMETarget      string   `json:"cnameTarget"                yaml:"cnameTarget"`
-	IngressClassName string   `json:"ingressClassName,omitempty" yaml:"ingressClassName,omitempty"`
-	SSLChallengeType string   `json:"sslChallengeType"           yaml:"sslChallengeType"`
-	EnableSSL        bool     `json:"sslEnabled"                 yaml:"sslEnabled"`
-	RedirectSSL      bool     `json:"sslRedirect"                yaml:"sslRedirect"`
-	EnableHTTPV2     bool     `json:"http2Enabled"               yaml:"http2Enabled"`
+	Hosts            []string     `json:"hosts"                      yaml:"hosts"`
+	CNAMETarget      string       `json:"cnameTarget"                yaml:"cnameTarget"`
+	IngressClassName string       `json:"ingressClassName,omitempty" yaml:"ingressClassName,omitempty"`
+	SSLChallengeType string       `json:"sslChallengeType"           yaml:"sslChallengeType"`
+	EnableSSL        bool         `json:"sslEnabled"                 yaml:"sslEnabled"`
+	RedirectSSL      bool         `json:"sslRedirect"                yaml:"sslRedirect"`
+	EnableHTTPV2     bool         `json:"http2Enabled"               yaml:"http2Enabled"`
+	Status           []hostStatus `json:"status,omitempty"           yaml:"status,omitempty"`
+}
+
+// hostStatus is what is known about one domain: whether its DNS points at the
+// platform, the platform's certificate, and, with --tls, the served one.
+type hostStatus struct {
+	Host string `json:"host" yaml:"host"`
+	// DNSPointsHere is nil when the check itself failed.
+	DNSPointsHere *bool `json:"dnsPointsHere" yaml:"dnsPointsHere"`
+	// PlatformCertExpires is nil when the platform has issued no certificate.
+	PlatformCertExpires *time.Time  `json:"platformCertExpires"  yaml:"platformCertExpires"`
+	Served              *servedCert `json:"servedCert,omitempty" yaml:"servedCert,omitempty"`
+}
+
+// hostStatuses gathers each host's status. A failed check costs its column
+// a "-", not the command: the domain list is worth showing regardless.
+func hostStatuses(ctx context.Context, c *client.Client, appID string, hosts []string, probeTLS bool) []hostStatus {
+	if len(hosts) == 0 {
+		return nil
+	}
+	dns, dnsErr := c.CheckDNS(ctx, hosts)
+	certs, _ := c.CertificateStatus(ctx, appID)
+	out := make([]hostStatus, 0, len(hosts))
+	for _, h := range hosts {
+		s := hostStatus{Host: h, PlatformCertExpires: certs[h]}
+		if ok, found := dns[h]; dnsErr == nil && found {
+			s.DNSPointsHere = &ok
+		}
+		if probeTLS {
+			served := probeServedCert(ctx, h)
+			s.Served = &served
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func dnsLabel(ok *bool) string {
+	switch {
+	case ok == nil:
+		return "-"
+	case *ok:
+		return "ok"
+	default:
+		return "not pointed here"
+	}
+}
+
+// certLabel describes a certificate expiry relative to now.
+func certLabel(expires *time.Time, now time.Time) string {
+	if expires == nil {
+		return "none"
+	}
+	left := expires.Sub(now)
+	if left < 0 {
+		return "expired " + age(*expires) + " ago"
+	}
+	return fmt.Sprintf("%dd left", int(left.Hours()/hoursPerDay))
 }
 
 func newSetDomainCommand() *cli.Command {

@@ -167,13 +167,18 @@ darkubectl get plans                   # no tenant needed: the plan catalogue is
 
 # App configuration
 darkubectl get env <name|id>           # environment variables (secrets by name; --show-secrets for values)
-darkubectl get domains <name|id>       # custom domains + the CNAME target to point DNS at
+darkubectl get domains <name|id>       # custom domains, DNS status, the platform's certificate, the CNAME target
+darkubectl get domains <name|id> --tls # + the certificate each host actually serves
+darkubectl get manifests <name|id>     # the Kubernetes objects the platform renders (--kind Ingress)
+darkubectl get permissions <name|id>   # which members can view, change, delete it
+darkubectl set permissions <name|id> dev@example.com --grant view   # or --revoke change, --none
 
 # Notifications and monitoring
 darkubectl get notifications           # no tenant needed: account feed, spans every tenant
 darkubectl get notifications --unread
 darkubectl get alerts                  # monitoring alerts for the current tenant
 darkubectl get alerts --firing         # only what has not resolved
+darkubectl get alerts --app n8n        # only alerts raised against one app or service
 
 # Support tickets (the console's پشتیبانی page), for the current tenant
 darkubectl ticket list                 # your tickets; --status open, --org-wide for every member's
@@ -208,6 +213,8 @@ darkubectl registry gc set --keep-count 20       # a retention rule the platform
 # CI credentials — the pair `darkube deploy` needs in a pipeline
 darkubectl get deploy-token <name|id>          # app id + trigger deploy token
 darkubectl get deploy-token <name|id> -o name  # the bare token, for a CI variable
+darkubectl get ci-config <name|id>             # the .gitlab-ci.yml jobs the console generates (--for github|curl|env)
+darkubectl deploy --app-id $ID --deploy-token $TOKEN --tag $SHA   # deploy from CI with no login or config
 
 # Reconcile Darkube against a cluster (needs kubectl on PATH)
 darkubectl get orphans                                  # every namespace in the current context
@@ -450,7 +457,7 @@ Two things the API will not let you do, whatever the CLI offers:
 
 Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
 
-`rollout history`, `top`, `registry` and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
+`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
 
 ## Development
 
