@@ -1,11 +1,36 @@
 package client
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // page is the standard Django REST Framework pagination envelope.
 type page[T any] struct {
 	Count    int    `json:"count"`
 	Next     string `json:"next"`
 	Previous string `json:"previous"`
 	Results  []T    `json:"results"`
+}
+
+// FlexID is an identifier whose JSON type the API does not pin down: the same
+// id can arrive as a string on one route and a number on another, so it
+// decodes from either.
+type FlexID string
+
+// UnmarshalJSON accepts a JSON string or number.
+func (f *FlexID) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexID(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("id: %w", err)
+	}
+	*f = FlexID(n.String())
+	return nil
 }
 
 // Cluster is the physical cluster an app's namespace lives on.

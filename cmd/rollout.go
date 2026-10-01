@@ -67,6 +67,7 @@ func newRolloutCommand() *cli.Command {
 				},
 				Action: rolloutStatusAction,
 			},
+			newRolloutHistoryCommand(),
 		},
 	}
 }

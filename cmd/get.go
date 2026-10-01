@@ -25,6 +25,8 @@ const colState = "STATE"
 const (
 	colStatus = "STATUS"
 	colType   = "TYPE"
+	colAge    = "AGE"
+	colCPU    = "CPU"
 )
 
 // colNamespace is the shared namespace column header across the get tables.
@@ -107,6 +109,7 @@ func newGetCommand() *cli.Command {
 				},
 				Action: getPodsAction,
 			},
+			newBuildListCommand("builds", []string{"build"}),
 			{
 				Name:      "deploy-token",
 				Aliases:   []string{"deploy-tokens", "deploytoken"},
@@ -446,7 +449,7 @@ func printPodsTable(pods []appstate.Pod, wide bool) error {
 
 // podHeader is the column set of `get pods`.
 func podHeader(wide bool) []string {
-	header := []string{colName, "READY", colStatus, "RESTARTS", "AGE"}
+	header := []string{colName, "READY", colStatus, "RESTARTS", colAge}
 	if wide {
 		header = append(header, "CONTAINERS", "LAST-STATE", colNamespace)
 	}
@@ -571,7 +574,7 @@ func getPlansAction(ctx context.Context, cmd *cli.Command) error {
 			p.ID,
 		})
 	}
-	return output.StyledTable(os.Stdout, []string{colName, "RAM", "CPU", "CLUSTER", "ID"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{colName, "RAM", colCPU, "CLUSTER", "ID"}, rows, nil)
 }
 
 func filterCreatablePlans(plans []client.Plan) []client.Plan {

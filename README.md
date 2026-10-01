@@ -185,6 +185,26 @@ darkubectl ticket close 33421
 darkubectl ticket rate 33421 5 --comment 'fast and clear'
 darkubectl ticket download 9001        # an attachment id from `ticket view`
 
+# Change history, builds and usage
+darkubectl rollout history <name|id>             # who changed the app, when, which fields (last 7 days)
+darkubectl rollout history <name|id> --since 30d --details   # with each field's old and new value
+darkubectl get builds <name|id>                  # a git-backed app's builds, newest first
+darkubectl build logs <name|id> [BUILD] -f       # the latest build's log, followed to the end
+darkubectl build start <name|id> -f              # build the branch head and deploy it
+darkubectl build retry <name|id> BUILD
+darkubectl build stop <name|id> BUILD
+darkubectl top app <name|id>                     # per pod: CPU, throttling, memory vs ram_limit, network
+darkubectl top apps --sort-by memory             # every app in the tenant, busiest first
+
+# Container registry (registry.hamdocker.ir)
+darkubectl registry list                         # registries, push prefix, username, storage used
+darkubectl registry images                       # image repositories
+darkubectl registry tags my-api                  # manifests with their tags, newest first
+darkubectl registry prune my-api --keep 10 --dry-run   # never deletes a tag an app is running
+darkubectl registry delete my-api:old-tag        # or my-api@sha256:… for a manifest, or my-api for all
+darkubectl registry password | docker login registry.hamdocker.ir -u <user> --password-stdin
+darkubectl registry gc set --keep-count 20       # a retention rule the platform enforces itself
+
 # CI credentials — the pair `darkube deploy` needs in a pipeline
 darkubectl get deploy-token <name|id>          # app id + trigger deploy token
 darkubectl get deploy-token <name|id> -o name  # the bare token, for a CI variable
@@ -429,6 +449,8 @@ Two things the API will not let you do, whatever the CLI offers:
 - **You cannot mount an arbitrary config file into a docker-image app.** `custom_config` is the app's Helm chart values and is silently filtered against the chart's schema — for a docker-image app only `hpa` and `container` (probes) survive. The `config.files` mechanism that would render a ConfigMap exists only on marketplace charts like redis and postgres. Use environment variables, or bake the file into the image.
 
 Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
+
+`rollout history`, `top`, `registry` and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
 
 ## Development
 
