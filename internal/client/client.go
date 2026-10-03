@@ -161,7 +161,18 @@ func IsTransient(err error) bool {
 
 // do issues a request and returns the raw response body on 2xx, or an *APIError.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any) ([]byte, error) {
+	return c.doWithHeaders(ctx, method, path, query, body, nil)
+}
+
+// doWithHeaders is do with extra request headers, which override the client's
+// own for that one request.
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, query url.Values, body any, header http.Header) ([]byte, error) {
 	req := c.http.R().SetContext(ctx)
+	for name, values := range header {
+		for _, v := range values {
+			req.SetHeader(name, v)
+		}
+	}
 	if len(query) > 0 {
 		req.SetQueryParamsFromValues(query)
 	}
