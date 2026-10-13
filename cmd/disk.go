@@ -125,54 +125,35 @@ func setDiskAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	apply := func(raw map[string]any) error { return applyDiskSize(raw, size) }
-
-	if cmd.Bool(flagDryRun) {
-		before, after, prepErr := c.PrepareAppUpdate(ctx, app.ID, apply)
-		if prepErr != nil {
-			return prepErr
-		}
-		fmt.Fprintf(os.Stdout, "app/%s: dry run, nothing was sent\n", app.Name)
-		writeDiff(os.Stdout, diffApps(before, after))
-		return nil
-	}
-
 	from, err := currentDiskSize(ctx, c.GetApp, app.ID)
 	if err != nil {
 		return err
 	}
-	if from == size {
-		fmt.Fprintf(os.Stdout, "app/%s disk is already %dGi\n", app.Name, size)
-		return nil
-	}
-	// applyDiskSize refuses this too, but only inside UpdateApp — after the
-	// prompt has already asked the operator to confirm "growing" to a smaller
-	// number. Refuse before asking.
+	// applyDiskSize refuses this too, but only once the change is prepared —
+	// refuse before showing a diff or asking to confirm "growing" to a smaller
+	// number.
 	if size < from {
 		return errDiskShrink(from, size)
 	}
 
-	fmt.Fprintf(os.Stderr, "About to grow the disk of app %q (%s) in tenant %q: %dGi -> %dGi.\n",
-		app.Name, app.ID, c.Org, from, size)
-	fmt.Fprintf(os.Stderr,
-		"note: this is one-way. The volume can be grown again later but never shrunk,\n"+
-			"      and the app is billed for the new size from now on.\n")
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{
+		what:  "grow the disk of",
+		apply: func(raw map[string]any) error { return applyDiskSize(raw, size) },
+		// The write serializer has been seen accepting `disk` and dropping it,
+		// so a 202 here means nothing. Read the size back and believe that.
+		took: func(raw map[string]any) bool {
+			got, err := diskSizeOf(raw)
+			return err == nil && got == size
+		},
+		notes: []string{"this is one-way. The volume can be grown again later but never shrunk, " +
+			"and the app is billed for the new size from now on."},
+	})
+	if errors.Is(err, errChangeIgnored) {
+		got, _ := currentDiskSize(ctx, c.GetApp, app.ID)
+		return errDiskIgnored(from, size, got)
 	}
-
-	if _, err := c.UpdateApp(ctx, app.ID, apply); err != nil {
+	if err != nil || !wrote {
 		return err
-	}
-
-	// The write serializer accepts `disk` and drops it, so a 202 here means
-	// nothing. Read the size back and believe that instead.
-	after, err := currentDiskSize(ctx, c.GetApp, app.ID)
-	if err != nil {
-		return err
-	}
-	if after != size {
-		return errDiskIgnored(from, size, after)
 	}
 
 	fmt.Fprintf(os.Stdout, "app/%s disk set to %dGi\n", app.Name, size)
@@ -219,6 +200,11 @@ func currentDiskSize(
 	if err != nil {
 		return 0, err
 	}
+	return diskSizeOf(raw)
+}
+
+// diskSizeOf reads disk.size_in_Gi out of a raw app object.
+func diskSizeOf(raw map[string]any) (int, error) {
 	disk, ok := raw[keyDisk].(map[string]any)
 	if !ok || len(disk) == 0 {
 		return 0, errNoDisk

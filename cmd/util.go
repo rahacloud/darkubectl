@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -47,13 +46,25 @@ func confirmExact(prompt, want string) bool {
 	return strings.TrimSpace(line) == want
 }
 
+// readLine reads one line from stdin a byte at a time. A bufio.Reader would
+// read ahead and take the bytes after the newline with it when it is dropped,
+// losing the next answer when stdin is a pipe — and anything a later raw read
+// of stdin (exec, cp) expects to find there.
 func readLine() (string, bool) {
-	r := bufio.NewReader(os.Stdin)
-	line, err := r.ReadString('\n')
-	if err != nil && line == "" {
-		return "", false
+	var line []byte
+	b := make([]byte, 1)
+	for {
+		n, err := os.Stdin.Read(b)
+		if n > 0 {
+			line = append(line, b[0])
+			if b[0] == '\n' {
+				return string(line), true
+			}
+		}
+		if err != nil {
+			return string(line), len(line) > 0
+		}
 	}
-	return line, true
 }
 
 // stateLabel renders an app's live state compactly.

@@ -46,6 +46,7 @@ func newSetSubdomainCommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: flagRemove, Usage: "clear the subdomain instead of setting one"},
 			&cli.BoolFlag{Name: flagSSL, Value: true, Usage: "also enable SSL (the point of having the subdomain)"},
+			&cli.BoolFlag{Name: flagDryRun, Usage: usageDryRun},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
 		Action: setSubdomainAction,
@@ -84,33 +85,36 @@ func setSubdomainAction(ctx context.Context, cmd *cli.Command) error {
 	}
 	base := clusterBaseDomain(raw)
 
-	action := "set subdomain to " + hostname(label, base)
+	action := "set the subdomain to " + hostname(label, base) + " on"
 	if remove {
-		action = "clear the subdomain"
+		action = "clear the subdomain of"
 	}
-	fmt.Fprintf(os.Stderr, "About to %s on app %q (%s) in tenant %q\n", action, app.Name, app.ID, c.Org)
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
-	}
-
-	updated, err := c.UpdateApp(ctx, app.ID, func(a map[string]any) error {
-		if remove {
-			a["custom_subdomain_addr"] = nil
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{
+		what: action,
+		apply: func(a map[string]any) error {
+			if remove {
+				a["custom_subdomain_addr"] = nil
+				return nil
+			}
+			a["custom_subdomain_addr"] = label
+			if cmd.Bool(flagSSL) {
+				a["enable_SSL"] = true
+			}
 			return nil
-		}
-		a["custom_subdomain_addr"] = label
-		if cmd.Bool(flagSSL) {
-			a["enable_SSL"] = true
-		}
-		return nil
+		},
+		took: func(a map[string]any) bool { return rawString(a, "custom_subdomain_addr") == label },
 	})
-	if err != nil {
+	if err != nil || !wrote {
 		return err
 	}
 
 	if remove {
 		fmt.Fprintf(os.Stdout, "app/%s subdomain cleared\n", app.Name)
 		return nil
+	}
+	var updated map[string]any
+	if fresh, err := c.GetApp(ctx, app.ID); err == nil {
+		updated = fresh
 	}
 	host := rawString(updated, "custom_domain_address")
 	if host == "" {

@@ -10,6 +10,21 @@ import (
 // decodeInto is a small helper so callers avoid importing encoding/json.
 func decodeInto(data []byte, out any) error { return json.Unmarshal(data, out) }
 
+// decodeWriteResult decodes the body a successful write answered with, or
+// returns the zero value when the body is empty or not the expected shape. The
+// write has already happened by then, so a body this cannot read is not the
+// write failing: reporting it as an error would invite a retry that repeats
+// the write. A caller that needs the stored object re-reads it, as every edit
+// does to verify the change anyway.
+func decodeWriteResult[T any](data []byte) T {
+	var out T
+	if len(data) == 0 || decodeInto(data, &out) != nil {
+		var zero T
+		return zero
+	}
+	return out
+}
+
 // Plan listing lives on the v1 surface and is a global (non-tenant) resource.
 const plansPathV1 = "/api/v1/darkube/plans/"
 

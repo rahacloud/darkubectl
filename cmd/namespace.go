@@ -108,9 +108,34 @@ func deleteNamespaceAction(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("%w: %q still holds %d app(s); delete them first",
 			errNamespaceNotEmpty, target.Name, held)
 	}
+	// Managed databases are a separate product and never in the app list, but
+	// they live in a namespace all the same: an "empty" namespace can still
+	// hold a production database.
+	dbs, err := c.ListDatabases(ctx)
+	if err != nil {
+		return fmt.Errorf("checking the namespace for managed databases: %w", err)
+	}
+	var dbNames []string
+	for _, d := range dbs {
+		if d.NamespaceID == target.ID {
+			dbNames = append(dbNames, d.Name)
+		}
+	}
+	if len(dbNames) > 0 {
+		return fmt.Errorf("%w: %q still holds managed database(s) %s; delete them first",
+			errNamespaceNotEmpty, target.Name, strings.Join(dbNames, ", "))
+	}
 
 	fmt.Fprintf(os.Stderr, "About to delete empty namespace %q (id %d) in tenant %q\n",
 		target.Name, target.ID, c.Org)
+	// Claims outlive the apps that made them, so the disks of deleted apps can
+	// still be here, and their data with them. Name them before the prompt.
+	if pvcs, err := c.ListPVCs(ctx, target.Name, target.Cluster.ID); err == nil && len(pvcs) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: it still holds %d disk(s), probably left behind by deleted apps:\n", len(pvcs))
+		for _, p := range pvcs {
+			fmt.Fprintf(os.Stderr, "  %s (%s)\n", p.Name, p.Size)
+		}
+	}
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
@@ -163,6 +188,11 @@ func createNamespaceAction(ctx context.Context, cmd *cli.Command) error {
 	ns, err := c.CreateNamespace(ctx, name, clusterID)
 	if err != nil {
 		return err
+	}
+	if ns.ID == 0 {
+		// The create answered with nothing readable; the namespace still exists.
+		fmt.Fprintf(os.Stdout, "namespace/%s created\n", name)
+		return nil
 	}
 	fmt.Fprintf(os.Stdout, "namespace/%s created (id %d)\n", ns.Name, ns.ID)
 	return nil

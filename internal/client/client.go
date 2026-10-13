@@ -148,8 +148,13 @@ func IsNotFound(err error) bool {
 // IsTransient reports whether err is worth retrying: a transport failure, or a
 // 5xx from the API. Polling loops use it so that a flaky minute — which this API
 // does produce — does not abort a wait that would otherwise have succeeded.
+//
+// A cancellation is not transient: the caller asked to stop, and retrying would
+// ignore that. A deadline still counts, because a single request timing out is
+// exactly the flakiness this exists for and looks the same as an expired
+// caller context; a polling loop must check its own ctx, which they all do.
 func IsTransient(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
 	if apiErr, ok := errors.AsType[*APIError](err); ok {

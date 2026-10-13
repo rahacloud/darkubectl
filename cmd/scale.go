@@ -22,18 +22,13 @@ func newScaleCommand() *cli.Command {
 				Aliases:   []string{aliasApp},
 				Usage:     "Scale an app to a given replica count",
 				ArgsUsage: argRefUsage,
-				Flags: []cli.Flag{
+				Flags: append([]cli.Flag{
 					&cli.IntFlag{
 						Name:     flagReplicas,
 						Required: true,
 						Usage:    "desired number of replicas",
 					},
-					&cli.BoolFlag{
-						Name:    flagYes,
-						Aliases: []string{aliasYes},
-						Usage:   usageSkipConfirm,
-					},
-				},
+				}, mutationFlags()...),
 				Action: scaleAppAction,
 			},
 		},
@@ -58,17 +53,15 @@ func scaleAppAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "About to scale app %q (%s) in tenant %q: %d -> %d replicas.\n",
-		app.Name, app.ID, c.Org, app.Replicas, replicas)
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
-	}
-
-	_, err = c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
-		raw["replicas"] = replicas
-		return nil
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{
+		what: fmt.Sprintf("scale to %d replicas", replicas),
+		apply: func(raw map[string]any) error {
+			raw["replicas"] = replicas
+			return nil
+		},
+		took: func(raw map[string]any) bool { return jsonInt(raw["replicas"]) == replicas },
 	})
-	if err != nil {
+	if err != nil || !wrote {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s scaled to %d replicas\n", app.Name, replicas)

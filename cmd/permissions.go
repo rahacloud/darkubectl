@@ -65,6 +65,7 @@ func newSetPermissionsCommand() *cli.Command {
 			&cli.StringSliceFlag{Name: flagGrant, Usage: "permissions to add: view, change, delete"},
 			&cli.StringSliceFlag{Name: flagRevoke, Usage: "permissions to remove"},
 			&cli.BoolFlag{Name: flagNone, Usage: "remove every permission"},
+			&cli.BoolFlag{Name: flagDryRun, Usage: usageDryRun},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
 		Action: setPermissionsAction,
@@ -141,6 +142,12 @@ func setPermissionsAction(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 
+	if cmd.Bool(flagDryRun) {
+		fmt.Fprintf(os.Stdout, "app/%s: dry run, nothing was sent\n  %s: [%s] -> [%s]\n", app.Name, email,
+			strings.Join(sortedPerms(before), ","), strings.Join(after, ","))
+		return nil
+	}
+
 	warnIfACLOff(ctx, c)
 	fmt.Fprintf(os.Stderr, "About to change %s's access to app %q in tenant %q:\n  - [%s]\n  + [%s]\n",
 		email, app.Name, c.Org, strings.Join(sortedPerms(before), ","), strings.Join(after, ","))
@@ -152,12 +159,19 @@ func setPermissionsAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	check, err := c.AppPermissions(ctx, app.ID)
+	// Read back: the write answers before it is necessarily visible.
+	took, err := retryReadBack(ctx, func(ctx context.Context) (bool, error) {
+		check, err := c.AppPermissions(ctx, app.ID)
+		if err != nil {
+			return false, err
+		}
+		j := slices.IndexFunc(check, func(p client.AppPermission) bool { return strings.EqualFold(p.User.Email, email) })
+		return j >= 0 && slices.Equal(sortedPerms(check[j].Permissions), after), nil
+	})
 	if err != nil {
 		return err
 	}
-	j := slices.IndexFunc(check, func(p client.AppPermission) bool { return strings.EqualFold(p.User.Email, email) })
-	if j < 0 || !slices.Equal(sortedPerms(check[j].Permissions), after) {
+	if !took {
 		return fmt.Errorf("%w: %s on app/%s", errPermissionsLost, email, app.Name)
 	}
 	fmt.Fprintf(os.Stdout, "%s now has [%s] on app/%s\n", email, strings.Join(after, ","), app.Name)

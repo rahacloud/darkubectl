@@ -48,11 +48,7 @@ func (c *Client) CreateNamespace(ctx context.Context, name string, clusterID int
 		return Namespace{}, err
 	}
 
-	var out Namespace
-	if len(data) > 0 {
-		_ = decodeInto(data, &out)
-	}
-	return out, nil
+	return decodeWriteResult[Namespace](data), nil
 }
 
 // DeleteNamespace removes a namespace (project) by id.

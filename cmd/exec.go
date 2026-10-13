@@ -291,7 +291,7 @@ func isSessionEnd(err error) bool {
 	if err == nil {
 		return false
 	}
-	if strings.Contains(err.Error(), wsexec.ErrExited.Error()) {
+	if errors.Is(err, wsexec.ErrExited) {
 		return true
 	}
 	return websocket.CloseStatus(err) != -1

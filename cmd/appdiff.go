@@ -74,12 +74,77 @@ func truncate(s string) string {
 // writeDiff prints a field diff in the -/+ style, or says nothing would change.
 func writeDiff(w io.Writer, changes []fieldChange) {
 	if len(changes) == 0 {
-		fmt.Fprintln(w, "no changes: the app already matches this patch")
+		fmt.Fprintln(w, "no changes: the app already matches")
 		return
 	}
 	for _, c := range changes {
 		fmt.Fprintf(w, "  %s:\n", c.Key)
+		if lines, ok := namedListDiff(c.Before, c.After); ok {
+			for _, l := range lines {
+				fmt.Fprintf(w, "    %s\n", l)
+			}
+			continue
+		}
 		fmt.Fprintf(w, "    - %s\n", truncate(c.Before))
 		fmt.Fprintf(w, "    + %s\n", truncate(c.After))
 	}
+}
+
+// namedItem is an entry of a {name, value} list, which is how envs are stored.
+type namedItem struct {
+	Name  string `json:"name"`
+	Value any    `json:"value"`
+}
+
+// namedListDiff diffs two {name, value} lists entry by entry. Shown whole, an
+// app's envs run past the truncation limit and hide the one variable that
+// changed; per entry, the diff names it. ok is false when either side is not
+// such a list, and the caller prints the whole values instead.
+func namedListDiff(before, after string) ([]string, bool) {
+	parse := func(s string) ([]namedItem, bool) {
+		if s == "null" {
+			return nil, true
+		}
+		var items []namedItem
+		if json.Unmarshal([]byte(s), &items) != nil {
+			return nil, false
+		}
+		for _, it := range items {
+			if it.Name == "" {
+				return nil, false
+			}
+		}
+		return items, true
+	}
+	b, okB := parse(before)
+	a, okA := parse(after)
+	if !okB || !okA || (len(a) == 0 && len(b) == 0) {
+		return nil, false
+	}
+
+	old := make(map[string]string, len(b))
+	for _, it := range b {
+		old[it.Name] = renderValue(it.Value)
+	}
+	var lines []string
+	for _, it := range a {
+		v := renderValue(it.Value)
+		prev, had := old[it.Name]
+		switch {
+		case !had:
+			lines = append(lines, "+ "+it.Name+"="+truncate(v))
+		case prev != v:
+			lines = append(lines, "~ "+it.Name+": "+truncate(prev)+" -> "+truncate(v))
+		}
+		delete(old, it.Name)
+	}
+	for _, it := range b {
+		if _, gone := old[it.Name]; gone {
+			lines = append(lines, "- "+it.Name)
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "(reordered)")
+	}
+	return lines, true
 }

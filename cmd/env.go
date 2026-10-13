@@ -8,7 +8,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/output"
@@ -136,12 +135,13 @@ func newSetEnvCommand() *cli.Command {
 			"A secret change reads every current secret value from the vault and writes the\n" +
 			"whole list back, the way the console does; values are never printed. It is\n" +
 			"what makes a secret survive the next deploy, which editing the Kubernetes\n" +
-			"Secret directly does not.",
-		Flags: []cli.Flag{
+			"Secret directly does not.\n\n" +
+			"Like every write, a change restarts the app's pods, so a run that would change\n" +
+			"nothing sends nothing; that keeps the command safe to repeat from a script.",
+		Flags: append([]cli.Flag{
 			&cli.StringSliceFlag{Name: flagRemove, Usage: "environment variable to remove (repeatable)"},
 			&cli.BoolFlag{Name: flagSecret, Usage: "the variables are secret environment variables"},
-			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
-		},
+		}, mutationFlags()...),
 		Action: setEnvAction,
 	}
 }
@@ -189,16 +189,12 @@ func setEnvAction(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "About to update environment on app %q (%s) in tenant %q: %s\n",
-		app.Name, app.ID, c.Org, describeEnvChange(set, removals))
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
-	}
-
-	_, err = c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
-		return applyEnvChange(raw, set, removals)
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{
+		what:       "update the environment of",
+		apply:      func(raw map[string]any) error { return applyEnvChange(raw, set, removals) },
+		verifyDiff: true,
 	})
-	if err != nil {
+	if err != nil || !wrote {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s environment updated\n", app.Name)
@@ -257,22 +253,6 @@ func parseEnvPairs(pairs []string) ([]client.EnvVar, error) {
 	return out, nil
 }
 
-func describeEnvChange(set []client.EnvVar, removals []string) string {
-	var parts []string
-	if len(set) > 0 {
-		names := make([]string, 0, len(set))
-		for _, e := range set {
-			names = append(names, e.Name)
-		}
-		sort.Strings(names)
-		parts = append(parts, "set "+strings.Join(names, ", "))
-	}
-	if len(removals) > 0 {
-		parts = append(parts, "remove "+strings.Join(removals, ", "))
-	}
-	return strings.Join(parts, "; ")
-}
-
 // flagSecret makes set env act on secret variables; flagShowSecrets makes get
 // env print their values.
 const (
@@ -296,8 +276,26 @@ func setSecretEnv(
 		}
 	}
 
+	current, err := c.SecretEnvs(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	merged, err := mergeEnvs(current, set, removals)
+	if err != nil {
+		return err
+	}
+	if cmd.Bool(flagDryRun) {
+		fmt.Fprintf(os.Stdout, "app/%s: dry run, nothing was sent\n", app.Name)
+		fmt.Fprintf(os.Stdout, "  secret environment: %s\n", describeSecretChange(current, merged))
+		return nil
+	}
+	if sameEnvs(current, merged) {
+		fmt.Fprintf(os.Stdout, "app/%s unchanged: it already matches\n", app.Name)
+		return nil
+	}
+
 	fmt.Fprintf(os.Stderr, "About to update SECRET environment on app %q (%s) in tenant %q: %s\n",
-		app.Name, app.ID, c.Org, describeEnvChange(set, removals))
+		app.Name, app.ID, c.Org, describeSecretChange(current, merged))
 	fmt.Fprintf(os.Stderr, "note: like every write, this restarts the app's pods.\n")
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
@@ -311,27 +309,55 @@ func setSecretEnv(
 	}
 
 	// A 202 from this API does not prove the write was stored; read the vault back.
-	for attempt := range verifyAttempts {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(verifyInterval):
-			}
-		}
+	ok, err := retryReadBack(ctx, func(ctx context.Context) (bool, error) {
 		got, err := c.SecretEnvs(ctx, app.ID)
-		if err != nil {
-			if client.IsTransient(err) {
-				continue
-			}
-			return err
+		return err == nil && sameEnvs(got, want), err
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: the vault still does not hold the secret variables as written", errChangeIgnored)
+	}
+	fmt.Fprintf(os.Stdout, "app/%s secret environment updated\n", app.Name)
+	return nil
+}
+
+// describeSecretChange names the secret variables a change adds, alters and
+// removes, without their values.
+func describeSecretChange(before, after []client.EnvVar) string {
+	old := make(map[string]string, len(before))
+	for _, e := range before {
+		old[e.Name] = e.Value
+	}
+	var added, changed, removed []string
+	for _, e := range after {
+		v, ok := old[e.Name]
+		switch {
+		case !ok:
+			added = append(added, e.Name)
+		case v != e.Value:
+			changed = append(changed, e.Name)
 		}
-		if sameEnvs(got, want) {
-			fmt.Fprintf(os.Stdout, "app/%s secret environment updated\n", app.Name)
-			return nil
+		delete(old, e.Name)
+	}
+	for name := range old {
+		removed = append(removed, name)
+	}
+	sort.Strings(removed)
+	var parts []string
+	for _, p := range []struct {
+		verb  string
+		names []string
+	}{{"add", added}, {"change", changed}, {"remove", removed}} {
+		if len(p.names) > 0 {
+			parts = append(parts, p.verb+" "+strings.Join(p.names, ", "))
 		}
 	}
-	return fmt.Errorf("%w: the vault still does not hold the secret variables as written", errChangeIgnored)
+	if len(parts) == 0 {
+		return "no change"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // mergeEnvs applies additions and removals to a variable list, keeping the order

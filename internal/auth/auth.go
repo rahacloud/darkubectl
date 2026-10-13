@@ -67,7 +67,9 @@ type Client struct {
 	// backoff; callers get the defaults from New.
 	refreshAttempts int
 	refreshBackoff  time.Duration
-	sleep           func(time.Duration)
+	// sleep replaces the backoff wait in tests. Nil in real use, which is what
+	// lets a cancelled context (Ctrl-C) cut a backoff short.
+	sleep func(time.Duration)
 }
 
 // New builds an auth client for the given API base URL.
@@ -80,7 +82,6 @@ func New(baseURL string) *Client {
 		http:            rc,
 		refreshAttempts: defaultRefreshAttempts,
 		refreshBackoff:  defaultRefreshBackoff,
-		sleep:           time.Sleep,
 	}
 }
 

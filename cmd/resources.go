@@ -167,6 +167,11 @@ func findPlan(ctx context.Context, c *client.Client, ref string) (*client.Plan, 
 	if err != nil {
 		return nil, err
 	}
+	return matchPlan(plans, ref)
+}
+
+// matchPlan picks a plan by id, code name or name.
+func matchPlan(plans []client.Plan, ref string) (*client.Plan, error) {
 	for i := range plans {
 		if plans[i].ID == ref || plans[i].CodeName == ref || plans[i].Name == ref {
 			return &plans[i], nil

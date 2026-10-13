@@ -144,11 +144,7 @@ func (c *Client) CreateApp(ctx context.Context, in CreateAppInput) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	var out map[string]any
-	if len(data) > 0 {
-		_ = decodeInto(data, &out)
-	}
-	return out, nil
+	return decodeWriteResult[map[string]any](data), nil
 }
 
 func buildCreatePayload(in CreateAppInput) map[string]any {

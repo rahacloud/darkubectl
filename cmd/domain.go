@@ -219,6 +219,7 @@ func newSetDomainCommand() *cli.Command {
 			&cli.StringFlag{Name: flagChallenge, Usage: "ACME challenge: http01 or dns01"},
 			&cli.BoolFlag{Name: flagRedirectHTTPS, Usage: "redirect plain HTTP to HTTPS"},
 			&cli.BoolFlag{Name: flagNoReconcile, Usage: "do not trigger the deploy that re-renders the ingress"},
+			&cli.BoolFlag{Name: flagDryRun, Usage: usageDryRun},
 			&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: usageSkipConfirm},
 		},
 		Action: setDomainAction,
@@ -260,34 +261,28 @@ func setDomainAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "About to update domains on app %q (%s) in tenant %q: %s\n",
-		app.Name, app.ID, c.Org, describeDomainChange(additions, removals))
+	var notes []string
 	if challenge != "" {
-		fmt.Fprintf(os.Stderr, "  ssl challenge: %s -> %s%s\n",
-			rawString(current, "ssl_challenge_type"), challenge, challengeNote)
+		notes = append(notes, "ssl challenge "+challenge+challengeNote)
 	}
-	if cmd.Bool(flagRedirectHTTPS) && !rawBool(current, "redirect_SSL") {
-		fmt.Fprintf(os.Stderr, "  redirect http -> https: enabled\n")
-	}
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
-	}
-
-	updated, err := c.UpdateApp(ctx, app.ID, func(raw map[string]any) error {
-		if err := applyDomainChange(raw, additions, removals); err != nil {
-			return err
-		}
-		applyIngressSettings(raw, challenge, cmd.Bool(flagRedirectHTTPS))
-		return nil
+	redirect := cmd.Bool(flagRedirectHTTPS)
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{
+		what: "change the domains of",
+		apply: func(raw map[string]any) error {
+			if err := applyDomainChange(raw, additions, removals); err != nil {
+				return err
+			}
+			applyIngressSettings(raw, challenge, redirect)
+			return nil
+		},
+		verifyDiff: true,
+		notes:      notes,
 	})
-	if err != nil {
+	if err != nil || !wrote {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s domains updated\n", app.Name)
-	if challenge != "" {
-		fmt.Fprintf(os.Stderr, "ssl challenge: %s%s\n", challenge, challengeNote)
-	}
-	if target := rawString(updated, "ingress_cname_address"); target != "" && len(additions) > 0 {
+	if target := rawString(current, "ingress_cname_address"); target != "" && len(additions) > 0 {
 		fmt.Fprintf(os.Stderr, "note: point each added domain's DNS at %s\n", target)
 	}
 
@@ -411,17 +406,6 @@ func applyDomainChange(raw map[string]any, additions, removals []string) error {
 	}
 	client.SetExternalHosts(raw, hosts)
 	return nil
-}
-
-func describeDomainChange(additions, removals []string) string {
-	var parts []string
-	if len(additions) > 0 {
-		parts = append(parts, "add "+strings.Join(additions, ", "))
-	}
-	if len(removals) > 0 {
-		parts = append(parts, "remove "+strings.Join(removals, ", "))
-	}
-	return strings.Join(parts, "; ")
 }
 
 // rawString reads a string field from a raw app object, tolerating null.

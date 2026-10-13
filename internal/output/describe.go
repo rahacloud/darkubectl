@@ -220,6 +220,8 @@ func PlainRow(row Row) string {
 	}
 }
 
+// padRight pads s to width. A key that already fills the column still gets one
+// space, so it never runs into its value.
 func padRight(s string, width int) string {
 	if len(s) >= width {
 		return s + " "

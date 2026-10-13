@@ -23,13 +23,17 @@ func newPatchCommand() *cli.Command {
 				ArgsUsage: argRefUsage,
 				Description: "The JSON is merged into the app's current object and written back. Use\n" +
 					"this for fields not covered by dedicated commands, e.g.:\n\n" +
-					`  darkubectl patch app my-api -p '{"ram_limit": "1024M", "cpu_request": "500m"}'` + "\n\n" +
+					`  darkubectl patch app my-api -p '{"enable_SSL": true, "redirect_SSL": true}'` + "\n\n" +
 					"The API implements no partial update, so this is a read-modify-write of the\n" +
 					"whole app rather than an HTTP PATCH. A concurrent console edit between the\n" +
 					"read and the write is therefore lost.\n\n" +
 					"--dry-run shows which fields the write would actually change and sends nothing.\n" +
 					"That is worth more here than on an API with a real partial update: the request\n" +
-					"body is the whole app, so it does not show which of its seventy fields moved.",
+					"body is the whole app, so it does not show which of its seventy fields moved.\n\n" +
+					"After the write every changed field is read back. The platform drops fields it\n" +
+					"does not store without an error (custom_config is filtered against the chart,\n" +
+					"and ram_limit/cpu_request on a fixed plan follow the plan), and such a patch\n" +
+					"fails instead of reporting success. Use `set resources` for the app's size.",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "patch",
@@ -95,18 +99,16 @@ func patchAppAction(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "About to update app %q (%s) in tenant %q with: %s\n",
-		app.Name, app.ID, c.Org, patchJSON)
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
-	}
-
-	updated, err := c.UpdateApp(ctx, app.ID, apply)
-	if err != nil {
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{what: "patch", apply: apply, verifyDiff: true})
+	if err != nil || !wrote {
 		return err
 	}
 	if format == output.JSON || format == output.YAML {
-		_, err := output.Structured(os.Stdout, format, updated)
+		updated, err := c.GetApp(ctx, app.ID)
+		if err != nil {
+			return err
+		}
+		_, err = output.Structured(os.Stdout, format, updated)
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s patched\n", app.Name)

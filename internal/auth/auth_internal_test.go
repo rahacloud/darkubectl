@@ -151,3 +151,30 @@ func TestRefreshDefaultsAreRetrying(t *testing.T) {
 		t.Errorf("refreshBackoff = %v, want > 0", c.refreshBackoff)
 	}
 }
+
+// TestRefreshBackoffHonorsCancel pins that a cancelled context cuts the backoff
+// short. It used to sleep out the full step with time.Sleep, so Ctrl-C during
+// a flaky refresh did nothing until the wait ended.
+func TestRefreshBackoffHonorsCancel(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	c.refreshAttempts = 2
+	c.refreshBackoff = time.Hour
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := c.Refresh(ctx, "ref")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if waited := time.Since(start); waited > 10*time.Second {
+		t.Fatalf("Refresh waited %s after the context ended", waited)
+	}
+}

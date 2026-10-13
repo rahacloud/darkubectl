@@ -36,7 +36,6 @@ const (
 
 	// podsFrameType is the type of the frame that carries the pod list.
 	podsFrameType = "app_pods_update"
-	maxMessages   = 10
 )
 
 // Options configures an app-state fetch.
@@ -126,27 +125,27 @@ func FetchPods(ctx context.Context, opts Options) ([]Pod, []byte, error) {
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// Phase one: wait for the first pod list, however long the server takes.
+	// Phase one: wait for the first pod list, however long the server takes
+	// within fetchTimeout. Bounded by time only: a count of frames would give
+	// up on an app with pods after a burst of other message types.
 	var pods []Pod
 	var lastRaw []byte
-	for range maxMessages {
+	for lastRaw == nil {
 		data, rerr := readFrame(ctx, conn, opts.Debug)
 		if rerr != nil {
 			return nil, nil, fmt.Errorf("read app-state: %w", rerr)
 		}
 		if isPodsFrame(data) {
 			pods, lastRaw = ParsePods(data), data
-			break
 		}
 	}
-	if lastRaw == nil {
-		return nil, nil, nil
-	}
 
-	// Phase two: keep the latest list the server sends within the window.
+	// Phase two: keep the latest list the server sends within the window. A
+	// frame count here could end the read before the window, returning the
+	// stale list the window exists to wait out.
 	settled, stop := context.WithTimeout(ctx, settleWindow)
 	defer stop()
-	for range maxMessages {
+	for {
 		data, rerr := readFrame(settled, conn, opts.Debug)
 		if rerr != nil {
 			break // the window closed, or the stream ended after a list

@@ -250,7 +250,7 @@ darkubectl set probe <name|id> --readiness /healthz --liveness /livez
 darkubectl set resources <name|id> --plan 2                    # or a dynamic plan with --memory/--cpu
 darkubectl autoscale app <name|id> --min 2 --max 6 --cpu-percent 70
 darkubectl autoscale app <name|id> --disable
-darkubectl patch app <name|id> -p '{"ram_limit": "1024M"}'
+darkubectl patch app <name|id> -p '{"redirect_SSL": true}'
 darkubectl patch app <name|id> -p '{"replicas": 3}' --dry-run   # show the diff, send nothing
 darkubectl delete app <name|id>
 

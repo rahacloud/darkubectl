@@ -62,7 +62,10 @@ func terminalAppAction(ctx context.Context, cmd *cli.Command) error {
 	stopResize := watchWindowResize(sendSize)
 	defer stopResize()
 
-	// Local keystrokes -> remote PTY.
+	// Local keystrokes -> remote PTY. This goroutine is never joined: a read of
+	// stdin cannot be interrupted, so it stays parked there after the session
+	// ends. That is harmless only because the process exits right after; do not
+	// copy it into anything longer-lived.
 	go func() {
 		buf := make([]byte, ioBufferSize)
 		for {

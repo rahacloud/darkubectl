@@ -56,11 +56,7 @@ func (c *Client) UpdateApp(ctx context.Context, id string, mutate func(app map[s
 	if err != nil {
 		return nil, err
 	}
-	var out map[string]any
-	if len(data) > 0 {
-		_ = decodeInto(data, &out)
-	}
-	return out, nil
+	return decodeWriteResult[map[string]any](data), nil
 }
 
 // PrepareAppUpdate performs every step of UpdateApp except the write, returning

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/urfave/cli/v3"
@@ -66,8 +67,9 @@ func applyAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	look := &applyLookup{c: c}
 	for _, spec := range specs {
-		if err := applyOne(ctx, cmd, c, spec); err != nil {
+		if err := applyOne(ctx, cmd, look, spec); err != nil {
 			return fmt.Errorf("app/%s: %w", spec.Name, err)
 		}
 	}
@@ -109,24 +111,79 @@ func loadAppSpecs(path string) ([]appSpec, error) {
 	return out, nil
 }
 
-func applyOne(ctx context.Context, cmd *cli.Command, c *client.Client, spec appSpec) error {
+// applyLookup holds the tenant-wide lists apply resolves against, fetched once
+// per run rather than once per spec document: a file of twenty apps would
+// otherwise list the whole tenant sixty times.
+type applyLookup struct {
+	c          *client.Client
+	namespaces []client.Namespace
+	plans      []client.Plan
+	apps       []client.App
+}
+
+func (l *applyLookup) namespaceID(ctx context.Context, nameOrID string) (int, error) {
+	if id, err := strconv.Atoi(nameOrID); err == nil {
+		return id, nil
+	}
+	if l.namespaces == nil {
+		ns, err := l.c.Namespaces(ctx)
+		if err != nil {
+			return 0, err
+		}
+		l.namespaces = ns
+	}
+	for _, n := range l.namespaces {
+		if n.Name == nameOrID {
+			return n.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no namespace named %q in tenant %q", nameOrID, l.c.Org)
+}
+
+func (l *applyLookup) plan(ctx context.Context, ref string) (*client.Plan, error) {
+	if l.plans == nil {
+		plans, err := l.c.ListPlans(ctx)
+		if err != nil {
+			return nil, err
+		}
+		l.plans = plans
+	}
+	return matchPlan(l.plans, ref)
+}
+
+func (l *applyLookup) appIn(ctx context.Context, name string, nsID int) (*client.App, error) {
+	if l.apps == nil {
+		apps, err := l.c.ListApps(ctx)
+		if err != nil {
+			return nil, err
+		}
+		l.apps = apps
+	}
+	return matchAppIn(l.apps, name, nsID)
+}
+
+// appsChanged drops the cached app list, after a create added one to it.
+func (l *applyLookup) appsChanged() { l.apps = nil }
+
+func applyOne(ctx context.Context, cmd *cli.Command, look *applyLookup, spec appSpec) error {
 	if err := validateApplySpec(spec); err != nil {
 		return err
 	}
-	nsID, err := resolveNamespaceID(ctx, c, spec.Namespace)
+	c := look.c
+	nsID, err := look.namespaceID(ctx, spec.Namespace)
 	if err != nil {
 		return err
 	}
 	var plan *client.Plan
 	if spec.Plan != "" {
-		if plan, err = findPlan(ctx, c, spec.Plan); err != nil {
+		if plan, err = look.plan(ctx, spec.Plan); err != nil {
 			return err
 		}
 	}
 
-	app, err := findAppIn(ctx, c, spec.Name, nsID)
+	app, err := look.appIn(ctx, spec.Name, nsID)
 	if errors.Is(err, errNoAppInNamespace) {
-		return createMissing(ctx, cmd, c, spec, plan, nsID)
+		return createMissing(ctx, cmd, look, spec, plan, nsID)
 	}
 	if err != nil {
 		return err
@@ -138,8 +195,9 @@ func applyOne(ctx context.Context, cmd *cli.Command, c *client.Client, spec appS
 // the POST ignores. That second step was part of what the user approved, so it
 // is not asked about again.
 func createMissing(
-	ctx context.Context, cmd *cli.Command, c *client.Client, spec appSpec, plan *client.Plan, nsID int,
+	ctx context.Context, cmd *cli.Command, look *applyLookup, spec appSpec, plan *client.Plan, nsID int,
 ) error {
+	c := look.c
 	if !spec.complete() {
 		return errIncompleteSpec
 	}
@@ -154,10 +212,11 @@ func createMissing(
 	if err := createFromSpec(ctx, cmd, c, spec); err != nil {
 		return err
 	}
+	look.appsChanged()
 	if !spec.hasPostCreateFields() {
 		return nil
 	}
-	app, err := findAppIn(ctx, c, spec.Name, nsID)
+	app, err := look.appIn(ctx, spec.Name, nsID)
 	if err != nil {
 		return fmt.Errorf("created, but could not find it again to apply autoscale/probes/size: %w", err)
 	}
@@ -367,14 +426,10 @@ func applyGit(raw map[string]any, g *gitSpec) {
 	}
 }
 
-// findAppIn finds an app by name within one namespace, or errNoAppInNamespace.
+// matchAppIn finds an app by name within one namespace, or errNoAppInNamespace.
 // Names are unique per namespace, not per tenant, so ResolveApp — which is
 // tenant-wide — is not the right lookup here.
-func findAppIn(ctx context.Context, c *client.Client, name string, nsID int) (*client.App, error) {
-	apps, err := c.ListApps(ctx)
-	if err != nil {
-		return nil, err
-	}
+func matchAppIn(apps []client.App, name string, nsID int) (*client.App, error) {
 	var found []client.App
 	for _, a := range apps {
 		if a.Name == name && a.Namespace.ID == nsID {

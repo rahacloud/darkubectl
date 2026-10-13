@@ -95,40 +95,18 @@ func setSvcTypeAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	apply := func(raw map[string]any) error { return applySvcType(raw, want) }
-
-	if cmd.Bool(flagDryRun) {
-		before, after, prepErr := c.PrepareAppUpdate(ctx, app.ID, apply)
-		if prepErr != nil {
-			return prepErr
-		}
-		fmt.Fprintf(os.Stdout, "app/%s: dry run, nothing was sent\n", app.Name)
-		writeDiff(os.Stdout, diffApps(before, after))
-		return nil
-	}
-
-	from, err := currentSvcType(ctx, c.GetApp, app.ID)
-	if err != nil {
-		return err
-	}
-	if from == want {
-		fmt.Fprintf(os.Stdout, "app/%s service type is already %s\n", app.Name, want)
-		return nil
-	}
-
-	fmt.Fprintf(os.Stderr, "About to change the service type of app %q (%s) in tenant %q: %s -> %s\n",
-		app.Name, app.ID, c.Org, dash(from), want)
+	var notes []string
 	if want == svcTypeLoadBalancer {
-		fmt.Fprintf(os.Stderr,
-			"warning: this asks the cluster for a public address. Every port the app declares\n"+
-				"         becomes reachable from the internet, authenticated only by whatever the\n"+
-				"         app itself asks for.\n")
+		notes = append(notes, "this asks the cluster for a public address. Every port the app declares "+
+			"becomes reachable from the internet, authenticated only by whatever the app itself asks for.")
 	}
-	if !cmd.Bool(flagYes) && !confirm() {
-		return errAborted
-	}
-
-	if _, err := c.UpdateApp(ctx, app.ID, apply); err != nil {
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{
+		what:  "change the service type of",
+		apply: func(raw map[string]any) error { return applySvcType(raw, want) },
+		took:  func(raw map[string]any) bool { return svcTypeOf(raw) == want },
+		notes: notes,
+	})
+	if err != nil || !wrote {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s service type set to %s\n", app.Name, want)
@@ -241,19 +219,6 @@ func applySvcType(raw map[string]any, want string) error {
 	}
 	svc["type"] = want
 	return nil
-}
-
-// currentSvcType reads the type the app has now, for the confirmation line.
-// It takes the getter as an argument so the caller's client is not a dependency
-// of the test.
-func currentSvcType(
-	ctx context.Context, get func(context.Context, string) (map[string]any, error), id string,
-) (string, error) {
-	raw, err := get(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	return svcTypeOf(raw), nil
 }
 
 // svcTypeOf reads svc.type out of a raw app object, empty if absent.

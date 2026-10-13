@@ -152,26 +152,48 @@ func verifyChange(
 	ctx context.Context, get func(context.Context, string) (map[string]any, error), id string,
 	took func(map[string]any) bool,
 ) error {
+	ok, err := retryReadBack(ctx, func(ctx context.Context) (bool, error) {
+		raw, err := get(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		return took(raw), nil
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: a re-read %s later still shows the old value. The field is probably "+
+			"filtered for this kind of app; check with `darkubectl describe app`",
+			errChangeIgnored, verifyInterval*(verifyAttempts-1))
+	}
+	return nil
+}
+
+// retryReadBack runs check up to verifyAttempts times, verifyInterval apart, until
+// it reports true. A transient error costs an attempt rather than the command;
+// any other error ends the poll. It reports false when the attempts ran out.
+// Every read-back after a write goes through it, since the API's 202 promises
+// a write eventually rather than now.
+func retryReadBack(ctx context.Context, check func(context.Context) (bool, error)) (bool, error) {
 	for attempt := range verifyAttempts {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return false, ctx.Err()
 			case <-time.After(verifyInterval):
 			}
 		}
-		raw, err := get(ctx, id)
+		ok, err := check(ctx)
 		if err != nil {
 			if client.IsTransient(err) {
 				continue
 			}
-			return err
+			return false, err
 		}
-		if took(raw) {
-			return nil
+		if ok {
+			return true, nil
 		}
 	}
-	return fmt.Errorf("%w: a re-read %s later still shows the old value. The field is probably "+
-		"filtered for this kind of app; check with `darkubectl describe app`",
-		errChangeIgnored, verifyInterval*(verifyAttempts-1))
+	return false, nil
 }
