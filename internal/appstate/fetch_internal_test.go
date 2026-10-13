@@ -62,7 +62,7 @@ func podNames(pods []Pod) string {
 func TestFetchPodsOutlastsOtherFrames(t *testing.T) {
 	t.Parallel()
 
-	var frames []string
+	frames := make([]string, 0, 16)
 	for range 15 {
 		frames = append(frames, `{"type":"app_state_update","data":{}}`)
 	}
@@ -84,8 +84,10 @@ func TestFetchPodsOutlastsOtherFrames(t *testing.T) {
 func TestFetchPodsTakesTheSettledList(t *testing.T) {
 	t.Parallel()
 
-	frames := []string{podsFrame("web-old")}
-	gaps := []time.Duration{0}
+	frames := make([]string, 0, 14)
+	gaps := make([]time.Duration, 0, 14)
+	frames = append(frames, podsFrame("web-old"))
+	gaps = append(gaps, 0)
 	for range 12 {
 		frames = append(frames, `{"type":"app_state_update","data":{}}`)
 		gaps = append(gaps, 0)

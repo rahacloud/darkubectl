@@ -330,7 +330,7 @@ func describeSecretChange(before, after []client.EnvVar) string {
 	for _, e := range before {
 		old[e.Name] = e.Value
 	}
-	var added, changed, removed []string
+	var added, changed []string
 	for _, e := range after {
 		v, ok := old[e.Name]
 		switch {
@@ -341,6 +341,7 @@ func describeSecretChange(before, after []client.EnvVar) string {
 		}
 		delete(old, e.Name)
 	}
+	removed := make([]string, 0, len(old))
 	for name := range old {
 		removed = append(removed, name)
 	}

@@ -364,7 +364,7 @@ func writeBuildLog(w io.Writer, log string) {
 
 // reportBuildErrors prints the platform's explanation of a failed build.
 func reportBuildErrors(b *client.Build) {
-	if msg := strings.TrimSpace(renderValue(b.Errors)); msg != "" && msg != "null" && msg != `""` && msg != "[]" && msg != "{}" {
+	if msg := strings.TrimSpace(renderValue(b.Errors)); msg != "" && msg != jsonNull && msg != `""` && msg != "[]" && msg != "{}" {
 		fmt.Fprintf(os.Stderr, "build errors: %s\n", msg)
 	}
 }

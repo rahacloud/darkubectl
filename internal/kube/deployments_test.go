@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,13 +16,13 @@ import (
 // fakeKubectl writes a shell script standing in for kubectl. It records its
 // arguments to args.txt next to itself, prints stdout, writes stderr, and exits
 // with code.
-func fakeKubectl(t *testing.T, stdout, stderr string, code int) (bin, argsFile string) {
+func fakeKubectl(t *testing.T, stdout, stderr string, code int) (string, string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake kubectl is a shell script")
 	}
 	dir := t.TempDir()
-	argsFile = filepath.Join(dir, "args.txt")
+	argsFile := filepath.Join(dir, "args.txt")
 	for name, body := range map[string]string{"stdout": stdout, "stderr": stderr} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -31,8 +32,8 @@ func fakeKubectl(t *testing.T, stdout, stderr string, code int) (bin, argsFile s
 		`printf '%s\n' "$@" > "` + argsFile + "\"\n" +
 		`cat "` + filepath.Join(dir, "stdout") + "\"\n" +
 		`cat "` + filepath.Join(dir, "stderr") + "\" >&2\n" +
-		"exit " + string(rune('0'+code)) + "\n"
-	bin = filepath.Join(dir, "kubectl")
+		"exit " + strconv.Itoa(code) + "\n"
+	bin := filepath.Join(dir, "kubectl")
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { //nolint:gosec // an executable test fixture
 		t.Fatal(err)
 	}

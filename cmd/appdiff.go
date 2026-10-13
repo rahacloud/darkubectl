@@ -13,6 +13,9 @@ import (
 // worse than one that says how big they are.
 const maxDiffValue = 120
 
+// jsonNull is how renderValue spells a null.
+const jsonNull = "null"
+
 // fieldChange is one top-level field that a pending update would alter.
 type fieldChange struct {
 	Key    string `json:"key"    yaml:"key"`
@@ -50,7 +53,7 @@ func diffApps(before, after map[string]any) []fieldChange {
 // equal values always compare equal as strings.
 func renderValue(v any) string {
 	if v == nil {
-		return "null"
+		return jsonNull
 	}
 	if s, ok := v.(string); ok {
 		return s
@@ -102,7 +105,7 @@ type namedItem struct {
 // such a list, and the caller prints the whole values instead.
 func namedListDiff(before, after string) ([]string, bool) {
 	parse := func(s string) ([]namedItem, bool) {
-		if s == "null" {
+		if s == jsonNull {
 			return nil, true
 		}
 		var items []namedItem

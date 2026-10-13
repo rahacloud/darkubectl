@@ -99,7 +99,7 @@ func patchAppAction(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 
-	wrote, err := runAppChange(ctx, cmd, c, app, appChange{what: "patch", apply: apply, verifyDiff: true})
+	wrote, err := runAppChange(ctx, cmd, c, app, appChange{what: "apply the patch to", apply: apply, verifyDiff: true})
 	if err != nil || !wrote {
 		return err
 	}
