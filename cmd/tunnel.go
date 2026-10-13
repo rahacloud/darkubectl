@@ -55,12 +55,13 @@ const (
 	// the API naming the tag as the cause. Keep this in step with the module
 	// version in go.mod: client and server negotiate a protocol version, and a
 	// mismatch is refused at the handshake.
-	chiselImage = "jpillora/chisel:1.12.1"
+	chiselImage = "jpillora/chisel:1.13.0"
 	// chiselBinaryPath is where the binary sits INSIDE that image, and it moves:
-	// 1.10 shipped /app/chisel, 1.12 is ko-built and ships /ko-app/chisel with
-	// WorkingDir /app. The image has an ENTRYPOINT, but it cannot be used —
-	// `args` is never split, so the flags would arrive as one argv element — so
-	// the path is named here and has to be rechecked whenever the tag moves.
+	// 1.10 shipped /app/chisel, 1.12 is ko-built and ships /ko-app/chisel (still
+	// so at 1.13.0, checked 2026-10-13) with WorkingDir /app. The image has an
+	// ENTRYPOINT, but it cannot be used — `args` is never split, so the flags
+	// would arrive as one argv element — so the path is named here and has to
+	// be rechecked whenever the tag moves.
 	// Getting it wrong is a CreateContainerError, which the API reports as a
 	// Pending pod with no logs at all.
 	chiselBinaryPath = "/ko-app/chisel"
