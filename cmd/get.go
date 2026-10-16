@@ -148,6 +148,7 @@ func newGetCommand() *cli.Command {
 				},
 				Action: getOrphansAction,
 			},
+			newGetStorageCommand(),
 			{
 				Name:    "certificates",
 				Aliases: []string{"certificate", "certs", "cert"},

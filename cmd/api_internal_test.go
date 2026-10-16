@@ -33,10 +33,11 @@ func TestParseAPIHeaders(t *testing.T) {
 	if !maps.Equal(got, want) {
 		t.Errorf("headers = %v, want %v (names kept exactly as typed)", got, want)
 	}
-	// h.Get canonicalises its argument, so it cannot see a literal key. That
-	// is the behaviour this fix depends on, not an accident.
-	if v := h.Get("x-otp"); v != "" {
-		t.Errorf("h.Get(%q) = %q, want empty: values are stored uncanonicalised", "x-otp", v)
+	// A canonical lookup must find nothing: the value is stored under the
+	// literal name, and http.Header.Get canonicalises its argument. That
+	// asymmetry is what the fix relies on, not an accident of it.
+	if v := h.Get("X-Otp"); v != "" {
+		t.Errorf("h.Get(%q) = %q, want empty: the value is stored as %q", "X-Otp", v, "x-otp")
 	}
 
 	for _, bad := range []string{"no-colon", ": value"} {
