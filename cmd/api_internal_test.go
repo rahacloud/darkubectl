@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"errors"
-	"net/textproto"
+	"maps"
 	"testing"
 )
 
@@ -19,17 +19,24 @@ func TestParseAPIHeaders(t *testing.T) {
 	// succeeds -- that endpoint matches the name case-sensitively. So the
 	// map is indexed directly and h.Get, which canonicalises its argument,
 	// deliberately does not find these.
-	if got := h["x-otp"]; len(got) != 1 || got[0] != "123456" {
-		t.Errorf("h[%q] = %v, want [123456]", "x-otp", got)
+	// Compare the key set rather than indexing with a literal: staticcheck's
+	// SA1008 rightly objects to a non-canonical constant index into an
+	// http.Header, and the property under test is which spellings exist.
+	got := make(map[string]string, len(h))
+	for name, values := range h {
+		if len(values) != 1 {
+			t.Fatalf("header %q has %d values, want 1", name, len(values))
+		}
+		got[name] = values[0]
 	}
-	if got := h[textproto.CanonicalMIMEHeaderKey("x-otp")]; got != nil {
-		t.Errorf("canonical %q should be absent, got %v", "X-Otp", got)
+	want := map[string]string{"x-otp": "123456", "X-Thing": "a:b"}
+	if !maps.Equal(got, want) {
+		t.Errorf("headers = %v, want %v (names kept exactly as typed)", got, want)
 	}
-	if got := h.Get("x-otp"); got != "" {
-		t.Errorf("h.Get = %q; values must be stored uncanonicalised", got)
-	}
-	if got := h["X-Thing"]; len(got) != 1 || got[0] != "a:b" {
-		t.Errorf("h[%q] = %v, want the value after the first colon", "X-Thing", got)
+	// h.Get canonicalises its argument, so it cannot see a literal key. That
+	// is the behaviour this fix depends on, not an accident.
+	if v := h.Get("x-otp"); v != "" {
+		t.Errorf("h.Get(%q) = %q, want empty: values are stored uncanonicalised", "x-otp", v)
 	}
 
 	for _, bad := range []string{"no-colon", ": value"} {
