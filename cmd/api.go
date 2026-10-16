@@ -100,7 +100,14 @@ func parseAPIHeaders(raw []string) (http.Header, error) {
 		if !ok || name == "" {
 			return nil, fmt.Errorf("%w: %q", errAPIHeader, r)
 		}
-		h.Add(name, strings.TrimSpace(value))
+		// Assign into the map rather than Add: Add canonicalises through
+		// textproto.CanonicalMIMEHeaderKey, which rewrites "x-otp" as
+		// "X-Otp". At least one Hamravesh endpoint matches the name
+		// case-sensitively -- creating an object-storage key with "X-Otp"
+		// answers 403 "2fa code is not correct" while the identical code
+		// in a lowercase "x-otp" succeeds. A passthrough flag should send
+		// what the caller typed.
+		h[name] = append(h[name], strings.TrimSpace(value))
 	}
 	return h, nil
 }

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
@@ -174,9 +175,13 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, query url.Values, body any, header http.Header) ([]byte, error) {
 	req := c.http.R().SetContext(ctx)
 	for name, values := range header {
-		for _, v := range values {
-			req.SetHeader(name, v)
-		}
+		// Write into the header map directly. SetHeader goes through
+		// http.Header.Set, which canonicalises the name, and one Hamravesh
+		// endpoint compares it case-sensitively: an OTP sent as "X-Otp" is
+		// not seen at all. Drop any canonical spelling first so a caller
+		// passing a conventional name does not end up sending it twice.
+		delete(req.Header, textproto.CanonicalMIMEHeaderKey(name))
+		req.Header[name] = append([]string(nil), values...)
 	}
 	if len(query) > 0 {
 		req.SetQueryParamsFromValues(query)
