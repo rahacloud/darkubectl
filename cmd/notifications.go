@@ -27,6 +27,8 @@ const flagFiring = "firing"
 // flagLimit bounds how many notifications are fetched.
 const flagLimit = "limit"
 
+const flagUnread = "unread"
+
 // flagApp narrows a list to one app.
 const flagApp = "app"
 
@@ -46,7 +48,7 @@ func newGetNotificationsCommand() *cli.Command {
 			"Persian prose from the console.",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: flagLimit, Value: defaultNotificationLimit, Usage: "how many notifications to fetch"},
-			&cli.BoolFlag{Name: "unread", Usage: "only show unread notifications"},
+			&cli.BoolFlag{Name: flagUnread, Usage: "only show unread notifications"},
 		},
 		Action: getNotificationsAction,
 	}
@@ -65,7 +67,7 @@ func getNotificationsAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	if cmd.Bool("unread") {
+	if cmd.Bool(flagUnread) {
 		items = filterNotifications(items)
 	}
 

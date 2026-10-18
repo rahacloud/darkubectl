@@ -106,7 +106,7 @@ darkubectl terminal app <name>
 
 ## Let an AI agent run it
 
-Darkube has no MCP server and no CLI of its own, which leaves an agent with nothing to hold. `darkubectl` closes that gap: it is one static binary, every subcommand is non-interactive, every read speaks JSON, and credentials come from the environment — the four properties a coding agent (Claude Code, Codex, Cursor, or anything that can run a shell) needs to use a tool unattended. Give it the binary and it can answer "is anything unhealthy in talaland-dev?" or "why did the api pod restart last night?" without a human opening the console.
+Darkube has no MCP server and no CLI of its own, which leaves an agent with nothing to hold. `darkubectl` closes that gap twice over: it is one static binary, every subcommand is non-interactive, every read speaks JSON, and credentials come from the environment — the four properties a coding agent (Claude Code, Codex, Cursor, or anything that can run a shell) needs to use a tool unattended — and `darkubectl mcp` serves the same commands over the [Model Context Protocol](#over-mcp) to clients that have no shell at all. Give it the binary and it can answer "is anything unhealthy in talaland-dev?" or "why did the api pod restart last night?" without a human opening the console.
 
 ```sh
 export DARKUBE_TOKEN=<api-key> DARKUBE_ORG=<org-slug>
@@ -121,6 +121,23 @@ A few lines in your `CLAUDE.md` or `AGENTS.md` are usually enough to teach an ag
 > Our apps run on Darkube. Use `darkubectl get apps -o json` to inspect state, `darkubectl describe app <name> -o yaml` for configuration, and `darkubectl logs app <name> --tail 200` to read logs. Run `darkubectl get orphans` before recreating an app whose name is taken. Never run `delete` and never pass `-y`.
 
 **Give the agent an API key rather than a Console login.** The Api-key cannot open pod terminals or create apps, which bounds an agent's blast radius to reads. Keep `delete` out of its reach: the deletion is asynchronous and routinely orphans the Helm release, and no flag in the API can undo that — see [Orphaned releases](#orphaned-releases).
+
+### Over MCP
+
+`darkubectl mcp` is an MCP server on stdin/stdout. Register it once and any MCP client — Claude Code, Claude Desktop, Cursor, Codex — can list apps, read pods, logs, domains, builds, usage and tickets in plain tool calls:
+
+```sh
+claude mcp add darkube -- darkubectl mcp                                   # reads only
+claude mcp add darkube-acme -- darkubectl --org acme mcp --allow-writes   # one tenant, writes allowed
+```
+
+```json
+{ "mcpServers": { "darkube": { "command": "darkubectl", "args": ["mcp"] } } }
+```
+
+It exposes a `darkubectl` tool that takes any command line as an argument list, and typed tools with their own schemas over most of the platform: apps (`list_apps`, `describe_app`, `get_app_spec`, `get_pods`, `app_logs`, `get_app_env`, `get_domains`, `get_manifests`, `get_suggestions`, `app_history`, `rollout_status`), usage and monitoring (`app_usage`, `tenant_usage`, `list_alerts`, `list_notifications`), builds and the registry (`list_builds`, `build_logs`, `list_registries`, `registry_images`, `registry_tags`), data and other products (`list_disks`, `list_databases`, `list_services`, `list_storage`, `list_certificates`), the tenant (`whoami`, `list_namespaces`, `list_members`, `list_plans`, `get_balance`, `list_invoices`) and support (`list_tickets`, `view_ticket`). With `--allow-writes` it adds `scale_app`, `restart_app`, `set_image`, `set_env`, `set_domains`, `autoscale_app`, `set_resources` and `reply_ticket`; each takes `dryRun` where the command does, and is sent with `--yes`. Every typed tool takes an optional `tenant`. The server's instructions list every command with its access level, generated from the command tree. Each call runs as a child process of the same binary with this machine's config, so log in (or set `DARKUBE_TOKEN`) first; `--org`, `--config`, `--token` and `--base-url` given before `mcp` apply to every call, and a call may pick another tenant with `tenant` but never another credential.
+
+What a call may do is decided on the command it resolves to, aliases and all. By default only reads run. Anything that prints a secret — `get deploy-token`, `get ci-config`, `get env --show-secrets`, `registry password`, and `api GET`, since a raw GET can reach the vault — needs `--allow-secrets`. Anything that changes state needs `--allow-writes`, and a command that prompts still needs `--yes` in its arguments, because the child has no stdin and a prompt reads that as "no". A command not explicitly listed as a read counts as a write, so a new command is refused until someone classifies it. `terminal`, `login`, `tunnel connect`, `config` edits, `get pods -w`, `logs -f` and `describe -i` are always refused, because they need a terminal or never return. Each call is capped by `--timeout` (2m by default), and its output by 256 KiB.
 
 ## Authentication
 

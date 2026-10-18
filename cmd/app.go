@@ -113,6 +113,7 @@ func NewApp() *cli.Command {
 			newCpCommand(),
 			newTerminalCommand(),
 			newConfigCommand(),
+			newMCPCommand(),
 			newVersionCommand(),
 		},
 	})
