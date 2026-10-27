@@ -14,7 +14,7 @@ require (
 	github.com/knadh/koanf/providers/env/v2 v2.0.2
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/providers/structs v1.0.1
-	github.com/knadh/koanf/v2 v2.3.8
+	github.com/knadh/koanf/v2 v2.4.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/urfave/cli/v3 v3.14.0
 	golang.org/x/term v0.47.0
