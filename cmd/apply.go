@@ -45,7 +45,9 @@ func newApplyCommand() *cli.Command {
 			"The file is the `create app -f` spec, one app per YAML document. An app that\n" +
 			"does not exist is created; one that does is changed in place with the diff shown\n" +
 			"first. Beyond `create`, a spec can carry autoscale {min, max, cpuPercent}, probes\n" +
-			"{readiness, liveness}, and memory/cpu for a dynamic plan.\n\n" +
+			"{readiness, liveness} — each a path, or a full probe {path|exec, port,\n" +
+			"initialDelaySeconds, periodSeconds, timeoutSeconds, successThreshold,\n" +
+			"failureThreshold} as `set probe` writes it — and memory/cpu for a dynamic plan.\n\n" +
 			"Fields left out are left alone, not reset. Not applied to an existing app, with a\n" +
 			"warning: secretEnvs (use `set env --secret`). Domains are not part of a spec;\n" +
 			"use `set domain`. A disk can grow but not shrink, and an app cannot change\n" +
@@ -280,8 +282,12 @@ func validateApplySpec(spec appSpec) error {
 		}
 	}
 	if p := spec.Probes; p != nil {
-		if _, err := probeChange(false, &p.Readiness, &p.Liveness); err != nil {
-			return err
+		for _, k := range probeKinds {
+			if d := p.change()[k.name]; d != nil {
+				if err := d.validate(k); err != nil {
+					return fmt.Errorf("probes.%s: %w", k.name, err)
+				}
+			}
 		}
 	}
 	for _, w := range entrypointWarnings(spec.Command.String(), spec.Args.String()) {
@@ -338,8 +344,9 @@ func applySpecTo(raw map[string]any, spec appSpec, plan *client.Plan, nsID int) 
 		_ = applyHPA(raw, hpaSpec{Enabled: true, Min: a.Min, Max: a.Max, CPUPercent: a.cpuPercent()})
 	}
 	if p := spec.Probes; p != nil {
-		setProbePath(raw, keyReadinessPath, p.Readiness)
-		setProbePath(raw, keyLivenessPath, p.Liveness)
+		if err := applyProbes(raw, p.change()); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -261,6 +261,25 @@ func mcpToolSpecs() []mcpToolSpec {
 				{kind: mcpBoolean, usage: "turn autoscaling off", flag: flagDisable},
 				pDryRun(),
 			}},
+		{name: "set_probes", command: "set probe", write: true,
+			description: "Set an app's readiness and liveness probes. A bare path gets Darkube's fixed timing " +
+				"(5s delay, every 1s, 2s timeout), which crash-loops an app slower to start than ~8s; any timing, port " +
+				"or exec parameter writes a full Kubernetes probe instead, applied to every probe set in the call.",
+			params: []mcpParam{
+				pApp(),
+				{kind: mcpString, usage: "readiness probe path, e.g. /healthz", flag: flagReadiness},
+				{kind: mcpString, usage: "liveness probe path", flag: flagLiveness},
+				{name: "readinessExec", kind: mcpString, usage: "readiness probe command, run with sh -c", flag: flagReadinessExec},
+				{name: "livenessExec", kind: mcpString, usage: "liveness probe command, run with sh -c", flag: flagLivenessExec},
+				{kind: mcpInteger, usage: "port the HTTP probe calls (default: the app's port)", flag: flagProbePort},
+				{name: "initialDelay", kind: mcpString, usage: "delay before the first probe, e.g. 60s", flag: flagInitialDelay},
+				{kind: mcpString, usage: "how often to probe, e.g. 15s", flag: flagPeriod},
+				{kind: mcpString, usage: "probe timeout, e.g. 5s", flag: flagTimeout},
+				{name: keySuccessThreshold, kind: mcpInteger, usage: "passes in a row to count as up (readiness only)", flag: flagSuccessThreshold},
+				{name: keyFailureThreshold, kind: mcpInteger, usage: "failures in a row before restart or unready", flag: flagFailureThreshold},
+				{kind: mcpBoolean, usage: "remove both probes", flag: flagClear},
+				pDryRun(),
+			}},
 		{name: "set_resources", command: "set resources", write: true,
 			description: "Change an app's plan (see list_plans), or its memory and CPU on a dynamic plan.",
 			params: []mcpParam{

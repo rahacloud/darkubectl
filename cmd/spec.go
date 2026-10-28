@@ -113,9 +113,7 @@ func specFromApp(raw map[string]any, plans []client.Plan, namespaces []client.Na
 	}
 
 	spec.Autoscale = autoscaleFromApp(raw)
-	if r, l := str(keyReadinessPath), str(keyLivenessPath); r != "" || l != "" {
-		spec.Probes = &probesSpec{Readiness: r, Liveness: l}
-	}
+	spec.Probes, notes = probesFromApp(raw, notes)
 	if spec.Autoscale != nil {
 		// The autoscaler owns the count; pinning today's number in the spec
 		// would fight it on every apply.
@@ -226,4 +224,39 @@ func autoscaleFromApp(raw map[string]any) *autoscaleSpec {
 		Max:        jsonInt(hpa["maxReplicas"]),
 		CPUPercent: jsonInt(hpa["targetCPUUtilizationPercentage"]),
 	}
+}
+
+// probesFromApp exports both probes, a custom_config probe winning over a path
+// for the same kind (the console can leave both). A probe the spec cannot
+// express drops the whole block, since applying a spec that names one kind
+// removes the other.
+func probesFromApp(raw map[string]any, notes specNotes) (*probesSpec, specNotes) {
+	var out probesSpec
+	for _, k := range probeKinds {
+		var p probeDef
+		path, _ := raw[k.pathKey].(string)
+		if stored := configProbe(raw, k.configKey); stored != nil {
+			var ok bool
+			if p, ok = probeFromConfig(stored); !ok {
+				return nil, append(notes, fmt.Sprintf(
+					"probes left out: custom_config.container.%s has a shape a spec cannot carry -- "+
+						"it is left alone on apply", k.configKey))
+			}
+			if path != "" {
+				notes = append(notes, fmt.Sprintf("%s probe is set twice; exported the custom_config one, "+
+					"and applying the spec clears %s", k.name, k.pathKey))
+			}
+		} else if path != "" {
+			p = probeDef{Path: path}
+		}
+		if k.name == flagReadiness {
+			out.Readiness = p
+		} else {
+			out.Liveness = p
+		}
+	}
+	if out.Readiness.IsZero() && out.Liveness.IsZero() {
+		return nil, notes
+	}
+	return &out, notes
 }

@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
+	"gopkg.in/yaml.v3"
 )
 
 // --- rollout ---
@@ -74,27 +76,234 @@ func TestRolloutDoneHintsAtAMissingImageOnlyWhenOverdue(t *testing.T) {
 
 // --- probes ---
 
+// probeFlags builds probeChange's path and exec arguments.
+func probeFlags(readiness, liveness *string) map[string]*string {
+	return map[string]*string{flagReadiness: readiness, flagLiveness: liveness}
+}
+
 func TestProbeChange(t *testing.T) {
 	t.Parallel()
 
 	ready, empty, bad := "/healthz", "", "healthz"
+	none := probeFlags(nil, nil)
 
-	got, err := probeChange(false, &ready, nil)
-	if err != nil || got[keyReadinessPath] != "/healthz" || len(got) != 1 {
+	got, err := probeChange(false, probeFlags(&ready, nil), none, probeOptions{})
+	if err != nil || got[flagReadiness].Path != "/healthz" || got[flagReadiness].full || len(got) != 1 {
 		t.Errorf("readiness only: %v, %v", got, err)
 	}
 	// An explicitly empty value removes that probe; absence leaves it alone.
-	if got, err = probeChange(false, nil, &empty); err != nil || got[keyLivenessPath] != "" || len(got) != 1 {
+	if got, err = probeChange(false, probeFlags(nil, &empty), none, probeOptions{}); err != nil ||
+		got[flagLiveness] != nil || len(got) != 1 {
 		t.Errorf("remove liveness: %v, %v", got, err)
 	}
-	if _, err = probeChange(false, &bad, nil); !errors.Is(err, errProbeNotAPath) {
+	if _, err = probeChange(false, probeFlags(&bad, nil), none, probeOptions{}); !errors.Is(err, errProbeNotAPath) {
 		t.Errorf("relative path: err = %v", err)
 	}
-	if _, err = probeChange(false, nil, nil); !errors.Is(err, errProbeArgs) {
+	if _, err = probeChange(false, none, none, probeOptions{}); !errors.Is(err, errProbeArgs) {
 		t.Errorf("nothing given: err = %v", err)
 	}
-	if _, err = probeChange(true, &ready, nil); !errors.Is(err, errProbeArgs) {
+	if _, err = probeChange(true, probeFlags(&ready, nil), none, probeOptions{}); !errors.Is(err, errProbeArgs) {
 		t.Errorf("--clear with a path: err = %v", err)
+	}
+	if got, err = probeChange(true, none, none, probeOptions{}); err != nil || len(got) != 2 ||
+		got[flagReadiness] != nil || got[flagLiveness] != nil {
+		t.Errorf("--clear: %v, %v", got, err)
+	}
+}
+
+// Any timing flag turns the path into a full probe; an exec flag always is one.
+func TestProbeChangeBuildsFullProbes(t *testing.T) {
+	t.Parallel()
+
+	path, script := "/healthcheck", "celery inspect ping"
+	timing := probeOptions{set: true, port: 5555, timing: probeDef{InitialDelaySeconds: 60, PeriodSeconds: 15, FailureThreshold: 4}}
+
+	got, err := probeChange(false, probeFlags(nil, &path), probeFlags(nil, nil), timing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := got[flagLiveness]; !p.full || p.Path != path || p.Port != 5555 || p.InitialDelaySeconds != 60 {
+		t.Errorf("http probe = %+v", p)
+	}
+
+	timing.port = 0
+	got, err = probeChange(false, probeFlags(nil, nil), probeFlags(nil, &script), timing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := got[flagLiveness]; !p.full || p.Exec != script || p.Path != "" || p.PeriodSeconds != 15 {
+		t.Errorf("exec probe = %+v", p)
+	}
+}
+
+func TestProbeChangeRefusesWhatCannotWork(t *testing.T) {
+	t.Parallel()
+
+	path, empty, script := "/healthz", "", "true"
+	none := probeFlags(nil, nil)
+	cases := []struct {
+		name         string
+		paths, execs map[string]*string
+		opts         probeOptions
+		want         error
+	}{
+		{"path and exec for one kind", probeFlags(nil, &path), probeFlags(nil, &script), probeOptions{}, errProbeBothForms},
+		{"empty exec", none, probeFlags(&empty, nil), probeOptions{}, errProbeEmptyExec},
+		{"timing on a removal", probeFlags(&empty, nil), none,
+			probeOptions{set: true, timing: probeDef{PeriodSeconds: 5}}, errProbeNothingToTune},
+		{"port on an exec probe", none, probeFlags(&script, nil), probeOptions{set: true, port: 80}, errProbePortOnExec},
+		{"liveness success threshold", probeFlags(nil, &path), none,
+			probeOptions{set: true, timing: probeDef{SuccessThreshold: 2}}, errProbeLiveSuccess},
+		{"negative threshold", probeFlags(&path, nil), none, probeOptions{set: true, timing: probeDef{FailureThreshold: -1}}, errProbeNegative},
+		{"--clear with timing", none, none, probeOptions{set: true}, errProbeArgs},
+	}
+	for _, tc := range cases {
+		clearAll := tc.name == "--clear with timing"
+		if _, err := probeChange(clearAll, tc.paths, tc.execs, tc.opts); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestWholeSeconds(t *testing.T) {
+	t.Parallel()
+
+	if n, err := wholeSeconds(2 * time.Minute); err != nil || n != 120 {
+		t.Errorf("2m = %d, %v", n, err)
+	}
+	if _, err := wholeSeconds(1500 * time.Millisecond); !errors.Is(err, errProbeWholeSeconds) {
+		t.Errorf("1.5s: err = %v", err)
+	}
+}
+
+// The two shapes production runs, rendered from flags, must be exactly what
+// was confirmed live on 2026-10-28 with `patch app` and `get manifests`.
+func TestApplyProbesWritesTheConfirmedShapes(t *testing.T) {
+	t.Parallel()
+
+	raw := normalized(liveApp())
+	raw[keyLivenessPath] = "/old"
+	want := map[string]*probeDef{
+		flagReadiness: {Path: "/healthcheck", Port: 5555,
+			InitialDelaySeconds: 60, PeriodSeconds: 15, TimeoutSeconds: 5, FailureThreshold: 4, full: true},
+		flagLiveness: {Exec: `celery -b "redis://$REDIS_HOST:6379" inspect ping -d "celery@$HOSTNAME" --timeout 10`,
+			InitialDelaySeconds: 120, PeriodSeconds: 60, TimeoutSeconds: 20, FailureThreshold: 3, full: true},
+	}
+	if err := applyProbes(raw, want); err != nil {
+		t.Fatal(err)
+	}
+	ready := `{"failureThreshold":4,"httpGet":{"path":"/healthcheck","port":5555},` +
+		`"initialDelaySeconds":60,"periodSeconds":15,"timeoutSeconds":5}`
+	live := `{"exec":{"command":["sh","-c","celery -b \"redis://$REDIS_HOST:6379\" inspect ping -d \"celery@$HOSTNAME\" --timeout 10"]},` +
+		`"failureThreshold":3,"initialDelaySeconds":120,"periodSeconds":60,"timeoutSeconds":20}`
+	if got := renderValue(configProbe(raw, "readinessProbe")); got != ready {
+		t.Errorf("readinessProbe = %s\nwant %s", got, ready)
+	}
+	if got := renderValue(configProbe(raw, "livenessProbe")); got != live {
+		t.Errorf("livenessProbe = %s\nwant %s", got, live)
+	}
+	// One definition per kind: the paths are cleared, a null one left null.
+	if raw[keyReadinessPath] != "" || raw[keyLivenessPath] != "" {
+		t.Errorf("paths = %q, %q, want both cleared", raw[keyReadinessPath], raw[keyLivenessPath])
+	}
+	if !probesTook(decodeRendered(t, renderValue(raw)), want) {
+		t.Error("probesTook rejects what applyProbes wrote")
+	}
+}
+
+// custom_config holds the chart's other values; a probe write must keep them.
+func TestApplyProbesMergesIntoCustomConfig(t *testing.T) {
+	t.Parallel()
+
+	raw := normalized(liveApp())
+	_ = applyHPA(raw, hpaSpec{Enabled: true, Min: 1, Max: 3, CPUPercent: 70})
+	setConfigProbe(raw, "readinessProbe", map[string]any{"tcpSocket": map[string]any{"port": 8080}})
+
+	err := applyProbes(raw, map[string]*probeDef{flagLiveness: {Path: "/livez", PeriodSeconds: 10, full: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := raw[keyCustomConfig].(map[string]any)
+	if hpa, _ := cfg[keyHPA].(map[string]any); hpa["maxReplicas"] != 3 {
+		t.Errorf("hpa = %v", cfg[keyHPA])
+	}
+	if configProbe(raw, "readinessProbe") == nil {
+		t.Error("the other probe was dropped")
+	}
+	// No --port: the app's only port, 8080.
+	if got := renderValue(configProbe(raw, "livenessProbe")); got != `{"httpGet":{"path":"/livez","port":8080},"periodSeconds":10}` {
+		t.Errorf("livenessProbe = %s", got)
+	}
+}
+
+// Setting a path clears the custom_config probe of that kind, and removing a
+// probe removes both forms — the app never carries two definitions.
+func TestApplyProbesKeepsOneDefinitionPerKind(t *testing.T) {
+	t.Parallel()
+
+	raw := normalized(liveApp())
+	setConfigProbe(raw, "readinessProbe", map[string]any{"httpGet": map[string]any{"path": "/a", "port": 8080}})
+	setConfigProbe(raw, "livenessProbe", map[string]any{"httpGet": map[string]any{"path": "/b", "port": 8080}})
+	_ = applyHPA(raw, hpaSpec{Enabled: true, Min: 1, Max: 2, CPUPercent: 80})
+
+	want := map[string]*probeDef{flagReadiness: {Path: "/ready"}}
+	_ = applyProbes(raw, want)
+	if raw[keyReadinessPath] != "/ready" || configProbe(raw, "readinessProbe") != nil {
+		t.Errorf("path form left the custom probe: %v", raw[keyCustomConfig])
+	}
+	if !probesTook(raw, want) {
+		t.Error("probesTook rejects the path form")
+	}
+
+	clearAll := map[string]*probeDef{flagReadiness: nil, flagLiveness: nil}
+	_ = applyProbes(raw, clearAll)
+	cfg, _ := raw[keyCustomConfig].(map[string]any)
+	if _, ok := cfg[keyContainer]; ok {
+		t.Errorf("container survived --clear: %v", cfg)
+	}
+	if _, ok := cfg[keyHPA]; !ok {
+		t.Error("--clear dropped hpa")
+	}
+	if raw[keyReadinessPath] != "" || raw[keyLivenessPath] != nil {
+		t.Errorf("paths = %v, %v", raw[keyReadinessPath], raw[keyLivenessPath])
+	}
+	if !probesTook(raw, clearAll) {
+		t.Error("probesTook rejects the cleared app")
+	}
+}
+
+// A write the chart schema dropped must read back as not taken.
+func TestProbesTookCatchesADroppedWrite(t *testing.T) {
+	t.Parallel()
+
+	raw := normalized(liveApp())
+	want := map[string]*probeDef{flagLiveness: {Path: "/livez", InitialDelaySeconds: 30, full: true}}
+	if probesTook(raw, want) {
+		t.Error("an app without the probe passed")
+	}
+	setConfigProbe(raw, "livenessProbe", map[string]any{"httpGet": map[string]any{"path": "/livez", "port": 8080}})
+	if probesTook(raw, want) {
+		t.Error("a probe missing initialDelaySeconds passed")
+	}
+}
+
+func TestAppPort(t *testing.T) {
+	t.Parallel()
+
+	two := map[string]any{"svc": map[string]any{"ports": map[string]any{
+		"metrics": map[string]any{"containerPort": float64(9090)},
+		"grpc":    map[string]any{"containerPort": float64(9000)},
+	}}}
+	if _, err := appPort(two); !errors.Is(err, errProbeNoPort) {
+		t.Errorf("two unnamed ports: err = %v", err)
+	}
+	ports, _ := two["svc"].(map[string]any)["ports"].(map[string]any)
+	ports["http"] = map[string]any{"containerPort": float64(8000)}
+	if n, err := appPort(two); err != nil || n != 8000 {
+		t.Errorf("named http: %d, %v", n, err)
+	}
+	if _, err := appPort(map[string]any{}); !errors.Is(err, errProbeNoPort) {
+		t.Errorf("no ports: err = %v", err)
 	}
 }
 
@@ -235,6 +444,88 @@ func TestSpecRoundTripIsANoOp(t *testing.T) {
 	}
 	if changes := diffApps(decodeRendered(t, before), raw); len(changes) != 0 {
 		t.Errorf("applying the exported spec changed %v", changes)
+	}
+}
+
+// A full probe must survive export and apply too: the spec that `get apps -o
+// spec` writes for it, read back through YAML, applies as no change.
+func TestSpecRoundTripKeepsAFullProbe(t *testing.T) {
+	t.Parallel()
+
+	plans := []client.Plan{{ID: "p1", CodeName: "2", CostType: "fixed"}}
+	namespaces := []client.Namespace{{ID: 7, Name: "prod"}}
+	live := func() map[string]any {
+		raw := liveApp()
+		raw[keyCustomConfig] = map[string]any{
+			keyHPA: map[string]any{"enabled": false},
+			keyContainer: map[string]any{"livenessProbe": map[string]any{
+				"exec":                map[string]any{"command": []any{"sh", "-c", "celery inspect ping"}},
+				"initialDelaySeconds": float64(120), "periodSeconds": float64(60), "failureThreshold": float64(3),
+			}},
+		}
+		return raw
+	}
+	spec, notes := specFromApp(live(), plans, namespaces)
+	if len(notes) != 0 || spec.Probes == nil || spec.Probes.Liveness.Exec != "celery inspect ping" ||
+		spec.Probes.Readiness.Path != "/ready" {
+		t.Fatalf("exported probes %+v, notes %v", spec.Probes, notes)
+	}
+
+	out, err := yaml.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "readiness: /ready") || !strings.Contains(string(out), "initialDelaySeconds: 120") {
+		t.Errorf("spec YAML:\n%s", out)
+	}
+	var back appSpec
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := normalized(live())
+	before := renderValue(raw)
+	if err := applySpecTo(raw, back, &plans[0], 7); err != nil {
+		t.Fatal(err)
+	}
+	if changes := diffApps(decodeRendered(t, before), raw); len(changes) != 0 {
+		t.Errorf("applying the exported spec changed %v", changes)
+	}
+}
+
+// A probe the spec cannot express must not be exported as something else, or
+// the next apply would replace it.
+func TestSpecLeavesOutAProbeItCannotCarry(t *testing.T) {
+	t.Parallel()
+
+	raw := liveApp()
+	raw[keyCustomConfig] = map[string]any{keyContainer: map[string]any{
+		"livenessProbe": map[string]any{"tcpSocket": map[string]any{"port": float64(5432)}},
+	}}
+	spec, notes := specFromApp(raw, nil, nil)
+	if spec.Probes != nil || len(notes) == 0 {
+		t.Errorf("probes = %+v, notes %v", spec.Probes, notes)
+	}
+}
+
+func TestProbesSpecReadsBothForms(t *testing.T) {
+	t.Parallel()
+
+	var s probesSpec
+	body := "readiness: /healthz\nliveness: {path: /livez, port: 8000, initialDelaySeconds: 30}\n"
+	if err := yaml.Unmarshal([]byte(body), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Readiness.full || s.Readiness.Path != "/healthz" {
+		t.Errorf("readiness = %+v", s.Readiness)
+	}
+	if !s.Liveness.full || s.Liveness.Port != 8000 || s.Liveness.InitialDelaySeconds != 30 {
+		t.Errorf("liveness = %+v", s.Liveness)
+	}
+	if err := validateApplySpec(appSpec{Name: "a", Namespace: "n", Probes: &probesSpec{
+		Liveness: probeDef{Path: "/x", SuccessThreshold: 3, full: true},
+	}}); !errors.Is(err, errProbeLiveSuccess) {
+		t.Errorf("validate: err = %v", err)
 	}
 }
 

@@ -135,7 +135,7 @@ claude mcp add darkube-acme -- darkubectl --org acme mcp --allow-writes   # one 
 { "mcpServers": { "darkube": { "command": "darkubectl", "args": ["mcp"] } } }
 ```
 
-It exposes a `darkubectl` tool that takes any command line as an argument list, and typed tools with their own schemas over most of the platform: apps (`list_apps`, `describe_app`, `get_app_spec`, `get_pods`, `app_logs`, `get_app_env`, `get_domains`, `get_manifests`, `get_suggestions`, `app_history`, `rollout_status`), usage and monitoring (`app_usage`, `tenant_usage`, `list_alerts`, `list_notifications`), builds and the registry (`list_builds`, `build_logs`, `list_registries`, `registry_images`, `registry_tags`), data and other products (`list_disks`, `list_databases`, `list_services`, `list_storage`, `list_certificates`), the tenant (`whoami`, `list_namespaces`, `list_members`, `list_plans`, `get_balance`, `list_invoices`) and support (`list_tickets`, `view_ticket`). With `--allow-writes` it adds `scale_app`, `restart_app`, `set_image`, `set_env`, `set_domains`, `autoscale_app`, `set_resources` and `reply_ticket`; each takes `dryRun` where the command does, and is sent with `--yes`. Every typed tool takes an optional `tenant`. The server's instructions list every command with its access level, generated from the command tree. Each call runs as a child process of the same binary with this machine's config, so log in (or set `DARKUBE_TOKEN`) first; `--org`, `--config`, `--token` and `--base-url` given before `mcp` apply to every call, and a call may pick another tenant with `tenant` but never another credential.
+It exposes a `darkubectl` tool that takes any command line as an argument list, and typed tools with their own schemas over most of the platform: apps (`list_apps`, `describe_app`, `get_app_spec`, `get_pods`, `app_logs`, `get_app_env`, `get_domains`, `get_manifests`, `get_suggestions`, `app_history`, `rollout_status`), usage and monitoring (`app_usage`, `tenant_usage`, `list_alerts`, `list_notifications`), builds and the registry (`list_builds`, `build_logs`, `list_registries`, `registry_images`, `registry_tags`), data and other products (`list_disks`, `list_databases`, `list_services`, `list_storage`, `list_certificates`), the tenant (`whoami`, `list_namespaces`, `list_members`, `list_plans`, `get_balance`, `list_invoices`) and support (`list_tickets`, `view_ticket`). With `--allow-writes` it adds `scale_app`, `restart_app`, `set_image`, `set_env`, `set_domains`, `set_probes`, `autoscale_app`, `set_resources` and `reply_ticket`; each takes `dryRun` where the command does, and is sent with `--yes`. Every typed tool takes an optional `tenant`. The server's instructions list every command with its access level, generated from the command tree. Each call runs as a child process of the same binary with this machine's config, so log in (or set `DARKUBE_TOKEN`) first; `--org`, `--config`, `--token` and `--base-url` given before `mcp` apply to every call, and a call may pick another tenant with `tenant` but never another credential.
 
 What a call may do is decided on the command it resolves to, aliases and all. By default only reads run. Anything that prints a secret — `get deploy-token`, `get ci-config`, `get env --show-secrets`, `registry password`, and `api GET`, since a raw GET can reach the vault — needs `--allow-secrets`. Anything that changes state needs `--allow-writes`, and a command that prompts still needs `--yes` in its arguments, because the child has no stdin and a prompt reads that as "no". A command not explicitly listed as a read counts as a write, so a new command is refused until someone classifies it. `terminal`, `login`, `tunnel connect`, `config` edits, `get pods -w`, `logs -f` and `describe -i` are always refused, because they need a terminal or never return. Each call is capped by `--timeout` (2m by default), and its output by 256 KiB.
 
@@ -263,7 +263,9 @@ darkubectl set svc-type <name|id> ClusterIP --dry-run    # show the diff, send n
 darkubectl set disk <name|id> --size 40                   # grow only; re-read to confirm it took
 darkubectl set image <name|id> registry.hamdocker.ir/acme/api:1.4.2 --wait   # deploy, and follow it
 darkubectl set command <name|id> --command "/bin/sh -c" --args 'cd /app && exec ./worker'
-darkubectl set probe <name|id> --readiness /healthz --liveness /livez
+darkubectl set probe <name|id> --readiness /healthz --liveness /livez   # Darkube's fixed timing: 5s delay, every 1s
+darkubectl set probe <name|id> --liveness /healthz --initial-delay 60s --period 15s --timeout 5s --failure-threshold 4
+darkubectl set probe <name|id> --liveness-exec 'celery inspect ping' --initial-delay 2m --period 1m --timeout 20s
 darkubectl set resources <name|id> --plan 2                    # or a dynamic plan with --memory/--cpu
 darkubectl autoscale app <name|id> --min 2 --max 6 --cpu-percent 70
 darkubectl autoscale app <name|id> --disable
@@ -361,11 +363,15 @@ A spec can also carry what the create call itself ignores; `apply -f` sets these
 
 ```yaml
 autoscale: {min: 2, max: 6, cpuPercent: 70}   # replaces replicas: the autoscaler owns the count
-probes: {readiness: /healthz, liveness: /livez}
+probes:
+  readiness: /healthz                         # a bare path: Darkube's fixed timing
+  liveness: {path: /healthz, port: 8000, initialDelaySeconds: 60, periodSeconds: 15, timeoutSeconds: 5, failureThreshold: 4}
 plan: dynamic                                 # memory and cpu apply only to a dynamic plan
 memory: 1500M
 cpu: 750m
 ```
+
+**A bare probe path gets timing you cannot change.** Darkube renders `readiness_probe_path`/`liveness_probe_path` with a 5-second initial delay, a 1-second period, a 2-second timeout and three failures, so a liveness probe restarts any container that is not answering about eight seconds after it starts — an app that boots slower than that (Django, Celery Flower, a JVM) crash-loops forever. Any timing, `--port` or `--*-exec` flag on `set probe`, or a mapping instead of a path in a spec, writes a full Kubernetes probe into `custom_config.container` instead, where every field is yours; `exec` runs its command with `sh -c`. Each probe lives in one place: writing either form clears the other, and removing a probe (`--liveness ""`, `--clear`, or leaving the kind out of a spec's `probes`) removes both.
 
 `replicas` left out means one at creation, and "leave it alone" on `apply`. That goes for every field: `apply` changes what the spec names and leaves the rest, so a trimmed file never resets anything by omission. `get apps -o spec` writes this format — secret values and domains are left out and named on stderr, since a spec should not carry secrets in the clear and `set domain` owns the second.
 

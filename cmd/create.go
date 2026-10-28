@@ -57,8 +57,8 @@ type appSpec struct {
 	SecretEnvs []client.EnvVar        `yaml:"secretEnvs,omitempty"`
 
 	// Autoscale and Probes are applied with a PUT after the app exists: the
-	// POST ignores custom_config for an image app, and probes are plain fields
-	// the create payload does not carry.
+	// POST ignores custom_config for an image app, and the probe path fields
+	// are not in the create payload.
 	Autoscale *autoscaleSpec `yaml:"autoscale,omitempty"`
 	Probes    *probesSpec    `yaml:"probes,omitempty"`
 
@@ -74,11 +74,27 @@ type autoscaleSpec struct {
 	CPUPercent int `yaml:"cpuPercent,omitempty"`
 }
 
-// probesSpec is the spec-file form of `set probe`. An absent path means no
-// probe of that kind.
+// probesSpec is the spec-file form of `set probe`. Each kind is a bare path
+// (Darkube's fixed timing) or a mapping {path|exec, port, initialDelaySeconds,
+// periodSeconds, timeoutSeconds, successThreshold, failureThreshold} (a full
+// probe in custom_config). An absent kind means no probe of that kind.
 type probesSpec struct {
-	Readiness string `yaml:"readiness,omitempty"`
-	Liveness  string `yaml:"liveness,omitempty"`
+	Readiness probeDef `yaml:"readiness,omitempty"`
+	Liveness  probeDef `yaml:"liveness,omitempty"`
+}
+
+// change is the spec as the probes `set probe` would write: both kinds, an
+// absent one removed.
+func (s probesSpec) change() map[string]*probeDef {
+	out := map[string]*probeDef{}
+	for kind, p := range map[string]probeDef{flagReadiness: s.Readiness, flagLiveness: s.Liveness} {
+		if p.IsZero() {
+			out[kind] = nil
+			continue
+		}
+		out[kind] = &p
+	}
+	return out
 }
 
 // replicas is the replica count to create with.
