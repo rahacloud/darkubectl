@@ -236,7 +236,9 @@ func (inv mcpInvocation) classify() (mcpAccess, string) {
 		}
 		return accessWrite, ""
 	case "get env":
-		if inv.flags["show-secrets"] {
+		// --live prints no value, but it reads every one from the vault and
+		// runs a command in each pod, so it is no plain read either.
+		if inv.flags["show-secrets"] || inv.flags[flagLive] {
 			return accessSecret, ""
 		}
 	case "get orphans":

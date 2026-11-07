@@ -19,10 +19,12 @@ const flagRemove = "remove"
 
 // Env command errors.
 var (
-	errNoEnvChange  = errors.New("nothing to do: pass NAME=VALUE pairs, or --remove NAME")
-	errBadEnvPair   = errors.New(`environment variables are set as NAME=VALUE`)
-	errSecretEnvSet = errors.New("that is a secret variable: pass --secret to change it")
-	errPlainEnvSet  = errors.New("that is a plain variable: drop --secret to change it")
+	errNoEnvChange          = errors.New("nothing to do: pass NAME=VALUE pairs, or --remove NAME")
+	errBadEnvPair           = errors.New(`environment variables are set as NAME=VALUE`)
+	errSecretEnvSet         = errors.New("that is a secret variable: pass --secret to change it")
+	errPlainEnvSet          = errors.New("that is a plain variable: drop --secret to change it")
+	errFromPlainNeedsSecret = errors.New("--from-plain moves variables into the vault: pass --secret with it")
+	errNotPlain             = errors.New("not a plain variable on this app, so there is nothing to move")
 )
 
 func newGetEnvCommand() *cli.Command {
@@ -34,9 +36,17 @@ func newGetEnvCommand() *cli.Command {
 		Description: "Plain variables are shown with their values. Secret variables are listed by\n" +
 			"name only, unless --show-secrets: their values live in a vault, and the app\n" +
 			"read returns them blank. --show-secrets fetches them from the vault the way\n" +
-			"the console does, and prints them in the clear.",
+			"the console does, and prints them in the clear.\n\n" +
+			"--live [NAME ...] compares what the platform stores (plain values, and secret\n" +
+			"values from the vault) with /proc/1/environ in every running pod, by SHA-256\n" +
+			"computed in the pod, and prints no values. It catches a pod still running an\n" +
+			"old value after a Secret change, and a hand-patched Secret the next deploy\n" +
+			"will revert. Exits non-zero on any mismatch.\n\n" +
+			"  darkubectl get env my-api --live\n" +
+			"  darkubectl get env my-api --live ConnectionStrings__DefaultConnection",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: flagShowSecrets, Usage: "read secret values from the vault and print them"},
+			&cli.BoolFlag{Name: flagLive, Usage: "compare stored values with the running pods' environment (names after the app narrow it)"},
 		},
 		Action: getEnvAction,
 	}
@@ -62,6 +72,9 @@ func getEnvAction(ctx context.Context, cmd *cli.Command) error {
 	raw, err := c.GetApp(ctx, app.ID)
 	if err != nil {
 		return err
+	}
+	if cmd.Bool(flagLive) {
+		return liveEnvAction(ctx, cmd, c, app, raw, cmd.Args().Tail())
 	}
 
 	envs := client.EnvVars(raw)
@@ -131,7 +144,14 @@ func newSetEnvCommand() *cli.Command {
 			"with it, the NAME=VALUE pairs and --remove names are secret variables instead.\n\n" +
 			"  darkubectl set env my-api LOG_LEVEL=debug PORT=8080\n" +
 			"  darkubectl set env my-api --remove LOG_LEVEL\n" +
-			"  darkubectl set env my-api --secret DB_PASSWORD=s3cret\n\n" +
+			"  darkubectl set env my-api --secret DB_PASSWORD=s3cret\n" +
+			"  darkubectl set env my-api --secret --from-plain DB_PASSWORD [DB_URL=new]\n\n" +
+			"--from-plain moves plain variables into the vault in one write: a bare NAME\n" +
+			"keeps its current value, NAME=VALUE replaces it, and the plain copy is dropped\n" +
+			"in the same PUT, so the app never starts without the variable.\n\n" +
+			"--wait follows the rollout and then reads /proc/1/environ in every new pod,\n" +
+			"comparing each set variable by SHA-256 computed in the pod, so it proves the\n" +
+			"running process has the value without printing it. Exits non-zero if not.\n\n" +
 			"A secret change reads every current secret value from the vault and writes the\n" +
 			"whole list back, the way the console does; values are never printed. It is\n" +
 			"what makes a secret survive the next deploy, which editing the Kubernetes\n" +
@@ -141,12 +161,14 @@ func newSetEnvCommand() *cli.Command {
 		Flags: append([]cli.Flag{
 			&cli.StringSliceFlag{Name: flagRemove, Usage: "environment variable to remove (repeatable)"},
 			&cli.BoolFlag{Name: flagSecret, Usage: "the variables are secret environment variables"},
-		}, mutationFlags()...),
+			&cli.BoolFlag{Name: flagFromPlain, Usage: "with --secret: move these plain variables into the vault (a bare NAME keeps its value)"},
+		}, append(mutationFlags(), rolloutWaitFlags()...)...),
 		Action: setEnvAction,
 	}
 }
 
 func setEnvAction(ctx context.Context, cmd *cli.Command) error {
+	var err error
 	args := cmd.Args().Slice()
 	if len(args) == 0 {
 		return errMissingAppRef
@@ -157,7 +179,17 @@ func setEnvAction(ctx context.Context, cmd *cli.Command) error {
 		return errNoEnvChange
 	}
 
-	set, err := parseEnvPairs(pairs)
+	fromPlain := cmd.Bool(flagFromPlain)
+	if fromPlain && !cmd.Bool(flagSecret) {
+		return errFromPlainNeedsSecret
+	}
+	var set []client.EnvVar
+	var bare []string
+	if fromPlain {
+		set, bare, err = parseMovePairs(pairs)
+	} else {
+		set, err = parseEnvPairs(pairs)
+	}
 	if err != nil {
 		return err
 	}
@@ -171,8 +203,15 @@ func setEnvAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	check, err := newLiveEnvCheck(ctx, cmd, app)
+	if err != nil {
+		return err
+	}
+	if fromPlain {
+		return moveEnvToSecret(ctx, cmd, c, app, set, bare, check)
+	}
 	if cmd.Bool(flagSecret) {
-		return setSecretEnv(ctx, cmd, c, app, set, removals)
+		return setSecretEnv(ctx, cmd, c, app, set, removals, check)
 	}
 
 	// The PUT path strips secret_envs before the change is applied, so the guard
@@ -198,7 +237,7 @@ func setEnvAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "app/%s environment updated\n", app.Name)
-	return nil
+	return check(ctx, set)
 }
 
 // applyEnvChange merges the requested additions and removals into the app's
@@ -258,13 +297,127 @@ func parseEnvPairs(pairs []string) ([]client.EnvVar, error) {
 const (
 	flagSecret      = "secret"
 	flagShowSecrets = "show-secrets"
+	flagFromPlain   = "from-plain"
+	flagLive        = "live"
 )
+
+// parseMovePairs is parseEnvPairs for --from-plain, where a bare NAME is allowed
+// and means "keep the value the plain variable has now".
+func parseMovePairs(pairs []string) ([]client.EnvVar, []string, error) {
+	var set []client.EnvVar
+	var bare []string
+	for _, p := range pairs {
+		if name, value, found := strings.Cut(p, "="); found {
+			if name == "" {
+				return nil, nil, fmt.Errorf("%w, got %q", errBadEnvPair, p)
+			}
+			set = append(set, client.EnvVar{Name: name, Value: value})
+		} else if p != "" {
+			bare = append(bare, p)
+		} else {
+			return nil, nil, fmt.Errorf("%w, got %q", errBadEnvPair, p)
+		}
+	}
+	return set, bare, nil
+}
+
+// moveEnvToSecret takes plain variables off the app and puts them in the vault
+// in a single PUT, then reads both back: the vault must hold the new list and
+// the plain environment must no longer carry any of the moved names.
+func moveEnvToSecret(
+	ctx context.Context, cmd *cli.Command, c *client.Client, app *client.App, set []client.EnvVar, bare []string,
+	check liveEnvCheck,
+) error {
+	raw, err := c.GetApp(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	plain := client.EnvVars(raw)
+	value := func(name string) (string, bool) {
+		for _, e := range plain {
+			if e.Name == name {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+	moved := make([]string, 0, len(set)+len(bare))
+	for _, name := range bare {
+		v, ok := value(name)
+		if !ok {
+			return fmt.Errorf("%w: %q", errNotPlain, name)
+		}
+		set = append(set, client.EnvVar{Name: name, Value: v})
+	}
+	for _, e := range set {
+		if _, ok := value(e.Name); !ok {
+			return fmt.Errorf("%w: %q", errNotPlain, e.Name)
+		}
+		moved = append(moved, e.Name)
+	}
+
+	current, err := c.SecretEnvs(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	merged, err := mergeEnvs(current, set, nil)
+	if err != nil {
+		return err
+	}
+	if cmd.Bool(flagDryRun) {
+		fmt.Fprintf(os.Stdout, "app/%s: dry run, nothing was sent\n", app.Name)
+		fmt.Fprintf(os.Stdout, "  plain -> secret: %s\n", strings.Join(moved, ", "))
+		fmt.Fprintf(os.Stdout, "  secret environment: %s\n", describeSecretChange(current, merged))
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "About to move %s from plain to SECRET environment on app %q (%s) in tenant %q: %s\n",
+		strings.Join(moved, ", "), app.Name, app.ID, c.Org, describeSecretChange(current, merged))
+	fmt.Fprintf(os.Stderr, "note: like every write, this restarts the app's pods.\n")
+	if !cmd.Bool(flagYes) && !confirm() {
+		return errAborted
+	}
+
+	dropPlain := func(app map[string]any) error {
+		envs := client.EnvVars(app)
+		envs = slices.DeleteFunc(envs, func(e client.EnvVar) bool { return slices.Contains(moved, e.Name) })
+		client.SetEnvVars(app, envs)
+		return nil
+	}
+	want, err := c.UpdateSecretEnvs(ctx, app.ID, func(secrets []client.EnvVar) ([]client.EnvVar, error) {
+		return mergeEnvs(secrets, set, nil)
+	}, dropPlain)
+	if err != nil {
+		return err
+	}
+
+	ok, err := retryReadBack(ctx, func(ctx context.Context) (bool, error) {
+		got, err := c.SecretEnvs(ctx, app.ID)
+		if err != nil || !sameEnvs(got, want) {
+			return false, err
+		}
+		raw, err := c.GetApp(ctx, app.ID)
+		if err != nil {
+			return false, err
+		}
+		return !slices.ContainsFunc(client.EnvVars(raw), func(e client.EnvVar) bool { return slices.Contains(moved, e.Name) }), nil
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: the vault or the plain environment does not show the move as written", errChangeIgnored)
+	}
+	fmt.Fprintf(os.Stdout, "app/%s: %s moved to the secret environment\n", app.Name, strings.Join(moved, ", "))
+	return check(ctx, set)
+}
 
 // setSecretEnv changes secret variables: every current value is read from the
 // vault, the change is applied to the full list, and the full list is written
 // back, then read back to prove it took. Names are shown, values never are.
 func setSecretEnv(
 	ctx context.Context, cmd *cli.Command, c *client.Client, app *client.App, set []client.EnvVar, removals []string,
+	check liveEnvCheck,
 ) error {
 	raw, err := c.GetApp(ctx, app.ID)
 	if err != nil {
@@ -320,7 +473,7 @@ func setSecretEnv(
 		return fmt.Errorf("%w: the vault still does not hold the secret variables as written", errChangeIgnored)
 	}
 	fmt.Fprintf(os.Stdout, "app/%s secret environment updated\n", app.Name)
-	return nil
+	return check(ctx, set)
 }
 
 // describeSecretChange names the secret variables a change adds, alters and

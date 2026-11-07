@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,10 +18,20 @@ const (
 	flagFollow     = "follow"
 	flagPrevious   = "previous"
 	flagTimestamps = "timestamps"
+	flagGrep       = "grep"
+	flagErrors     = "errors"
 
 	defaultTail    = 100
 	followInterval = 3 * time.Second
 )
+
+// errorPattern is what --errors looks for: connection and authentication
+// failures from the .NET (SqlClient, MassTransit), Redis and Postgres clients,
+// and the error/fatal levels of Serilog-style output. It is the check to run
+// after a credential change, where the question after each restart is "did
+// anything fail to log in".
+const errorPattern = `(?i)login failed|sqlexception|brokerunreachable|access_refused|noauth|wrongpass|` +
+	`authentication failed|password authentication|unhandled exception|\[(error|fatal|err|ftl)\b`
 
 func newLogsCommand() *cli.Command {
 	return &cli.Command{
@@ -32,6 +43,11 @@ func newLogsCommand() *cli.Command {
 			"Use --previous to read the container instance that died, which is the\n" +
 			"only way to see why a crashlooping app failed — a crashed pod cannot be\n" +
 			"exec'd into.\n\n" +
+			"--grep REGEX keeps only the log entries that match (a multi-line entry, such as\n" +
+			"an exception with its stack, is kept whole). --errors does the same with a\n" +
+			"built-in pattern for connection, authentication and error-level lines, prints\n" +
+			"a count, and exits 1 if anything matched — the check to run after changing a\n" +
+			"credential.\n\n" +
 			"`darkubectl logs NAME` is the kubectl-shaped shorthand for `logs app NAME`.",
 		Flags:  logsFlags(),
 		Action: logsAppAction,
@@ -57,6 +73,8 @@ func logsFlags() []cli.Flag {
 		&cli.BoolFlag{Name: flagFollow, Aliases: []string{"f"}, Usage: "stream new lines as they arrive"},
 		&cli.BoolFlag{Name: flagPrevious, Aliases: []string{"p"}, Usage: "logs of the previous container instance (after a crash/restart)"},
 		&cli.BoolFlag{Name: flagTimestamps, Usage: "prefix every line with its API timestamp"},
+		&cli.StringFlag{Name: flagGrep, Usage: "keep only entries matching this regular expression"},
+		&cli.BoolFlag{Name: flagErrors, Usage: "keep only connection/auth/error entries; exit 1 if any"},
 	)
 }
 
@@ -95,6 +113,13 @@ func logsAppAction(ctx context.Context, cmd *cli.Command) error {
 		Previous:  cmd.Bool(flagPrevious),
 	}
 	withTimestamps := cmd.Bool(flagTimestamps)
+	filter, filtering, err := logFilter(cmd)
+	if err != nil {
+		return err
+	}
+	if !filtering {
+		filter = nil
+	}
 
 	entries, _, err := c.AppLogs(ctx, app.ID, opts)
 	if err != nil {
@@ -104,12 +129,25 @@ func logsAppAction(ctx context.Context, cmd *cli.Command) error {
 		fmt.Fprintf(os.Stderr, "no previous-instance logs for %s/%s — the container has not restarted\n", pod, container)
 		return nil
 	}
+	scanned := len(entries)
+	entries = filterLogs(entries, filter)
 	printLogs(entries, withTimestamps)
 
 	if !cmd.Bool(flagFollow) {
+		if cmd.Bool(flagErrors) {
+			return reportErrorScan(app.Name+"/"+pod, len(entries), scanned)
+		}
 		return nil
 	}
 
+	return followLogs(ctx, c, app.ID, opts, entries, filter, withTimestamps)
+}
+
+// followLogs polls the log tail after the first read and prints what is new.
+func followLogs(
+	ctx context.Context, c *client.Client, appID string, opts client.LogOptions,
+	entries []client.LogEntry, filter *regexp.Regexp, withTimestamps bool,
+) error {
 	// The endpoint is a windowed read, not a stream, so following means polling
 	// the tail and printing what we have not printed. Entry keys are timestamps
 	// with nanosecond precision, which makes them a usable de-duplication key.
@@ -125,7 +163,7 @@ func logsAppAction(ctx context.Context, cmd *cli.Command) error {
 			return nil
 		case <-ticker.C:
 		}
-		next, _, ferr := c.AppLogs(ctx, app.ID, opts)
+		next, _, ferr := c.AppLogs(ctx, appID, opts)
 		if ferr != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", ferr) // transient API errors are common; keep following
 			continue
@@ -138,7 +176,7 @@ func logsAppAction(ctx context.Context, cmd *cli.Command) error {
 		}
 		if len(fresh) > 0 {
 			last = fresh[len(fresh)-1].Timestamp
-			printLogs(fresh, withTimestamps)
+			printLogs(filterLogs(fresh, filter), withTimestamps)
 		}
 	}
 }
@@ -159,4 +197,47 @@ func printLogs(entries []client.LogEntry, withTimestamps bool) {
 			}
 		}
 	}
+}
+
+// reportErrorScan prints the --errors summary and fails when anything matched.
+func reportErrorScan(where string, matched, scanned int) error {
+	fmt.Fprintf(os.Stderr, "%s: %d of the last %d log entries match the error pattern\n", where, matched, scanned)
+	if matched > 0 {
+		return cli.Exit("", 1)
+	}
+	return nil
+}
+
+// logFilter builds the entry filter from --grep and --errors, and reports
+// whether either was given. Given both, an entry is kept if it matches either.
+func logFilter(cmd *cli.Command) (*regexp.Regexp, bool, error) {
+	var parts []string
+	if g := cmd.String(flagGrep); g != "" {
+		if _, err := regexp.Compile(g); err != nil {
+			return nil, false, fmt.Errorf("--%s: %w", flagGrep, err)
+		}
+		parts = append(parts, "(?:"+g+")")
+	}
+	if cmd.Bool(flagErrors) {
+		parts = append(parts, "(?:"+errorPattern+")")
+	}
+	if len(parts) == 0 {
+		return nil, false, nil
+	}
+	return regexp.MustCompile(strings.Join(parts, "|")), true, nil
+}
+
+// filterLogs keeps the entries whose text matches. It works on entries rather
+// than lines, so an exception's stack stays attached to its message.
+func filterLogs(entries []client.LogEntry, re *regexp.Regexp) []client.LogEntry {
+	if re == nil {
+		return entries
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if re.MatchString(e.Text) {
+			out = append(out, e)
+		}
+	}
+	return out
 }

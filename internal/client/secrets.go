@@ -45,8 +45,13 @@ func (c *Client) SecretEnvs(ctx context.Context, id string) ([]EnvVar, error) {
 // Like every PUT, this rolls the app's pods; a Secret edit made this way is also
 // what a later deploy re-renders, which is the point of doing it here rather
 // than in the Kubernetes Secret.
+//
+// also, when given, edits the rest of the app object in the same PUT; set env
+// --from-plain uses it to drop the plain copies of the variables it moves, so
+// the move is one write and one restart instead of two with a gap between them.
 func (c *Client) UpdateSecretEnvs(
 	ctx context.Context, id string, mutate func(secrets []EnvVar) ([]EnvVar, error),
+	also ...func(app map[string]any) error,
 ) ([]EnvVar, error) {
 	current, err := c.SecretEnvs(ctx, id)
 	if err != nil {
@@ -57,6 +62,11 @@ func (c *Client) UpdateSecretEnvs(
 		return nil, err
 	}
 	_, err = c.UpdateApp(ctx, id, func(app map[string]any) error {
+		for _, f := range also {
+			if err := f(app); err != nil {
+				return err
+			}
+		}
 		app["secret_envs"] = next
 		return nil
 	})

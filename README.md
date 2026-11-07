@@ -195,6 +195,7 @@ darkubectl delete apikey ci-pipeline
 
 # App configuration
 darkubectl get env <name|id>           # environment variables (secrets by name; --show-secrets for values)
+darkubectl get env <name|id> --live    # does every running pod have what the platform stores? (hashes, no values)
 darkubectl get domains <name|id>       # custom domains, DNS status, the platform's certificate, the CNAME target
 darkubectl get domains <name|id> --tls # + the certificate each host actually serves
 darkubectl get manifests <name|id>     # the Kubernetes objects the platform renders (--kind Ingress)
@@ -253,6 +254,8 @@ darkubectl scale app <name|id> --replicas 3
 darkubectl set env <name|id> LOG_LEVEL=debug PORT=8080
 darkubectl set env <name|id> --remove LOG_LEVEL
 darkubectl set env <name|id> --secret DB_PASSWORD=s3cret   # a secret variable, kept across deploys
+darkubectl set env <name|id> --secret --from-plain DB_URL   # move a plain variable into the vault in one write
+darkubectl set env <name|id> --secret DB_URL=new --wait     # then prove the new pods' process has the new value
 darkubectl api GET /api/v1/darkube/plans/     # one raw authenticated request, like kubectl get --raw
 darkubectl set domain <name|id> --add api.example.com      # a domain you own
 darkubectl set domain <name|id> --remove old.example.com
@@ -307,6 +310,8 @@ darkubectl logs <name>                    # last 100 lines (pod auto-detected; `
 darkubectl logs <name> --tail 500 -f      # follow
 darkubectl logs <name> --previous         # the container instance that crashed
 darkubectl logs <name> --timestamps --pod <p> -c <container>
+darkubectl logs <name> --tail 500 --errors  # connection/auth/error entries only; exits 1 if any (after a credential change)
+darkubectl logs <name> --grep 'Timeout'     # entries matching a regexp, multi-line entries kept whole
 
 # Terminal / exec — needs a JWT login (separate from the Api-key)
 darkubectl login                          # email + password + TOTP → stores a refresh token

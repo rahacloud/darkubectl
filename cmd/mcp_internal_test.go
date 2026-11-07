@@ -19,6 +19,7 @@ func TestMCPClassify(t *testing.T) {
 		{"--org=acme get apps", accessRead},
 		{"get env my-api", accessRead},
 		{"get env my-api --show-secrets", accessSecret},
+		{"get env my-api --live", accessSecret},
 		{"get deploy-token my-api", accessSecret},
 		{"registry password", accessSecret},
 		{"api GET /api/v1/darkube/plans/", accessSecret},
