@@ -57,3 +57,15 @@ func TestParseMovePairs(t *testing.T) {
 		t.Fatal("empty name accepted")
 	}
 }
+
+func TestReadEnvFile(t *testing.T) {
+	t.Parallel()
+	f := t.TempDir() + "/env"
+	if err := os.WriteFile(f, []byte("# c\n\nA=1\r\nB=x=$y'\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readEnvFile(f)
+	if err != nil || len(got) != 2 || got[0] != "A=1" || got[1] != "B=x=$y'\"" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}

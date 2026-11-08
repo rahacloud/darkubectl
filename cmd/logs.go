@@ -27,11 +27,14 @@ const (
 
 // errorPattern is what --errors looks for: connection and authentication
 // failures from the .NET (SqlClient, MassTransit), Redis and Postgres clients,
-// and the error/fatal levels of Serilog-style output. It is the check to run
-// after a credential change, where the question after each restart is "did
-// anything fail to log in".
+// the permission failures of a login that works but lacks a grant, and the
+// error/fatal levels of Serilog-style output. It is the check to run after a
+// credential change, where the question after each restart is "did anything
+// fail to log in, or log in and then fail to read".
 const errorPattern = `(?i)login failed|sqlexception|brokerunreachable|access_refused|noauth|wrongpass|` +
-	`authentication failed|password authentication|unhandled exception|\[(error|fatal|err|ftl)\b`
+	`authentication failed|password authentication|unhandled exception|` +
+	`permission was denied|cannot open database|not able to access the database|permission denied for|` +
+	`\[(error|fatal|err|ftl)\b`
 
 func newLogsCommand() *cli.Command {
 	return &cli.Command{

@@ -149,6 +149,9 @@ func newSetEnvCommand() *cli.Command {
 			"--from-plain moves plain variables into the vault in one write: a bare NAME\n" +
 			"keeps its current value, NAME=VALUE replaces it, and the plain copy is dropped\n" +
 			"in the same PUT, so the app never starts without the variable.\n\n" +
+			"--env-file reads NAME=VALUE lines (blank lines and # comments skipped) and adds\n" +
+			"them to the arguments, so a password never appears on a command line or in\n" +
+			"shell history. It works with every mode above.\n\n" +
 			"--wait follows the rollout and then reads /proc/1/environ in every new pod,\n" +
 			"comparing each set variable by SHA-256 computed in the pod, so it proves the\n" +
 			"running process has the value without printing it. Exits non-zero if not.\n\n" +
@@ -162,18 +165,22 @@ func newSetEnvCommand() *cli.Command {
 			&cli.StringSliceFlag{Name: flagRemove, Usage: "environment variable to remove (repeatable)"},
 			&cli.BoolFlag{Name: flagSecret, Usage: "the variables are secret environment variables"},
 			&cli.BoolFlag{Name: flagFromPlain, Usage: "with --secret: move these plain variables into the vault (a bare NAME keeps its value)"},
+			&cli.StringFlag{Name: flagEnvFile, Usage: "read NAME=VALUE lines from this file as well, so values stay off the command line"},
 		}, append(mutationFlags(), rolloutWaitFlags()...)...),
 		Action: setEnvAction,
 	}
 }
 
 func setEnvAction(ctx context.Context, cmd *cli.Command) error {
-	var err error
 	args := cmd.Args().Slice()
 	if len(args) == 0 {
 		return errMissingAppRef
 	}
-	ref, pairs := args[0], args[1:]
+	ref := args[0]
+	pairs, err := withEnvFile(cmd, args[1:])
+	if err != nil {
+		return err
+	}
 	removals := cmd.StringSlice(flagRemove)
 	if len(pairs) == 0 && len(removals) == 0 {
 		return errNoEnvChange
@@ -299,7 +306,40 @@ const (
 	flagShowSecrets = "show-secrets"
 	flagFromPlain   = "from-plain"
 	flagLive        = "live"
+	flagEnvFile     = "env-file"
 )
+
+// withEnvFile appends the lines of --env-file, if given, to the arguments.
+func withEnvFile(cmd *cli.Command, pairs []string) ([]string, error) {
+	f := cmd.String(flagEnvFile)
+	if f == "" {
+		return pairs, nil
+	}
+	more, err := readEnvFile(f)
+	if err != nil {
+		return nil, err
+	}
+	return append(pairs, more...), nil
+}
+
+// readEnvFile returns the NAME=VALUE lines of a file, skipping blank lines and
+// lines starting with #. Values are taken verbatim after the first "=": no
+// quoting or expansion, so a password with $ or quotes survives as written.
+func readEnvFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // the path is the user's own argument
+	if err != nil {
+		return nil, fmt.Errorf("--%s: %w", flagEnvFile, err)
+	}
+	var out []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out, nil
+}
 
 // parseMovePairs is parseEnvPairs for --from-plain, where a bare NAME is allowed
 // and means "keep the value the plain variable has now".
@@ -449,7 +489,7 @@ func setSecretEnv(
 
 	fmt.Fprintf(os.Stderr, "About to update SECRET environment on app %q (%s) in tenant %q: %s\n",
 		app.Name, app.ID, c.Org, describeSecretChange(current, merged))
-	fmt.Fprintf(os.Stderr, "note: like every write, this restarts the app's pods.\n")
+	fmt.Fprintf(os.Stderr, "note: the app is restarted afterwards so its pods pick the change up.\n")
 	if !cmd.Bool(flagYes) && !confirm() {
 		return errAborted
 	}
@@ -473,6 +513,17 @@ func setSecretEnv(
 		return fmt.Errorf("%w: the vault still does not hold the secret variables as written", errChangeIgnored)
 	}
 	fmt.Fprintf(os.Stdout, "app/%s secret environment updated\n", app.Name)
+
+	// A PUT that changes only secret_envs re-renders the app's Secret but does
+	// not roll its pods (found 2026-11-07: the vault took a new connection
+	// string, the Secret followed, and the running pod kept the old value with
+	// no rollout at all). A value read through secretKeyRef only reaches the
+	// process at start, so restart the app the way the console's restart button
+	// does; without this the change silently waits for the next deploy.
+	if err := c.RestartApp(ctx, app.ID); err != nil {
+		return fmt.Errorf("secret stored, but restarting the app to apply it failed: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "app/%s restarted so its pods pick the change up\n", app.Name)
 	return check(ctx, set)
 }
 
