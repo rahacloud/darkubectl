@@ -521,6 +521,10 @@ Issues and pull requests are welcome — especially new endpoint findings, since
 
 If `darkubectl` saved you a trip to the console, a ⭐ helps other Darkube users find it.
 
+## Who is behind darkubectl
+
+`darkubectl` is built and maintained by [Raha Cloud](https://rahacloud.com/en), an infrastructure and DevOps consulting team and a Hamravesh partner. We use it every day on the Darkube tenants we operate. If you would rather have someone migrate to or run Darkube and Kubernetes for you, [get in touch](https://rahacloud.com/en#contact).
+
 ---
 
 <div align="center">
