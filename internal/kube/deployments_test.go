@@ -13,31 +13,62 @@ import (
 	"github.com/rahacloud/darkubectl/internal/kube"
 )
 
-// fakeKubectl writes a shell script standing in for kubectl. It records its
-// arguments to args.txt next to itself, prints stdout, writes stderr, and exits
-// with code.
+// sharedKubectl is the one fake kubectl script, written by TestMain before any
+// test runs. Each test links to it rather than writing its own: a parallel test
+// that forks while another still has a fresh executable open for writing hands
+// that write descriptor to its child until exec, and running the executable in
+// that window fails with "text file busy" (golang/go#22315).
+var sharedKubectl string
+
+// The script finds its data next to the name it was run by, which is the
+// test's own symlink: it records its arguments to args.txt, prints stdout,
+// writes stderr, and exits with the code in the code file.
+const kubectlScript = `#!/bin/sh
+d=$(dirname "$0")
+printf '%s\n' "$@" > "$d/args.txt"
+cat "$d/stdout"
+cat "$d/stderr" >&2
+exit "$(cat "$d/code")"
+`
+
+func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+func runTests(m *testing.M) int {
+	if runtime.GOOS != "windows" {
+		dir, err := os.MkdirTemp("", "fake-kubectl-")
+		if err != nil {
+			panic(err)
+		}
+		defer os.RemoveAll(dir) //nolint:errcheck // best-effort cleanup of a temp dir
+		sharedKubectl = filepath.Join(dir, "kubectl")
+		if err := os.WriteFile(sharedKubectl, []byte(kubectlScript), 0o700); err != nil { //nolint:gosec // an executable test fixture
+			panic(err)
+		}
+	}
+	return m.Run()
+}
+
+// fakeKubectl gives the test its own kubectl: a symlink to the shared script in
+// a fresh directory holding what it should print and exit with. It returns the
+// symlink and the file the arguments are recorded in.
 func fakeKubectl(t *testing.T, stdout, stderr string, code int) (string, string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake kubectl is a shell script")
 	}
 	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args.txt")
-	for name, body := range map[string]string{"stdout": stdout, "stderr": stderr} {
+	for name, body := range map[string]string{"stdout": stdout, "stderr": stderr, "code": strconv.Itoa(code)} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	script := "#!/bin/sh\n" +
-		`printf '%s\n' "$@" > "` + argsFile + "\"\n" +
-		`cat "` + filepath.Join(dir, "stdout") + "\"\n" +
-		`cat "` + filepath.Join(dir, "stderr") + "\" >&2\n" +
-		"exit " + strconv.Itoa(code) + "\n"
 	bin := filepath.Join(dir, "kubectl")
-	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { //nolint:gosec // an executable test fixture
+	if err := os.Symlink(sharedKubectl, bin); err != nil {
 		t.Fatal(err)
 	}
-	return bin, argsFile
+	return bin, filepath.Join(dir, "args.txt")
 }
 
 func TestDeploymentsParsesAndPassesFlags(t *testing.T) {
