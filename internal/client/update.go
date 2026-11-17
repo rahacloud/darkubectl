@@ -119,6 +119,24 @@ func normalizeForPut(app map[string]any) {
 	for _, k := range putDropFields {
 		delete(app, k)
 	}
+	dropEnvTimestamps(app)
+}
+
+// envStampField is the time the platform last saw a variable change. It began
+// arriving on every entry of envs in November 2026 and is the server's to set:
+// a write that sends the list without it is stored, and stamped afresh. Left in
+// place it broke every comparison of envs as written against envs as read, so
+// `set env` reported a stored change as ignored, and it put a timestamp in the
+// diff of a change that only touched a value.
+const envStampField = "last_updated_at"
+
+func dropEnvTimestamps(app map[string]any) {
+	envs, _ := app["envs"].([]any)
+	for _, item := range envs {
+		if entry, ok := item.(map[string]any); ok {
+			delete(entry, envStampField)
+		}
+	}
 }
 
 // appField reads a typed field out of a raw app object, tolerating absence.

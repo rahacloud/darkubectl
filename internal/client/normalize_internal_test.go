@@ -64,3 +64,32 @@ func TestNormalizeForPutToleratesNullRelations(t *testing.T) {
 		t.Errorf("null relations should pass through, got plan=%#v namespace=%#v", app["plan"], app["namespace"])
 	}
 }
+
+// The platform stamps each plain variable with the time it last changed. That
+// field is the server's: carried into a comparison it makes a stored write look
+// ignored, which is how `set env` came to fail on every run in November 2026.
+func TestNormalizeForPutDropsEnvTimestamps(t *testing.T) {
+	t.Parallel()
+
+	app := map[string]any{
+		"envs": []any{
+			map[string]any{"name": "A", "value": "1", "last_updated_at": "2026-11-17T16:36:19.880243Z"},
+			map[string]any{"name": "B", "value": "two"},
+			"not an object",
+		},
+	}
+	normalizeForPut(app)
+
+	envs, _ := app["envs"].([]any)
+	first, _ := envs[0].(map[string]any)
+	if len(first) != 2 || first["name"] != "A" || first["value"] != "1" {
+		t.Errorf("want only name and value left, got %#v", first)
+	}
+	if len(envs) != 3 {
+		t.Errorf("entries were dropped: %#v", envs)
+	}
+
+	// No envs at all, or a null, must not panic.
+	normalizeForPut(map[string]any{"envs": nil})
+	normalizeForPut(map[string]any{})
+}
