@@ -248,6 +248,16 @@ darkubectl registry delete my-api:old-tag        # or my-api@sha256:… for a ma
 darkubectl registry password | docker login registry.hamdocker.ir -u <user> --password-stdin
 darkubectl registry gc set --keep-count 20       # a retention rule the platform enforces itself
 
+# Object storage (S3). Key changes, bucket deletion and visibility ask for your two-factor code
+darkubectl storage list                                             # storages, S3 endpoint, buckets, keys
+darkubectl storage bucket create acme-media --storage "Tehran - Asiatech"
+darkubectl storage bucket public acme-media                         # or: private
+darkubectl storage key create media-rw --bucket acme-media --action Read,Write,List   # prints AWS_* once
+darkubectl storage key grant media-rw --bucket acme-backups         # grants only grow; to narrow, recreate
+darkubectl storage key rotate media-rw                              # a new pair under the same name
+darkubectl storage key delete media-rw
+darkubectl storage bucket delete acme-media                         # and every object in it
+
 # CI credentials — the pair `darkube deploy` needs in a pipeline
 darkubectl get deploy-token <name|id>          # app id + trigger deploy token
 darkubectl get deploy-token <name|id> -o name  # the bare token, for a CI variable
@@ -505,7 +515,7 @@ Two things the API will not let you do, whatever the CLI offers:
 
 Everything else — listing, describing, logs, exec, terminals, create, edit, deploy tokens, notifications, alerts — is confirmed working.
 
-`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks, `get disks`, `get databases`, `get services`, `get suggestions`, `get balance`, `get invoices`, `get members`, the API key commands and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
+`rollout history`, `top`, `registry`, `deploy`, `get manifests`, `get ci-config`, the permission commands, the domain checks, `get disks`, `get databases`, `get services`, `get suggestions`, `get balance`, `get invoices`, `get members`, the API key commands, the `storage` commands and the reads of `build` are confirmed working. `build start`, `retry` and `stop` are implemented from the console's own calls but not yet exercised.
 
 ## Development
 

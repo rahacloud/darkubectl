@@ -1,6 +1,14 @@
 package client
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+)
 
 // The object-storage API is its own tree under /storage/v2, not part of
 // /api/v1/darkube. Every collection returns the SAME list of storages and
@@ -103,4 +111,157 @@ func (c *Client) Storages(ctx context.Context) ([]Storage, error) {
 		base[i].Domains = domains[base[i].ID]
 	}
 	return base, nil
+}
+
+// The writes below were confirmed 2026-11-17 on a throwaway bucket and key in
+// `parham-alvani`, on the shared "Tehran - Asiatech" storage:
+//
+//	POST   /storage/v2/bucket/ {name,storage_id,is_public} → the new id, a bare JSON string;
+//	                                                409 when the name is taken, by any tenant
+//	DELETE /storage/v2/bucket/<id>                          (2FA)
+//	POST   /storage/v2/bucket/<id>/visibility {is_public}  (2FA; empty body back)
+//	POST   /storage/v2/key/ {name,actions,bucket_ids}      (2FA) → the key with access_key and secret_key
+//	PATCH  /storage/v2/key/ {name,actions,bucket_ids}      (2FA; answers null; can only ADD:
+//	                                                dropping an action or a bucket is a 400
+//	                                                "You cannot remove buckets or actions")
+//	POST   /storage/v2/key/<name>/rotate                   (2FA) → the key with a new pair
+//	DELETE /storage/v2/key/<name>                          (2FA)
+//
+// A route marked 2FA wants the account's TOTP code in an `x-otp` header and
+// answers 403 "2fa code is not correct." without it (a 500 "2-fa verification
+// error" until some time before November 2026). The same code is accepted
+// again within its 30-second window. The bucket and key lists name only the
+// storages that hold one, so an empty tenant reads back as [].
+//
+// GET /storage/v2/bucket/check-name?name= is what the console's form calls, and
+// it is not to be trusted: it answered true for a name this very tenant already
+// held, and the create then failed with the 409. So nothing here asks it.
+
+// otpHeader is spelled in lower case on purpose: the storage service compares
+// the name case-sensitively, and doWithHeaders sends it as written.
+const otpHeader = "x-otp"
+
+// Storage key actions, as the API spells them.
+const (
+	StorageRead  = "Read"
+	StorageWrite = "Write"
+	StorageList  = "List"
+)
+
+var (
+	// ErrOTPRequired means the platform refused a write for want of a valid
+	// two-factor code.
+	ErrOTPRequired = errors.New("this change needs a valid two-factor (TOTP) code")
+	// ErrBucketNameTaken means another bucket, in any tenant, has the name.
+	ErrBucketNameTaken = errors.New("bucket name is already taken")
+	// ErrNoStorageKeySecret means a key was made but its secret did not come back.
+	ErrNoStorageKeySecret = fmt.Errorf("%w: secret_key", ErrMissingField)
+)
+
+// StorageKeySecret is a key as returned by the two calls that mint a secret:
+// create and rotate. Neither value can be read again afterwards.
+type StorageKeySecret struct {
+	StorageKey `yaml:",inline"`
+
+	AccessKey string `json:"access_key" yaml:"accessKey"`
+	SecretKey string `json:"secret_key" yaml:"secretKey"`
+}
+
+func otpHeaders(otp string) http.Header {
+	if otp == "" {
+		return nil
+	}
+	return http.Header{otpHeader: []string{otp}}
+}
+
+// asOTPError turns the platform's refusal of a missing or wrong code into
+// ErrOTPRequired, so a caller can ask for one instead of printing a bare 403.
+func asOTPError(err error) error {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	if detail := strings.ToLower(apiErr.Detail); strings.Contains(detail, "2fa") || strings.Contains(detail, "2-fa") {
+		return fmt.Errorf("%w: %s", ErrOTPRequired, apiErr.Detail)
+	}
+	return err
+}
+
+// CreateBucket creates a private bucket on a storage and returns its id. The
+// API takes an is_public field and ignores it, so a bucket is made public
+// afterwards, with SetBucketPublic. Names are global to the storage service,
+// not to the tenant; a taken one is ErrBucketNameTaken.
+func (c *Client) CreateBucket(ctx context.Context, storageID, name string) (string, error) {
+	var id string
+	body := map[string]any{fieldName: name, "storage_id": storageID, "is_public": false}
+	if err := c.postJSON(ctx, bucketPathV2, body, &id); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			return "", fmt.Errorf("%w: %q", ErrBucketNameTaken, name)
+		}
+		return "", err
+	}
+	return id, nil
+}
+
+// DeleteBucket deletes a bucket and everything in it.
+func (c *Client) DeleteBucket(ctx context.Context, id, otp string) error {
+	_, err := c.doWithHeaders(ctx, http.MethodDelete, bucketPathV2+url.PathEscape(id), nil, nil, otpHeaders(otp))
+	return asOTPError(err)
+}
+
+// SetBucketPublic makes a bucket readable by anyone, or private again.
+func (c *Client) SetBucketPublic(ctx context.Context, id string, public bool, otp string) error {
+	path := bucketPathV2 + url.PathEscape(id) + "/visibility"
+	_, err := c.doWithHeaders(ctx, http.MethodPost, path, nil, map[string]any{"is_public": public}, otpHeaders(otp))
+	return asOTPError(err)
+}
+
+func storageKeyBody(name string, actions, bucketIDs []string) map[string]any {
+	return map[string]any{fieldName: name, "actions": actions, "bucket_ids": bucketIDs}
+}
+
+// CreateStorageKey creates an access key limited to actions on the given
+// buckets, and returns it with its secret.
+func (c *Client) CreateStorageKey(ctx context.Context, name string, actions, bucketIDs []string, otp string) (*StorageKeySecret, error) {
+	data, err := c.doWithHeaders(ctx, http.MethodPost, keyPathV2, nil, storageKeyBody(name, actions, bucketIDs), otpHeaders(otp))
+	if err != nil {
+		return nil, asOTPError(err)
+	}
+	return decodeStorageKeySecret(data)
+}
+
+// UpdateStorageKey sets a key's actions and buckets, which may only grow: the
+// platform refuses a list that drops something the key already has. The pair
+// itself does not change.
+func (c *Client) UpdateStorageKey(ctx context.Context, name string, actions, bucketIDs []string, otp string) error {
+	_, err := c.doWithHeaders(ctx, http.MethodPatch, keyPathV2, nil, storageKeyBody(name, actions, bucketIDs), otpHeaders(otp))
+	return asOTPError(err)
+}
+
+// RotateStorageKey issues a new access and secret key under the same name and
+// grants; the old pair stops working.
+func (c *Client) RotateStorageKey(ctx context.Context, name, otp string) (*StorageKeySecret, error) {
+	data, err := c.doWithHeaders(ctx, http.MethodPost, keyPathV2+url.PathEscape(name)+"/rotate", nil, nil, otpHeaders(otp))
+	if err != nil {
+		return nil, asOTPError(err)
+	}
+	return decodeStorageKeySecret(data)
+}
+
+// DeleteStorageKey revokes a key.
+func (c *Client) DeleteStorageKey(ctx context.Context, name, otp string) error {
+	_, err := c.doWithHeaders(ctx, http.MethodDelete, keyPathV2+url.PathEscape(name), nil, nil, otpHeaders(otp))
+	return asOTPError(err)
+}
+
+func decodeStorageKeySecret(data []byte) (*StorageKeySecret, error) {
+	var key StorageKeySecret
+	if err := json.Unmarshal(data, &key); err != nil {
+		return nil, fmt.Errorf("decode storage key: %w", err)
+	}
+	if key.SecretKey == "" {
+		return nil, ErrNoStorageKeySecret
+	}
+	return &key, nil
 }

@@ -50,6 +50,9 @@ func TestMCPClassify(t *testing.T) {
 		{"registry gc", accessRead},
 		{"registry gc set --keep-count 3", accessWrite},
 		{"mcp", accessBlocked},
+		{"storage list", accessRead},
+		{"storage key create k --bucket b --action Read", accessWrite},
+		{"storage bucket delete b", accessWrite},
 		{"agent setup --client claude --scope global --mcp --allow-writes --yes", accessBlocked},
 	}
 	root := NewApp()

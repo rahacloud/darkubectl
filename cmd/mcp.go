@@ -94,6 +94,7 @@ var mcpPolicy = map[string]mcpAccess{
 	"registry images":   accessRead,
 	"registry tags":     accessRead,
 	"registry gc":       accessRead,
+	"storage list":      accessRead,
 	"ticket list":       accessRead,
 	"ticket view":       accessRead,
 	"ticket types":      accessRead,
