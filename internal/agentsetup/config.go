@@ -30,17 +30,18 @@ type codexLocation struct {
 }
 
 // mergeCodexTOML puts the darkubectl server table into a Codex config.toml. An
-// existing table is replaced where it stands, so the rest of the file keeps its
+// existing table is edited where it stands, so the rest of the file keeps its
 // order and comments, and a second run changes nothing.
-func mergeCodexTOML(before string, args []string) (string, error) {
+func mergeCodexTOML(before, command string, args []string) (string, error) {
 	lines := strings.Split(before, "\n")
 	loc, err := locateCodexServer(lines)
 	if err != nil {
 		return "", err
 	}
-	block := codexTOML(args)
+	block := codexTOML(command, args)
 	if loc.start >= 0 {
-		out := strings.Join(slices.Concat(lines[:loc.start], block, lines[loc.end:]), "\n")
+		table := mergeCodexTable(lines[loc.start:loc.end], block)
+		out := strings.Join(slices.Concat(lines[:loc.start], table, lines[loc.end:]), "\n")
 		if !strings.HasSuffix(out, "\n") {
 			out += "\n"
 		}
@@ -54,6 +55,38 @@ func mergeCodexTOML(before string, args []string) (string, error) {
 		body += "\n\n"
 	}
 	return body + strings.Join(block, "\n") + "\n", nil
+}
+
+// mergeCodexTable sets command and args in an existing server table and keeps
+// every other line of it: an env table, a startup timeout or a comment the
+// user put there is theirs. A value written over several lines cannot be
+// replaced line by line, so such a table is rewritten whole instead, which
+// the review shows.
+func mergeCodexTable(table, block []string) []string {
+	want := map[string]string{keyCommand: block[1], keyArgs: block[2]}
+	out := []string{table[0]}
+	for _, line := range table[1:] {
+		key, value, isPair := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		replacement, managed := want[key]
+		if !isPair || !managed {
+			out = append(out, line)
+			continue
+		}
+		if key == keyArgs && !strings.Contains(value, "]") {
+			return block
+		}
+		out = append(out, replacement)
+		delete(want, key)
+	}
+	// What was missing goes in under the header: command first, args after it.
+	if _, missing := want[keyCommand]; missing {
+		out = slices.Insert(out, 1, block[1])
+	}
+	if _, missing := want[keyArgs]; missing {
+		out = slices.Insert(out, slices.Index(out, block[1])+1, block[2])
+	}
+	return out
 }
 
 func locateCodexServer(lines []string) (codexLocation, error) {
@@ -129,14 +162,15 @@ func tomlSection(line string) (string, bool) {
 	return strings.TrimSpace(trimmed[1 : len(trimmed)-1]), true
 }
 
-func codexTOML(args []string) []string {
+// codexTOML is the server table as three lines: header, command, args.
+func codexTOML(command string, args []string) []string {
 	quoted := make([]string, len(args))
 	for i, arg := range args {
 		quoted[i] = strconv.Quote(arg)
 	}
 	return []string{
 		"[" + codexServers + "." + serverName + "]",
-		keyCommand + ` = "` + serverName + `"`,
+		keyCommand + " = " + strconv.Quote(command),
 		keyArgs + " = [" + strings.Join(quoted, ", ") + "]",
 	}
 }
@@ -144,7 +178,7 @@ func codexTOML(args []string) []string {
 // mergeYAMLServer puts the darkubectl server into Hermes's config.yaml. It
 // edits the node tree rather than a decoded map so comments and key order
 // survive, and returns the input untouched when the entry is already right.
-func mergeYAMLServer(before string, args []string) (string, error) {
+func mergeYAMLServer(before, command string, args []string) (string, error) {
 	root := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: yamlMapTag}}}
 	if strings.TrimSpace(before) != "" {
 		if err := yaml.Unmarshal([]byte(before), root); err != nil {
@@ -162,10 +196,10 @@ func mergeYAMLServer(before string, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if yamlServerMatches(server, args) {
+	if yamlServerMatches(server, command, args) {
 		return before, nil
 	}
-	setMappingNode(server, keyCommand, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStrTag, Value: serverName})
+	setMappingNode(server, keyCommand, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStrTag, Value: command})
 	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: yamlSeqTag}
 	for _, arg := range args {
 		sequence.Content = append(sequence.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStrTag, Value: arg})
@@ -191,10 +225,10 @@ func childMapping(parent *yaml.Node, key string) (*yaml.Node, error) {
 	return child, nil
 }
 
-func yamlServerMatches(server *yaml.Node, args []string) bool {
-	command := mappingNodeValue(server, keyCommand)
+func yamlServerMatches(server *yaml.Node, command string, args []string) bool {
+	current := mappingNodeValue(server, keyCommand)
 	sequence := mappingNodeValue(server, keyArgs)
-	if command == nil || command.Value != serverName || sequence == nil || sequence.Kind != yaml.SequenceNode {
+	if current == nil || current.Value != command || sequence == nil || sequence.Kind != yaml.SequenceNode {
 		return false
 	}
 	return slices.EqualFunc(sequence.Content, args, func(node *yaml.Node, arg string) bool {

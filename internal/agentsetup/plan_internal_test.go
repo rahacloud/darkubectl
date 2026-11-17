@@ -324,6 +324,28 @@ func TestParseClient(t *testing.T) {
 	}
 }
 
+// A client launched from the Dock or a launcher does not inherit the shell's
+// PATH; Command lets the config name the binary by its full path instead.
+func TestCommandPathReachesEveryClient(t *testing.T) {
+	t.Parallel()
+
+	project, home := sandbox(t)
+	const binary = "/opt/tools/bin/darkubectl"
+	cfg := Config{
+		Clients: []Client{ClientCodex, ClientClaude, ClientOpenCode, ClientHermes},
+		Scope:   ScopeGlobal, MCP: true, Command: binary,
+	}
+	plan := mustBuild(t, cfg, project, home)
+	if len(plan.Changes) != len(cfg.Clients) {
+		t.Fatalf("want one config per client, got %s", planPaths(plan, home))
+	}
+	for _, change := range plan.Changes {
+		if !strings.Contains(change.After, binary) {
+			t.Errorf("%s does not start %s:\n%s", change.Path, binary, change.After)
+		}
+	}
+}
+
 func TestMCPArgs(t *testing.T) {
 	t.Parallel()
 

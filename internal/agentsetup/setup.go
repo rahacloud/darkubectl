@@ -41,6 +41,10 @@ type Config struct {
 	Instructions bool
 	AllowWrites  bool
 	AllowSecrets bool
+	// Command is the program a client starts as the MCP server. Empty means
+	// the bare name, found on PATH; a full path is for a client that is not
+	// started from the user's shell and so does not have their PATH.
+	Command string
 }
 
 // FileChange is one file the plan creates or rewrites. Mode is the mode the
@@ -195,7 +199,7 @@ func build(cfg Config, cwd, home string, env func(string) string) (*Plan, error)
 func (b *planBuilder) addMCP() error {
 	for _, client := range b.cfg.Clients {
 		path := b.mcpConfigPath(client)
-		if err := b.mutate(path, targetMode(b.cfg.Scope), mcpEditor(client, mcpArgs(b.cfg))); err != nil {
+		if err := b.mutate(path, targetMode(b.cfg.Scope), mcpEditor(client, b.cfg.command(), mcpArgs(b.cfg))); err != nil {
 			return err
 		}
 	}
@@ -204,25 +208,32 @@ func (b *planBuilder) addMCP() error {
 
 // mcpEditor returns the edit that registers the server in client's config
 // format.
-func mcpEditor(client Client, args []string) func(string) (string, error) {
+func mcpEditor(client Client, command string, args []string) func(string) (string, error) {
 	switch client {
 	case ClientCodex:
-		return func(before string) (string, error) { return mergeCodexTOML(before, args) }
+		return func(before string) (string, error) { return mergeCodexTOML(before, command, args) }
 	case ClientOpenCode:
-		entry := map[string]any{"type": "local", keyCommand: append([]string{serverName}, args...)}
+		entry := map[string]any{"type": "local", keyCommand: append([]string{command}, args...)}
 		return func(before string) (string, error) {
 			return mergeJSONServer(before, []string{"mcp", "servers"}, entry)
 		}
 	case ClientHermes:
-		return func(before string) (string, error) { return mergeYAMLServer(before, args) }
+		return func(before string) (string, error) { return mergeYAMLServer(before, command, args) }
 	case ClientClaude:
 		fallthrough
 	default:
-		entry := map[string]any{keyCommand: serverName, keyArgs: args}
+		entry := map[string]any{keyCommand: command, keyArgs: args}
 		return func(before string) (string, error) {
 			return mergeJSONServer(before, []string{"mcpServers"}, entry)
 		}
 	}
+}
+
+func (c Config) command() string {
+	if c.Command != "" {
+		return c.Command
+	}
+	return serverName
 }
 
 func (b *planBuilder) addSkill() error {

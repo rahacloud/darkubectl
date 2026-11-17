@@ -32,10 +32,26 @@ func TestMergeCodexTOML(t *testing.T) {
 			want:   "model = \"x\"\n" + table + "\n[other] # trailing comment\ny = 1\n",
 		},
 		{
+			// An env table inline, a timeout and a comment are the user's.
+			name: "other keys of the table are kept",
+			before: "[mcp_servers.darkubectl]\n# pinned to acme\nargs = [\"old\"]\nenv = { DARKUBE_ORG = \"acme\" }\n" +
+				"startup_timeout_sec = 20\n",
+			args: mcpOnly,
+			want: "[mcp_servers.darkubectl]\ncommand = \"darkubectl\"\n# pinned to acme\nargs = [\"mcp\"]\n" +
+				"env = { DARKUBE_ORG = \"acme\" }\nstartup_timeout_sec = 20\n",
+		},
+		{
+			name:   "a multi-line value forces a whole rewrite",
+			before: "[mcp_servers.darkubectl]\ncommand = \"old\"\nargs = [\n  \"mcp\",\n]\n",
+			args:   mcpOnly,
+			want:   table,
+		},
+		{
+			// The header is the user's line too, and stays as they wrote it.
 			name:   "quoted table name",
 			before: "[mcp_servers.\"darkubectl\"]\ncommand = \"old\"\n",
 			args:   mcpOnly,
-			want:   table,
+			want:   "[mcp_servers.\"darkubectl\"]\ncommand = \"darkubectl\"\nargs = [\"mcp\"]\n",
 		},
 		{
 			name:   "inline entry becomes a table",
@@ -54,7 +70,7 @@ func TestMergeCodexTOML(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := mergeCodexTOML(tt.before, tt.args)
+			got, err := mergeCodexTOML(tt.before, serverName, tt.args)
 			if err != nil {
 				t.Fatalf("mergeCodexTOML: %v", err)
 			}
@@ -63,7 +79,7 @@ func TestMergeCodexTOML(t *testing.T) {
 			}
 			// A second run must find nothing to do, or `agent setup` reports a
 			// change for ever and the file grows on each run.
-			again, err := mergeCodexTOML(got, tt.args)
+			again, err := mergeCodexTOML(got, serverName, tt.args)
 			if err != nil {
 				t.Fatalf("second mergeCodexTOML: %v", err)
 			}
@@ -85,7 +101,7 @@ func TestMergeCodexTOMLRejectsDuplicates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if got, err := mergeCodexTOML(before, mcpOnly); err == nil {
+			if got, err := mergeCodexTOML(before, serverName, mcpOnly); err == nil {
 				t.Fatalf("want an error, got:\n%s", got)
 			}
 		})
@@ -291,7 +307,7 @@ func TestMergeJSONServerRejects(t *testing.T) {
 func TestMergeYAMLServer(t *testing.T) {
 	t.Parallel()
 
-	got, err := mergeYAMLServer("# my hermes config\nmodel: x\n", mcpOnly)
+	got, err := mergeYAMLServer("# my hermes config\nmodel: x\n", serverName, mcpOnly)
 	if err != nil {
 		t.Fatalf("mergeYAMLServer: %v", err)
 	}
@@ -304,7 +320,7 @@ func TestMergeYAMLServer(t *testing.T) {
 	// An entry that is already right is returned byte for byte, whatever its
 	// formatting, rather than re-encoded.
 	const own = "mcp_servers:\n  darkubectl: {command: darkubectl, args: [mcp]}\n"
-	same, err := mergeYAMLServer(own, mcpOnly)
+	same, err := mergeYAMLServer(own, serverName, mcpOnly)
 	if err != nil {
 		t.Fatalf("mergeYAMLServer: %v", err)
 	}
@@ -312,7 +328,7 @@ func TestMergeYAMLServer(t *testing.T) {
 		t.Errorf("an up-to-date config was rewritten:\n%s", same)
 	}
 
-	changed, err := mergeYAMLServer(own, []string{"mcp", "--allow-writes"})
+	changed, err := mergeYAMLServer(own, serverName, []string{"mcp", "--allow-writes"})
 	if err != nil {
 		t.Fatalf("mergeYAMLServer: %v", err)
 	}
@@ -320,7 +336,7 @@ func TestMergeYAMLServer(t *testing.T) {
 		t.Errorf("new arguments were not written:\n%s", changed)
 	}
 
-	if out, err := mergeYAMLServer("mcp_servers: 3\n", mcpOnly); err == nil {
+	if out, err := mergeYAMLServer("mcp_servers: 3\n", serverName, mcpOnly); err == nil {
 		t.Errorf("want an error for a scalar mcp_servers, got:\n%s", out)
 	}
 }

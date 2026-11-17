@@ -19,6 +19,7 @@ const (
 	flagAgentMCP          = "mcp"
 	flagAgentSkill        = "skill"
 	flagAgentInstructions = "instructions"
+	flagAgentAbsolutePath = "absolute-path"
 )
 
 func newAgentCommand() *cli.Command {
@@ -39,6 +40,10 @@ func newAgentCommand() *cli.Command {
 					&cli.BoolFlag{Name: flagAgentInstructions, Usage: "add or update managed agent instructions"},
 					&cli.BoolFlag{Name: flagAllowWrites, Usage: "allow MCP write commands (also enables secret access)"},
 					&cli.BoolFlag{Name: flagAllowSecrets, Usage: "allow MCP commands that print secrets"},
+					&cli.BoolFlag{
+						Name:  flagAgentAbsolutePath,
+						Usage: "start the MCP server by this binary's full path, for clients that do not inherit your shell's PATH",
+					},
 					&cli.BoolFlag{Name: flagYes, Aliases: []string{aliasYes}, Usage: "apply changes without the confirmation prompt"},
 				},
 				Action: agentSetupAction,
@@ -79,6 +84,13 @@ func agentSetupAction(_ context.Context, cmd *cli.Command) error {
 		Instructions: cmd.Bool(flagAgentInstructions),
 		AllowWrites:  cmd.Bool(flagAllowWrites),
 		AllowSecrets: cmd.Bool(flagAllowSecrets),
+	}
+	if cmd.Bool(flagAgentAbsolutePath) {
+		binary, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("find this binary's path: %w", err)
+		}
+		cfg.Command = binary
 	}
 	plan, err := buildAgentSetupPlan(cfg)
 	if err != nil {

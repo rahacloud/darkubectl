@@ -127,6 +127,8 @@ darkubectl agent setup
 darkubectl agent setup --client codex --client claude --scope project --mcp --skill --instructions --yes
 ```
 
+A client started from a launcher rather than your shell may not have `darkubectl` on its `PATH`; add `--absolute-path` to write this binary's full path into the MCP entry instead of the bare name. `agent setup` itself cannot be run through the MCP server: it edits the access the server was started with.
+
 **Give the agent an API key rather than a Console login.** The Api-key cannot open pod terminals or create apps, which bounds an agent's blast radius to reads. Keep `delete` out of its reach: the deletion is asynchronous and routinely orphans the Helm release, and no flag in the API can undo that — see [Orphaned releases](#orphaned-releases).
 
 ### Over MCP

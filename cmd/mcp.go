@@ -106,6 +106,11 @@ var mcpPolicy = map[string]mcpAccess{
 	"login":             accessBlocked,
 	"completion":        accessBlocked,
 	"mcp":               accessBlocked,
+	// agent setup rewrites the MCP configuration of the clients on this
+	// machine, this server's own entry included. As a plain write, an agent
+	// holding --allow-writes for one project could grant the same to every
+	// client and project by running it at global scope.
+	"agent setup":       accessBlocked,
 	"tunnel connect":    accessBlocked,
 	"config set-token":  accessBlocked,
 	"config use-tenant": accessBlocked,

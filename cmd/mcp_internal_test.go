@@ -50,6 +50,7 @@ func TestMCPClassify(t *testing.T) {
 		{"registry gc", accessRead},
 		{"registry gc set --keep-count 3", accessWrite},
 		{"mcp", accessBlocked},
+		{"agent setup --client claude --scope global --mcp --allow-writes --yes", accessBlocked},
 	}
 	root := NewApp()
 	for _, tc := range cases {
