@@ -120,6 +120,13 @@ A few lines in your `CLAUDE.md` or `AGENTS.md` are usually enough to teach an ag
 
 > Our apps run on Darkube. Use `darkubectl get apps -o json` to inspect state, `darkubectl describe app <name> -o yaml` for configuration, and `darkubectl logs app <name> --tail 200` to read logs. Run `darkubectl get orphans` before recreating an app whose name is taken. Never run `delete` and never pass `-y`.
 
+Set up supported agent clients with the interactive wizard, or pass options for automation. The command can configure MCP, install the `darkubectl` skill, and add managed instructions at project or global scope; MCP access is read-only unless write access is explicitly enabled.
+
+```sh
+darkubectl agent setup
+darkubectl agent setup --client codex --client claude --scope project --mcp --skill --instructions --yes
+```
+
 **Give the agent an API key rather than a Console login.** The Api-key cannot open pod terminals or create apps, which bounds an agent's blast radius to reads. Keep `delete` out of its reach: the deletion is asynchronous and routinely orphans the Helm release, and no flag in the API can undo that — see [Orphaned releases](#orphaned-releases).
 
 ### Over MCP
