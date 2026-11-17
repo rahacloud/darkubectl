@@ -60,29 +60,7 @@ func agentSetupAction(_ context.Context, cmd *cli.Command) error {
 		direct = direct || cmd.IsSet(flag)
 	}
 	if !direct {
-		if cmd.Bool(flagYes) {
-			return errors.New("--yes requires explicit setup flags; use agent setup interactively or provide --client, --scope, and a setup item")
-		}
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return errors.New("agent setup needs a terminal; use --client, --scope, and a setup item for non-interactive use")
-		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get working directory: %w", err)
-		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("find home directory: %w", err)
-		}
-		plan, approved, err := tui.RunAgentSetup(cwd, home)
-		if err != nil {
-			return fmt.Errorf("agent setup wizard: %w", err)
-		}
-		if !approved {
-			fmt.Fprintln(os.Stdout, "Agent setup cancelled.")
-			return nil
-		}
-		return applyAgentSetup(plan)
+		return runAgentSetupWizard(cmd)
 	}
 
 	var clients []agentsetup.Client
@@ -119,6 +97,34 @@ func agentSetupAction(_ context.Context, cmd *cli.Command) error {
 			fmt.Fprintln(os.Stdout, "Agent setup cancelled.")
 			return nil
 		}
+	}
+	return applyAgentSetup(plan)
+}
+
+// runAgentSetupWizard is agent setup with no flags: every choice is made in the
+// interactive wizard, which also shows the plan before anything is written.
+func runAgentSetupWizard(cmd *cli.Command) error {
+	if cmd.Bool(flagYes) {
+		return errors.New("--yes requires explicit setup flags; use agent setup interactively or provide --client, --scope, and a setup item")
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return errors.New("agent setup needs a terminal; use --client, --scope, and a setup item for non-interactive use")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("find home directory: %w", err)
+	}
+	plan, approved, err := tui.RunAgentSetup(cwd, home)
+	if err != nil {
+		return fmt.Errorf("agent setup wizard: %w", err)
+	}
+	if !approved {
+		fmt.Fprintln(os.Stdout, "Agent setup cancelled.")
+		return nil
 	}
 	return applyAgentSetup(plan)
 }

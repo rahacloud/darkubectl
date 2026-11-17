@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -24,6 +25,32 @@ const (
 	setupPermissionsStage
 	setupReviewStage
 )
+
+// The rows of the setup-items stage, in display order.
+const (
+	setupItemMCP = iota
+	setupItemSkill
+	setupItemInstructions
+	setupItemCount
+)
+
+const (
+	setupPermissionCount = 2
+	// setupReviewChrome is the number of lines the review stage draws around
+	// its scrolling diff.
+	setupReviewChrome = 10
+	// setupAccessStep is the index of the MCP access step in the progress bar.
+	setupAccessStep = 3
+
+	keyEsc   = "esc"
+	keyEnter = "enter"
+	keySpace = "space"
+	keyUp    = "up"
+	keyDown  = "down"
+	keyRight = "right"
+)
+
+var errWizardEnded = errors.New("agent setup wizard ended unexpectedly")
 
 type agentSetupModel struct {
 	config   agentsetup.Config
@@ -48,6 +75,8 @@ var setupClients = []agentsetup.Client{
 	agentsetup.ClientHermes,
 }
 
+var setupScopes = []agentsetup.Scope{agentsetup.ScopeProject, agentsetup.ScopeGlobal}
+
 var (
 	setupTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(output.ColorAccent)
 	setupCurrentStyle  = lipgloss.NewStyle().Bold(true).Foreground(output.ColorBranch)
@@ -60,8 +89,12 @@ var (
 	setupWarningStyle  = lipgloss.NewStyle().Bold(true).Foreground(output.ColorDanger)
 	setupKeyStyle      = lipgloss.NewStyle().Bold(true).Foreground(output.ColorBranch)
 	setupFileStyle     = lipgloss.NewStyle().Bold(true)
+	setupBoldStyle     = lipgloss.NewStyle().Bold(true)
 )
 
+// RunAgentSetup runs the interactive wizard and returns the plan the user built
+// and whether they approved it. Nothing is written here; the caller applies
+// the plan.
 func RunAgentSetup(cwd, home string) (*agentsetup.Plan, bool, error) {
 	m := &agentSetupModel{
 		config: agentsetup.Config{
@@ -78,7 +111,7 @@ func RunAgentSetup(cwd, home string) (*agentsetup.Plan, bool, error) {
 	}
 	result, ok := final.(*agentSetupModel)
 	if !ok {
-		return nil, false, errors.New("agent setup wizard ended unexpectedly")
+		return nil, false, errWizardEnded
 	}
 	return result.plan, result.approved, nil
 }
@@ -121,128 +154,155 @@ func (m *agentSetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *agentSetupModel) handleKey(msg tea.KeyPressMsg) bool {
 	key := msg.String()
-	if key == "ctrl+c" || key == "q" {
+	switch key {
+	case "ctrl+c", "q":
 		m.done = true
 		return true
+	case keyEsc, "left", "backspace":
+		return m.back()
 	}
-	if key == "esc" || key == "left" || key == "backspace" {
-		if m.stage == setupClientStage {
-			m.done = true
-			return true
-		}
-		if m.stage == setupReviewStage {
-			m.plan = nil
-			m.warning = ""
-			m.stage = setupItemsStage
-			m.cursor = 0
-			return false
-		}
-		m.stage--
-		m.cursor = 0
-		if m.stage == setupScopeStage {
-			m.cursor = scopeCursor(m.config.Scope)
-		}
-		return false
-	}
-
 	switch m.stage {
 	case setupClientStage:
-		switch key {
-		case "up", "k":
-			m.cursor = max(0, m.cursor-1)
-		case "down", "j":
-			m.cursor = min(len(setupClients)-1, m.cursor+1)
-		case "space":
-			client := setupClients[m.cursor]
-			m.selected[client] = !m.selected[client]
-		case "enter", "right":
-			if len(m.selectedClients()) == 0 {
-				m.warning = "Select at least one client."
-				return false
-			}
-			m.config.Clients = m.selectedClients()
-			m.stage = setupScopeStage
-			m.cursor = scopeCursor(m.config.Scope)
-			m.warning = ""
-		}
+		m.clientKey(key)
 	case setupScopeStage:
-		switch key {
-		case "up", "k":
-			m.cursor = max(0, m.cursor-1)
-			m.config.Scope = scopeAt(m.cursor)
-		case "down", "j":
-			m.cursor = min(1, m.cursor+1)
-			m.config.Scope = scopeAt(m.cursor)
-		case "space":
-			m.config.Scope = scopeAt(m.cursor)
-		case "enter", "right":
-			m.config.Scope = scopeAt(m.cursor)
-			m.stage = setupItemsStage
-			m.cursor = 0
-		}
+		m.scopeKey(key)
 	case setupItemsStage:
-		items := []bool{m.config.MCP, m.config.Skill, m.config.Instructions}
-		switch key {
-		case "up", "k":
-			m.cursor = max(0, m.cursor-1)
-		case "down", "j":
-			m.cursor = min(len(items)-1, m.cursor+1)
-		case "space":
-			switch m.cursor {
-			case 0:
-				m.config.MCP = !m.config.MCP
-				if !m.config.MCP {
-					m.config.AllowWrites = false
-					m.config.AllowSecrets = false
-				}
-			case 1:
-				m.config.Skill = !m.config.Skill
-			case 2:
-				m.config.Instructions = !m.config.Instructions
-			}
-		case "enter", "right":
-			if !m.config.MCP && !m.config.Skill && !m.config.Instructions {
-				m.warning = "Select at least one setup item."
-				return false
-			}
-			m.warning = ""
-			if m.config.MCP {
-				m.stage = setupPermissionsStage
-				m.cursor = 0
-			} else {
-				m.prepareReview()
-			}
-		}
+		m.itemsKey(key)
 	case setupPermissionsStage:
-		switch key {
-		case "up", "k":
-			m.cursor = max(0, m.cursor-1)
-		case "down", "j":
-			m.cursor = min(1, m.cursor+1)
-		case "space":
-			if m.cursor == 0 {
-				m.config.AllowWrites = !m.config.AllowWrites
-				m.warning = ""
-			} else if m.config.AllowWrites {
-				m.warning = "Secret reads are required while write access is enabled. Turn off writes to change this option."
-			} else {
-				m.config.AllowSecrets = !m.config.AllowSecrets
-				m.warning = ""
+		m.permissionsKey(key)
+	case setupReviewStage:
+		return m.reviewKey(msg)
+	}
+	return false
+}
+
+// back steps to the previous stage; on the first one it leaves the wizard.
+func (m *agentSetupModel) back() bool {
+	switch m.stage {
+	case setupClientStage:
+		m.done = true
+		return true
+	case setupReviewStage:
+		m.plan = nil
+		m.warning = ""
+		m.stage = setupItemsStage
+	default:
+		m.stage--
+	}
+	m.cursor = 0
+	if m.stage == setupScopeStage {
+		m.cursor = scopeCursor(m.config.Scope)
+	}
+	return false
+}
+
+// move shifts the cursor by one within a list of count entries.
+func (m *agentSetupModel) move(key string, count int) bool {
+	switch key {
+	case keyUp, "k":
+		m.cursor = max(0, m.cursor-1)
+	case keyDown, "j":
+		m.cursor = min(count-1, m.cursor+1)
+	default:
+		return false
+	}
+	return true
+}
+
+func (m *agentSetupModel) clientKey(key string) {
+	if m.move(key, len(setupClients)) {
+		return
+	}
+	switch key {
+	case keySpace:
+		client := setupClients[m.cursor]
+		m.selected[client] = !m.selected[client]
+	case keyEnter, keyRight:
+		if len(m.selectedClients()) == 0 {
+			m.warning = "Select at least one client."
+			return
+		}
+		m.config.Clients = m.selectedClients()
+		m.stage = setupScopeStage
+		m.cursor = scopeCursor(m.config.Scope)
+		m.warning = ""
+	}
+}
+
+func (m *agentSetupModel) scopeKey(key string) {
+	if m.move(key, len(setupScopes)) || key == keySpace {
+		m.config.Scope = setupScopes[m.cursor]
+		return
+	}
+	if key == keyEnter || key == keyRight {
+		m.config.Scope = setupScopes[m.cursor]
+		m.stage = setupItemsStage
+		m.cursor = 0
+	}
+}
+
+func (m *agentSetupModel) itemsKey(key string) {
+	if m.move(key, setupItemCount) {
+		return
+	}
+	switch key {
+	case keySpace:
+		switch m.cursor {
+		case setupItemMCP:
+			m.config.MCP = !m.config.MCP
+			if !m.config.MCP {
+				m.config.AllowWrites = false
+				m.config.AllowSecrets = false
 			}
-		case "enter", "right":
+		case setupItemSkill:
+			m.config.Skill = !m.config.Skill
+		case setupItemInstructions:
+			m.config.Instructions = !m.config.Instructions
+		}
+	case keyEnter, keyRight:
+		if !m.config.MCP && !m.config.Skill && !m.config.Instructions {
+			m.warning = "Select at least one setup item."
+			return
+		}
+		m.warning = ""
+		if m.config.MCP {
+			m.stage = setupPermissionsStage
+			m.cursor = 0
+		} else {
 			m.prepareReview()
 		}
-	case setupReviewStage:
-		switch key {
-		case "up", "k", "down", "j", "pgup", "pgdown":
-			var vpCmd tea.Cmd
-			m.review, vpCmd = m.review.Update(msg)
-			_ = vpCmd
-		case "enter":
-			m.approved = true
-			m.done = true
-			return true
+	}
+}
+
+func (m *agentSetupModel) permissionsKey(key string) {
+	if m.move(key, setupPermissionCount) {
+		return
+	}
+	switch key {
+	case keySpace:
+		switch {
+		case m.cursor == 0:
+			m.config.AllowWrites = !m.config.AllowWrites
+			m.warning = ""
+		case m.config.AllowWrites:
+			m.warning = "Secret reads are required while write access is enabled. Turn off writes to change this option."
+		default:
+			m.config.AllowSecrets = !m.config.AllowSecrets
+			m.warning = ""
 		}
+	case keyEnter, keyRight:
+		m.prepareReview()
+	}
+}
+
+func (m *agentSetupModel) reviewKey(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case keyUp, "k", keyDown, "j", "pgup", "pgdown":
+		m.review, _ = m.review.Update(msg)
+	case keyEnter:
+		m.approved = true
+		m.done = true
+		return true
 	}
 	return false
 }
@@ -260,7 +320,7 @@ func (m *agentSetupModel) prepareReview() {
 	m.plan = plan
 	m.stage = setupReviewStage
 	m.warning = ""
-	m.review = viewport.New(viewport.WithWidth(max(1, m.width)), viewport.WithHeight(max(1, m.height-10)))
+	m.review = viewport.New(viewport.WithWidth(max(1, m.width)), viewport.WithHeight(max(1, m.height-setupReviewChrome)))
 	m.review.SetContent(m.reviewContent())
 }
 
@@ -269,7 +329,7 @@ func (m *agentSetupModel) resizeReview() {
 		return
 	}
 	m.review.SetWidth(max(1, m.width))
-	m.review.SetHeight(max(1, m.height-10))
+	m.review.SetHeight(max(1, m.height-setupReviewChrome))
 	m.review.SetContent(m.reviewContent())
 }
 
@@ -283,18 +343,8 @@ func (m *agentSetupModel) selectedClients() []agentsetup.Client {
 	return clients
 }
 
-func scopeAt(cursor int) agentsetup.Scope {
-	if cursor == 1 {
-		return agentsetup.ScopeGlobal
-	}
-	return agentsetup.ScopeProject
-}
-
 func scopeCursor(scope agentsetup.Scope) int {
-	if scope == agentsetup.ScopeGlobal {
-		return 1
-	}
-	return 0
+	return max(0, slices.Index(setupScopes, scope))
 }
 
 func (m *agentSetupModel) View() tea.View {
@@ -305,117 +355,15 @@ func (m *agentSetupModel) View() tea.View {
 	b.WriteString(m.progress() + "\n\n")
 	switch m.stage {
 	case setupClientStage:
-		b.WriteString(setupTitleStyle.Render("Choose clients") + "\n")
-		b.WriteString(setupMutedStyle.Render("Select every client you want to configure.") + "\n\n")
-		for i, client := range setupClients {
-			cursor := " "
-			if i == m.cursor {
-				cursor = setupCurrentStyle.Render("›")
-			}
-			mark := setupMutedStyle.Render("○")
-			label := clientLabel(client)
-			if m.selected[client] {
-				mark = setupSelectedStyle.Render("✓")
-				if i == m.cursor {
-					label = setupCurrentStyle.Render(label)
-				} else {
-					label = setupSelectedStyle.Render(label)
-				}
-			} else if i == m.cursor {
-				label = lipgloss.NewStyle().Bold(true).Render(label)
-			}
-			b.WriteString(fmt.Sprintf("%s %s  %s\n", cursor, mark, label))
-		}
+		b.WriteString(m.clientView())
 	case setupScopeStage:
-		b.WriteString(setupTitleStyle.Render("Choose a scope") + "\n")
-		b.WriteString(setupMutedStyle.Render("The same scope applies to every selected client.") + "\n\n")
-		for i, scope := range []agentsetup.Scope{agentsetup.ScopeProject, agentsetup.ScopeGlobal} {
-			cursor := " "
-			if i == m.cursor {
-				cursor = setupCurrentStyle.Render("›")
-			}
-			mark := setupMutedStyle.Render("○")
-			label := string(scope)
-			if m.config.Scope == scope {
-				mark = setupSelectedStyle.Render("●")
-				if i == m.cursor {
-					label = setupCurrentStyle.Render(label)
-				} else {
-					label = setupSelectedStyle.Render(label)
-				}
-			} else if i == m.cursor {
-				label = lipgloss.NewStyle().Bold(true).Render(label)
-			}
-			b.WriteString(fmt.Sprintf("%s %s  %s\n", cursor, mark, label))
-		}
+		b.WriteString(m.scopeView())
 	case setupItemsStage:
-		b.WriteString(setupTitleStyle.Render("Choose setup items") + "\n")
-		b.WriteString(setupMutedStyle.Render("MCP is read-only by default; you can add a skill or instructions too.") + "\n\n")
-		items := []struct {
-			label string
-			on    bool
-		}{
-			{label: "Connect the darkubectl MCP server", on: m.config.MCP},
-			{label: "Install or update the darkubectl skill", on: m.config.Skill},
-			{label: "Add or update agent instructions", on: m.config.Instructions},
-		}
-		for i, item := range items {
-			cursor := " "
-			if i == m.cursor {
-				cursor = setupCurrentStyle.Render("›")
-			}
-			mark := setupMutedStyle.Render("○")
-			label := item.label
-			if item.on {
-				mark = setupSelectedStyle.Render("✓")
-				if i == m.cursor {
-					label = setupCurrentStyle.Render(label)
-				} else {
-					label = setupSelectedStyle.Render(label)
-				}
-			} else if i == m.cursor {
-				label = lipgloss.NewStyle().Bold(true).Render(label)
-			}
-			b.WriteString(fmt.Sprintf("%s %s  %s\n", cursor, mark, label))
-		}
+		b.WriteString(m.itemsView())
 	case setupPermissionsStage:
-		b.WriteString(setupTitleStyle.Render("MCP access") + "\n")
-		b.WriteString(setupMutedStyle.Render("Secret reads and writes are separate opt-ins.") + "\n\n")
-		writeMark := setupMutedStyle.Render("○")
-		writeLabel := "Allow write commands"
-		if m.config.AllowWrites {
-			writeMark = setupWarningStyle.Render("✓")
-			writeLabel = setupWarningStyle.Render(writeLabel)
-		}
-		secretMark := setupMutedStyle.Render("○")
-		secretLabel := "Allow reading secrets"
-		if m.config.AllowSecrets || m.config.AllowWrites {
-			secretMark = setupCautionStyle.Render("✓")
-		}
-		if m.config.AllowWrites {
-			secretLabel += setupDisabledStyle.Render("  (included with writes)")
-		} else if m.config.AllowSecrets {
-			secretLabel = setupCautionStyle.Render(secretLabel)
-		}
-		cursor := []string{" ", " "}
-		cursor[m.cursor] = setupCurrentStyle.Render("›")
-		if m.cursor == 0 && !m.config.AllowWrites {
-			writeLabel = lipgloss.NewStyle().Bold(true).Render(writeLabel)
-		}
-		if m.cursor == 1 && !m.config.AllowWrites && !m.config.AllowSecrets {
-			secretLabel = lipgloss.NewStyle().Bold(true).Render(secretLabel)
-		}
-		b.WriteString(fmt.Sprintf("%s %s  %s\n", cursor[0], writeMark, writeLabel))
-		b.WriteString(fmt.Sprintf("%s %s  %s\n", cursor[1], secretMark, secretLabel))
-		if m.config.AllowWrites {
-			b.WriteString("\n" + setupCautionStyle.Render("!"))
-			b.WriteString(" " + setupMutedStyle.Render("Write access includes secret reads."))
-		} else {
-			b.WriteString("\n" + setupMutedStyle.Render("Read-only is the default."))
-		}
+		b.WriteString(m.permissionsView())
 	case setupReviewStage:
-		b.WriteString(setupTitleStyle.Render("Review changes") + "\n")
-		b.WriteString(setupMutedStyle.Render("Nothing is written until you press Enter.") + "\n\n")
+		b.WriteString(setupHeading("Review changes", "Nothing is written until you press Enter."))
 		b.WriteString(m.footer() + "\n\n")
 		b.WriteString(m.review.View())
 	}
@@ -426,6 +374,104 @@ func (m *agentSetupModel) View() tea.View {
 		b.WriteString("\n\n" + m.footer())
 	}
 	return tea.NewView(b.String())
+}
+
+func setupHeading(title, hint string) string {
+	return setupTitleStyle.Render(title) + "\n" + setupMutedStyle.Render(hint) + "\n\n"
+}
+
+// setupOption renders one line of a list: a cursor when it is the current
+// line, then glyph when the option is on or an empty circle when it is off.
+func setupOption(current, on bool, glyph, label string) string {
+	cursor := " "
+	if current {
+		cursor = setupCurrentStyle.Render("›")
+	}
+	mark := setupMutedStyle.Render("○")
+	switch {
+	case on && current:
+		mark = setupSelectedStyle.Render(glyph)
+		label = setupCurrentStyle.Render(label)
+	case on:
+		mark = setupSelectedStyle.Render(glyph)
+		label = setupSelectedStyle.Render(label)
+	case current:
+		label = setupBoldStyle.Render(label)
+	}
+	return cursor + " " + mark + "  " + label + "\n"
+}
+
+func (m *agentSetupModel) clientView() string {
+	var b strings.Builder
+	b.WriteString(setupHeading("Choose clients", "Select every client you want to configure."))
+	for i, client := range setupClients {
+		b.WriteString(setupOption(i == m.cursor, m.selected[client], "✓", clientLabel(client)))
+	}
+	return b.String()
+}
+
+func (m *agentSetupModel) scopeView() string {
+	var b strings.Builder
+	b.WriteString(setupHeading("Choose a scope", "The same scope applies to every selected client."))
+	for i, scope := range setupScopes {
+		b.WriteString(setupOption(i == m.cursor, m.config.Scope == scope, "●", string(scope)))
+	}
+	return b.String()
+}
+
+func (m *agentSetupModel) itemsView() string {
+	var b strings.Builder
+	b.WriteString(setupHeading("Choose setup items", "MCP is read-only by default; you can add a skill or instructions too."))
+	items := [setupItemCount]struct {
+		label string
+		on    bool
+	}{
+		setupItemMCP:          {label: "Connect the darkubectl MCP server", on: m.config.MCP},
+		setupItemSkill:        {label: "Install or update the darkubectl skill", on: m.config.Skill},
+		setupItemInstructions: {label: "Add or update agent instructions", on: m.config.Instructions},
+	}
+	for i, item := range items {
+		b.WriteString(setupOption(i == m.cursor, item.on, "✓", item.label))
+	}
+	return b.String()
+}
+
+func (m *agentSetupModel) permissionsView() string {
+	var b strings.Builder
+	b.WriteString(setupHeading("MCP access", "Secret reads and writes are separate opt-ins."))
+	writeMark := setupMutedStyle.Render("○")
+	writeLabel := "Allow write commands"
+	if m.config.AllowWrites {
+		writeMark = setupWarningStyle.Render("✓")
+		writeLabel = setupWarningStyle.Render(writeLabel)
+	}
+	secretMark := setupMutedStyle.Render("○")
+	secretLabel := "Allow reading secrets"
+	if m.config.AllowSecrets || m.config.AllowWrites {
+		secretMark = setupCautionStyle.Render("✓")
+	}
+	if m.config.AllowWrites {
+		secretLabel += setupDisabledStyle.Render("  (included with writes)")
+	} else if m.config.AllowSecrets {
+		secretLabel = setupCautionStyle.Render(secretLabel)
+	}
+	cursor := [setupPermissionCount]string{" ", " "}
+	cursor[m.cursor] = setupCurrentStyle.Render("›")
+	if m.cursor == 0 && !m.config.AllowWrites {
+		writeLabel = setupBoldStyle.Render(writeLabel)
+	}
+	if m.cursor == 1 && !m.config.AllowWrites && !m.config.AllowSecrets {
+		secretLabel = setupBoldStyle.Render(secretLabel)
+	}
+	fmt.Fprintf(&b, "%s %s  %s\n", cursor[0], writeMark, writeLabel)
+	fmt.Fprintf(&b, "%s %s  %s\n", cursor[1], secretMark, secretLabel)
+	if m.config.AllowWrites {
+		b.WriteString("\n" + setupCautionStyle.Render("!"))
+		b.WriteString(" " + setupMutedStyle.Render("Write access includes secret reads."))
+	} else {
+		b.WriteString("\n" + setupMutedStyle.Render("Read-only is the default."))
+	}
+	return b.String()
 }
 
 func (m *agentSetupModel) progress() string {
@@ -443,7 +489,7 @@ func (m *agentSetupModel) progress() string {
 			marker = "●"
 			style = setupTitleStyle
 		}
-		if i == 3 && !m.config.MCP {
+		if i == setupAccessStep && !m.config.MCP {
 			marker = "–"
 			style = setupDisabledStyle
 			label = "MCP off"
@@ -491,7 +537,6 @@ func (m *agentSetupModel) reviewContent() string {
 	if m.plan == nil || len(m.plan.Changes) == 0 {
 		return setupSelectedStyle.Render("✓ No changes are needed.")
 	}
-	review := m.plan.ReviewLines()
 	fileLabel := "files"
 	if len(m.plan.Changes) == 1 {
 		fileLabel = "file"
@@ -500,9 +545,7 @@ func (m *agentSetupModel) reviewContent() string {
 		setupMutedStyle.Render(fmt.Sprintf("%d %s will be created or updated", len(m.plan.Changes), fileLabel)),
 		"",
 	}
-	index := 0
 	for _, change := range m.plan.Changes {
-		index++
 		action := "UPDATE"
 		actionStyle := setupCurrentStyle
 		icon := "✎"
@@ -512,11 +555,7 @@ func (m *agentSetupModel) reviewContent() string {
 			icon = "✚"
 		}
 		lines = append(lines, actionStyle.Render(icon+" "+action)+" "+setupFileStyle.Render(m.displayPath(change.Path)))
-		for index < len(review) &&
-			!strings.HasPrefix(review[index], "create ") &&
-			!strings.HasPrefix(review[index], "update ") {
-			line := review[index]
-			index++
+		for _, line := range change.DiffLines() {
 			switch {
 			case strings.HasPrefix(line, "+ "):
 				lines = append(lines, setupAddedStyle.Render("  + "+strings.TrimPrefix(line, "+ ")))
