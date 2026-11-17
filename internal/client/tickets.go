@@ -501,10 +501,15 @@ func supportUpload[T any](ctx context.Context, c *Client, path, file string) (T,
 }
 
 // attachmentMimeType guesses a file's type from its extension, as the browser
-// does, falling back to the generic binary type the console uses.
+// does, falling back to the generic binary type the console uses. The type is
+// sent bare: Go's table says "text/plain; charset=utf-8" where a browser's
+// File.type says "text/plain", and the support service matches the whole string
+// against its allowlist, refusing the first as a file type that is not allowed
+// (found 2026-11-17 on the first live upload).
 func attachmentMimeType(path string) string {
-	if t := mime.TypeByExtension(filepath.Ext(path)); t != "" {
-		return t
+	t := mime.TypeByExtension(filepath.Ext(path))
+	if base, _, err := mime.ParseMediaType(t); err == nil {
+		return base
 	}
 	return "application/octet-stream"
 }
