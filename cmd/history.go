@@ -33,9 +33,12 @@ func newRolloutHistoryCommand() *cli.Command {
 		Description: "  darkubectl rollout history my-api\n" +
 			"  darkubectl rollout history my-api --since 30d --details\n" +
 			"  darkubectl rollout history my-api -o json\n\n" +
-			"Reads the app's audit log: one entry per write, newest first, naming the account\n" +
-			"that made it. It covers every write, from this CLI or the console alike, and\n" +
-			"since every write rolls the pods, it doubles as the app's rollout history.\n\n" +
+			"Reads the app's audit log, newest first, naming the account that made each\n" +
+			"change, whether from this CLI or the console. The platform records only some\n" +
+			"fields there: changes to environment variables and to the service appear, while\n" +
+			"a new image, a scale, a resize, a domain or a command change leaves no entry.\n" +
+			"An empty history therefore does not mean nothing changed; compare UPDATED in\n" +
+			"`get apps -o wide`.\n\n" +
 			"--details prints each changed field's old and new value.",
 		Flags: []cli.Flag{
 			// The console's history tab opens on the last week too.
