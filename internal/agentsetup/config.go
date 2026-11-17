@@ -1,324 +1,176 @@
 package agentsetup
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"slices"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	serverName = "darkubectl"
+	keyCommand = "command"
+	keyArgs    = "args"
+
+	codexServers = "mcp_servers"
+
+	yamlMapTag = "!!map"
+	yamlStrTag = "!!str"
+	yamlSeqTag = "!!seq"
+)
+
+// codexLocation is where a Codex config already defines the darkubectl server:
+// as its own table (lines start to end, end exclusive) or as an inline table
+// under [mcp_servers]. An index of -1 means absent.
+type codexLocation struct {
+	start, end, inline int
+}
+
+// mergeCodexTOML puts the darkubectl server table into a Codex config.toml. An
+// existing table is replaced where it stands, so the rest of the file keeps its
+// order and comments, and a second run changes nothing.
 func mergeCodexTOML(before string, args []string) (string, error) {
 	lines := strings.Split(before, "\n")
-	targetStart, targetEnd := -1, -1
-	inlineStart := -1
-	insideMCP := false
+	loc, err := locateCodexServer(lines)
+	if err != nil {
+		return "", err
+	}
+	block := codexTOML(args)
+	if loc.start >= 0 {
+		out := strings.Join(slices.Concat(lines[:loc.start], block, lines[loc.end:]), "\n")
+		if !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		return out, nil
+	}
+	if loc.inline >= 0 {
+		lines = slices.Delete(slices.Clone(lines), loc.inline, loc.inline+1)
+	}
+	body := strings.TrimRight(strings.Join(lines, "\n"), "\n")
+	if body != "" {
+		body += "\n\n"
+	}
+	return body + strings.Join(block, "\n") + "\n", nil
+}
+
+func locateCodexServer(lines []string) (codexLocation, error) {
+	loc := codexLocation{start: -1, end: -1, inline: -1}
+	insideServers := false
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
 		if section, ok := tomlSection(line); ok {
-			insideMCP = section == "mcp_servers"
-			if section == "mcp_servers.darkubectl" || section == "mcp_servers.\"darkubectl\"" {
-				if targetStart >= 0 {
-					return "", errors.New("config has duplicate darkubectl MCP sections")
+			insideServers = section == codexServers
+			switch {
+			case section == codexServers+"."+serverName || section == codexServers+`."`+serverName+`"`:
+				if loc.start >= 0 {
+					return loc, errors.New("config has duplicate darkubectl MCP sections")
 				}
-				targetStart = i
-			} else if targetStart >= 0 && targetEnd < 0 {
-				targetEnd = i
+				loc.start = i
+			case loc.start >= 0 && loc.end < 0:
+				loc.end = i
 			}
 			continue
 		}
-		if insideMCP && strings.HasPrefix(trimmed, "darkubectl") {
-			key, _, ok := strings.Cut(trimmed, "=")
-			if ok && strings.TrimSpace(key) == "darkubectl" {
-				if inlineStart >= 0 {
-					return "", errors.New("config has duplicate darkubectl MCP entries")
-				}
-				inlineStart = i
+		if !insideServers {
+			continue
+		}
+		if key, _, ok := strings.Cut(line, "="); ok && strings.TrimSpace(key) == serverName {
+			if loc.inline >= 0 {
+				return loc, errors.New("config has duplicate darkubectl MCP entries")
 			}
+			loc.inline = i
 		}
 	}
-	if targetStart >= 0 && targetEnd < 0 {
-		targetEnd = len(lines)
+	if loc.start >= 0 && loc.inline >= 0 {
+		return loc, errors.New("config defines darkubectl twice")
 	}
-	if targetStart >= 0 && inlineStart >= 0 {
-		return "", errors.New("config defines darkubectl twice")
+	if loc.start < 0 {
+		return loc, nil
 	}
-	generated := codexTOML(args)
-	if targetStart >= 0 {
-		var out strings.Builder
-		for _, line := range lines[:targetStart] {
-			out.WriteString(line + "\n")
-		}
-		out.WriteString(generated)
-		if targetEnd < len(lines) {
-			for _, line := range lines[targetEnd:] {
-				out.WriteString(line + "\n")
-			}
-		}
-		return out.String(), nil
+	if loc.end < 0 {
+		loc.end = len(lines)
 	}
-	if inlineStart >= 0 {
-		lines = append(lines[:inlineStart], lines[inlineStart+1:]...)
-		before = strings.Join(lines, "\n")
+	// The blank lines after the table separate it from what follows; they are
+	// not part of it, or every run would add one more.
+	for loc.end > loc.start+1 && strings.TrimSpace(lines[loc.end-1]) == "" {
+		loc.end--
 	}
-	if before != "" && !strings.HasSuffix(before, "\n") {
-		before += "\n"
-	}
-	if before != "" && !strings.HasSuffix(before, "\n\n") {
-		before += "\n"
-	}
-	return before + generated, nil
+	return loc, nil
 }
 
+// tomlSection reports the name of a [table] header line, ignoring a trailing
+// comment. Arrays of tables ([[name]]) are not sections for this purpose.
 func tomlSection(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
 	quote := byte(0)
 	escaped := false
 	for i := 0; i < len(trimmed); i++ {
 		ch := trimmed[i]
-		if quote != 0 {
-			if quote == '"' && escaped {
-				escaped = false
-				continue
-			}
-			if quote == '"' && ch == '\\' {
-				escaped = true
-				continue
-			}
+		switch {
+		case quote == '"' && escaped:
+			escaped = false
+		case quote == '"' && ch == '\\':
+			escaped = true
+		case quote != 0:
 			if ch == quote {
 				quote = 0
 			}
-			continue
-		}
-		if ch == '"' || ch == '\'' {
+		case ch == '"' || ch == '\'':
 			quote = ch
-			continue
-		}
-		if ch == '#' {
+		case ch == '#':
 			trimmed = strings.TrimSpace(trimmed[:i])
-			break
 		}
 	}
-	if len(trimmed) < 3 || trimmed[0] != '[' || trimmed[len(trimmed)-1] != ']' || strings.HasPrefix(trimmed, "[[") {
+	if len(trimmed) < len("[x]") || trimmed[0] != '[' || trimmed[len(trimmed)-1] != ']' || strings.HasPrefix(trimmed, "[[") {
 		return "", false
 	}
 	return strings.TrimSpace(trimmed[1 : len(trimmed)-1]), true
 }
 
-func codexTOML(args []string) string {
-	var b strings.Builder
-	b.WriteString("[mcp_servers.darkubectl]\n")
-	b.WriteString("command = \"darkubectl\"\n")
-	b.WriteString("args = [")
+func codexTOML(args []string) []string {
+	quoted := make([]string, len(args))
 	for i, arg := range args {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(strconv.Quote(arg))
+		quoted[i] = strconv.Quote(arg)
 	}
-	b.WriteString("]\n\n")
-	return b.String()
+	return []string{
+		"[" + codexServers + "." + serverName + "]",
+		keyCommand + ` = "` + serverName + `"`,
+		keyArgs + " = [" + strings.Join(quoted, ", ") + "]",
+	}
 }
 
-func mergeJSONServer(before string, parent []string, entry map[string]any) (string, error) {
-	root := map[string]any{}
-	if strings.TrimSpace(before) != "" {
-		cleaned, err := stripJSONC(before)
-		if err != nil {
-			return "", err
-		}
-		decoder := json.NewDecoder(strings.NewReader(cleaned))
-		decoder.UseNumber()
-		if err := decoder.Decode(&root); err != nil {
-			return "", fmt.Errorf("parse JSON config: %w", err)
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			if err == nil {
-				return "", errors.New("parse JSON config: multiple top-level values")
-			}
-			return "", fmt.Errorf("parse JSON config: %w", err)
-		}
-	}
-	if root == nil {
-		return "", errors.New("JSON config root must be an object")
-	}
-	current := root
-	for _, key := range parent[:len(parent)-1] {
-		value, ok := current[key]
-		if !ok {
-			child := map[string]any{}
-			current[key] = child
-			current = child
-			continue
-		}
-		child, ok := value.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("JSON config key %q must be an object", key)
-		}
-		current = child
-	}
-	key := parent[len(parent)-1]
-	servers, ok := current[key]
-	if !ok {
-		servers = map[string]any{}
-		current[key] = servers
-	}
-	serverMap, ok := servers.(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("JSON config key %q must be an object", key)
-	}
-	old, ok := serverMap["darkubectl"]
-	if ok {
-		oldMap, ok := old.(map[string]any)
-		if !ok {
-			return "", errors.New("darkubectl MCP entry must be an object")
-		}
-		for k, v := range entry {
-			oldMap[k] = v
-		}
-	} else {
-		serverMap["darkubectl"] = entry
-	}
-	encoded, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("encode JSON config: %w", err)
-	}
-	return string(encoded) + "\n", nil
-}
-
-func stripJSONC(s string) (string, error) {
-	var b strings.Builder
-	b.Grow(len(s))
-	inString, escaped := false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if inString {
-			b.WriteByte(ch)
-			if escaped {
-				escaped = false
-			} else if ch == '\\' {
-				escaped = true
-			} else if ch == '"' {
-				inString = false
-			}
-			continue
-		}
-		if ch == '"' {
-			inString = true
-			b.WriteByte(ch)
-			continue
-		}
-		if ch == '/' && i+1 < len(s) && s[i+1] == '/' {
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			if i < len(s) {
-				b.WriteByte('\n')
-			}
-			continue
-		}
-		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
-			i += 2
-			for i < len(s) && !(s[i-1] == '*' && s[i] == '/') {
-				if s[i] == '\n' {
-					b.WriteByte('\n')
-				}
-				i++
-			}
-			if i >= len(s) {
-				return "", errors.New("unterminated JSONC comment")
-			}
-			continue
-		}
-		b.WriteByte(ch)
-	}
-	if inString {
-		return "", errors.New("unterminated JSON string")
-	}
-	return stripJSONTrailingCommas(b.String()), nil
-}
-
-func stripJSONTrailingCommas(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	inString, escaped := false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if inString {
-			b.WriteByte(ch)
-			if escaped {
-				escaped = false
-			} else if ch == '\\' {
-				escaped = true
-			} else if ch == '"' {
-				inString = false
-			}
-			continue
-		}
-		if ch == '"' {
-			inString = true
-			b.WriteByte(ch)
-			continue
-		}
-		if ch == ',' {
-			next := i + 1
-			for next < len(s) && (s[next] == ' ' || s[next] == '\t' || s[next] == '\n' || s[next] == '\r') {
-				next++
-			}
-			if next < len(s) && (s[next] == '}' || s[next] == ']') {
-				continue
-			}
-		}
-		b.WriteByte(ch)
-	}
-	return b.String()
-}
-
-func mergeYAMLServer(before string, entry map[string]any) (string, error) {
-	root := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+// mergeYAMLServer puts the darkubectl server into Hermes's config.yaml. It
+// edits the node tree rather than a decoded map so comments and key order
+// survive, and returns the input untouched when the entry is already right.
+func mergeYAMLServer(before string, args []string) (string, error) {
+	root := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: yamlMapTag}}}
 	if strings.TrimSpace(before) != "" {
 		if err := yaml.Unmarshal([]byte(before), root); err != nil {
 			return "", fmt.Errorf("parse Hermes YAML config: %w", err)
 		}
 		if len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
-			return "", errors.New("Hermes YAML config root must be a mapping")
+			return "", errors.New("the Hermes YAML config root must be a mapping")
 		}
 	}
-	top := root.Content[0]
-	mcpServers := mappingNodeValue(top, "mcp_servers")
-	if mcpServers == nil {
-		mcpServers = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		setMappingNode(top, "mcp_servers", mcpServers)
+	servers, err := childMapping(root.Content[0], codexServers)
+	if err != nil {
+		return "", err
 	}
-	if mcpServers.Kind != yaml.MappingNode {
-		return "", errors.New("Hermes config key mcp_servers must be a mapping")
+	server, err := childMapping(servers, serverName)
+	if err != nil {
+		return "", err
 	}
-	server := mappingNodeValue(mcpServers, "darkubectl")
-	if server == nil {
-		server = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		setMappingNode(mcpServers, "darkubectl", server)
+	if yamlServerMatches(server, args) {
+		return before, nil
 	}
-	if server.Kind != yaml.MappingNode {
-		return "", errors.New("Hermes darkubectl MCP entry must be a mapping")
-	}
-	setMappingNode(server, "command", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "darkubectl"})
-	args, ok := entry["args"].([]any)
-	if !ok {
-		return "", errors.New("internal setup error: MCP arguments are missing")
-	}
-	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	setMappingNode(server, keyCommand, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStrTag, Value: serverName})
+	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: yamlSeqTag}
 	for _, arg := range args {
-		value, ok := arg.(string)
-		if !ok {
-			return "", errors.New("internal setup error: MCP argument is not a string")
-		}
-		sequence.Content = append(sequence.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+		sequence.Content = append(sequence.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStrTag, Value: arg})
 	}
-	setMappingNode(server, "args", sequence)
+	setMappingNode(server, keyArgs, sequence)
 	encoded, err := yaml.Marshal(root)
 	if err != nil {
 		return "", fmt.Errorf("encode Hermes YAML config: %w", err)
@@ -326,10 +178,31 @@ func mergeYAMLServer(before string, entry map[string]any) (string, error) {
 	return string(encoded), nil
 }
 
-func mappingNodeValue(mapping *yaml.Node, key string) *yaml.Node {
-	if mapping == nil || mapping.Kind != yaml.MappingNode {
-		return nil
+// childMapping returns the mapping stored under key, creating it when absent.
+func childMapping(parent *yaml.Node, key string) (*yaml.Node, error) {
+	child := mappingNodeValue(parent, key)
+	if child == nil {
+		child = &yaml.Node{Kind: yaml.MappingNode, Tag: yamlMapTag}
+		setMappingNode(parent, key, child)
 	}
+	if child.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("the Hermes config key %s must be a mapping", key)
+	}
+	return child, nil
+}
+
+func yamlServerMatches(server *yaml.Node, args []string) bool {
+	command := mappingNodeValue(server, keyCommand)
+	sequence := mappingNodeValue(server, keyArgs)
+	if command == nil || command.Value != serverName || sequence == nil || sequence.Kind != yaml.SequenceNode {
+		return false
+	}
+	return slices.EqualFunc(sequence.Content, args, func(node *yaml.Node, arg string) bool {
+		return node.Kind == yaml.ScalarNode && node.Value == arg
+	})
+}
+
+func mappingNodeValue(mapping *yaml.Node, key string) *yaml.Node {
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		if mapping.Content[i].Value == key {
 			return mapping.Content[i+1]
@@ -346,7 +219,7 @@ func setMappingNode(mapping *yaml.Node, key string, value *yaml.Node) {
 		}
 	}
 	mapping.Content = append(mapping.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStrTag, Value: key},
 		value,
 	)
 }

@@ -2,17 +2,20 @@
 package agentsetup
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
+// Client is an agent client this package knows how to configure.
 type Client string
 
+// The supported clients.
 const (
 	ClientCodex    Client = "codex"
 	ClientClaude   Client = "claude"
@@ -20,13 +23,16 @@ const (
 	ClientHermes   Client = "hermes"
 )
 
+// Scope is where a setup lands: in the current project or in the user's home.
 type Scope string
 
+// The two scopes.
 const (
 	ScopeProject Scope = "project"
 	ScopeGlobal  Scope = "global"
 )
 
+// Config is what the user asked to set up, and for whom.
 type Config struct {
 	Clients      []Client
 	Scope        Scope
@@ -37,6 +43,9 @@ type Config struct {
 	AllowSecrets bool
 }
 
+// FileChange is one file the plan creates or rewrites. Mode is the mode the
+// file ends up with: its current one when it exists, else the default for the
+// scope.
 type FileChange struct {
 	Path   string
 	Before string
@@ -45,6 +54,8 @@ type FileChange struct {
 	Exists bool
 }
 
+// Plan is the full set of changes a Config amounts to on this machine, built
+// without writing anything so it can be reviewed first.
 type Plan struct {
 	Config  Config
 	Changes []FileChange
@@ -58,8 +69,24 @@ const (
 	claudeBridgeEnd   = "<!-- darkubectl-agent-setup:claude-end -->"
 )
 
-var errUnsupported = errors.New("selected client does not support this setup scope")
+const (
+	modePrivate    fs.FileMode = 0o600
+	modeShared     fs.FileMode = 0o644
+	dirModePrivate fs.FileMode = 0o700
+	dirModeShared  fs.FileMode = 0o755
+)
 
+var (
+	errUnsupported = errors.New("selected client does not support this setup scope")
+
+	//go:embed instructions.md
+	instructionsText string
+
+	//go:embed skill.md
+	skillText string
+)
+
+// ParseClient maps a client name as typed on the command line to a Client.
 func ParseClient(s string) (Client, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "codex":
@@ -75,6 +102,8 @@ func ParseClient(s string) (Client, error) {
 	}
 }
 
+// Validate rejects a Config that names no client or item, or that asks a client
+// for something it has no place to store.
 func Validate(cfg Config) error {
 	if len(cfg.Clients) == 0 {
 		return errors.New("select at least one agent client")
@@ -109,7 +138,16 @@ func Validate(cfg Config) error {
 	return nil
 }
 
+// Build works out every file change cfg needs, reading the current files but
+// writing nothing.
 func Build(cfg Config, cwd, home string) (*Plan, error) {
+	return build(cfg, cwd, home, os.Getenv)
+}
+
+// build is Build with the environment passed in: CODEX_HOME, CLAUDE_CONFIG_DIR,
+// OPENCODE_CONFIG, HERMES_HOME and XDG_CONFIG_HOME each move a client's global
+// files.
+func build(cfg Config, cwd, home string, env func(string) string) (*Plan, error) {
 	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
@@ -128,87 +166,21 @@ func Build(cfg Config, cwd, home string) (*Plan, error) {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 
-	b := &planBuilder{changes: make(map[string]*FileChange)}
-	if cfg.MCP {
-		for _, client := range cfg.Clients {
-			path := mcpConfigPath(client, cfg.Scope, root, home)
-			switch client {
-			case ClientCodex:
-				if err := b.mutate(path, targetMode(cfg.Scope), func(before string) (string, error) {
-					return mergeCodexTOML(before, mcpArgs(cfg))
-				}); err != nil {
-					return nil, err
-				}
-			case ClientClaude:
-				entry := map[string]any{"command": "darkubectl", "args": anyStrings(mcpArgs(cfg))}
-				if err := b.mutate(path, targetMode(cfg.Scope), func(before string) (string, error) {
-					return mergeJSONServer(before, []string{"mcpServers"}, entry)
-				}); err != nil {
-					return nil, err
-				}
-			case ClientOpenCode:
-				command := append([]string{"darkubectl"}, mcpArgs(cfg)...)
-				entry := map[string]any{"type": "local", "command": anyStrings(command)}
-				if err := b.mutate(path, targetMode(cfg.Scope), func(before string) (string, error) {
-					return mergeJSONServer(before, []string{"mcp", "servers"}, entry)
-				}); err != nil {
-					return nil, err
-				}
-			case ClientHermes:
-				entry := map[string]any{"command": "darkubectl", "args": anyStrings(mcpArgs(cfg))}
-				if err := b.mutate(path, targetMode(cfg.Scope), func(before string) (string, error) {
-					return mergeYAMLServer(before, entry)
-				}); err != nil {
-					return nil, err
-				}
-			}
-		}
+	b := &planBuilder{cfg: cfg, root: root, home: home, env: env, changes: make(map[string]*FileChange)}
+	steps := []struct {
+		wanted bool
+		add    func() error
+	}{
+		{cfg.MCP, b.addMCP},
+		{cfg.Skill, b.addSkill},
+		{cfg.Instructions, b.addInstructions},
 	}
-
-	if cfg.Skill {
-		content := darkubectlSkill()
-		for _, client := range cfg.Clients {
-			path := skillPath(client, cfg.Scope, root, home)
-			if err := b.mutate(path, targetMode(cfg.Scope), func(before string) (string, error) {
-				return upsertSkill(before, content)
-			}); err != nil {
-				return nil, err
-			}
+	for _, step := range steps {
+		if !step.wanted {
+			continue
 		}
-	}
-
-	if cfg.Instructions {
-		content := darkubectlInstructions()
-		if cfg.Scope == ScopeProject {
-			path := filepath.Join(root, "AGENTS.md")
-			if err := b.mutate(path, 0o644, func(before string) (string, error) {
-				return upsertManaged(before, content)
-			}); err != nil {
-				return nil, err
-			}
-			for _, client := range cfg.Clients {
-				if client != ClientClaude {
-					continue
-				}
-				claudePath := filepath.Join(root, "CLAUDE.md")
-				if err := b.mutate(claudePath, 0o644, func(before string) (string, error) {
-					return upsertClaudeBridge(before)
-				}); err != nil {
-					return nil, err
-				}
-			}
-		} else {
-			for _, client := range cfg.Clients {
-				path := globalInstructionPath(client, home)
-				if path == "" {
-					continue
-				}
-				if err := b.mutate(path, 0o600, func(before string) (string, error) {
-					return upsertManaged(before, content)
-				}); err != nil {
-					return nil, err
-				}
-			}
+		if err := step.add(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -216,10 +188,84 @@ func Build(cfg Config, cwd, home string) (*Plan, error) {
 	for _, change := range b.changes {
 		changes = append(changes, *change)
 	}
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
+	slices.SortFunc(changes, func(x, y FileChange) int { return strings.Compare(x.Path, y.Path) })
 	return &Plan{Config: cfg, Changes: changes}, nil
 }
 
+func (b *planBuilder) addMCP() error {
+	for _, client := range b.cfg.Clients {
+		path := b.mcpConfigPath(client)
+		if err := b.mutate(path, targetMode(b.cfg.Scope), mcpEditor(client, mcpArgs(b.cfg))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mcpEditor returns the edit that registers the server in client's config
+// format.
+func mcpEditor(client Client, args []string) func(string) (string, error) {
+	switch client {
+	case ClientCodex:
+		return func(before string) (string, error) { return mergeCodexTOML(before, args) }
+	case ClientOpenCode:
+		entry := map[string]any{"type": "local", keyCommand: append([]string{serverName}, args...)}
+		return func(before string) (string, error) {
+			return mergeJSONServer(before, []string{"mcp", "servers"}, entry)
+		}
+	case ClientHermes:
+		return func(before string) (string, error) { return mergeYAMLServer(before, args) }
+	case ClientClaude:
+		fallthrough
+	default:
+		entry := map[string]any{keyCommand: serverName, keyArgs: args}
+		return func(before string) (string, error) {
+			return mergeJSONServer(before, []string{"mcpServers"}, entry)
+		}
+	}
+}
+
+func (b *planBuilder) addSkill() error {
+	for _, client := range b.cfg.Clients {
+		path := b.skillPath(client)
+		if err := b.mutate(path, targetMode(b.cfg.Scope), upsertSkill); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *planBuilder) addInstructions() error {
+	if b.cfg.Scope == ScopeGlobal {
+		for _, client := range b.cfg.Clients {
+			path := b.globalInstructionPath(client)
+			if path == "" {
+				continue
+			}
+			if err := b.mutate(path, modePrivate, upsertManaged); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// One AGENTS.md serves every client; Claude Code reads CLAUDE.md instead, so
+	// it gets an import of the shared file.
+	if err := b.mutate(filepath.Join(b.root, "AGENTS.md"), modeShared, upsertManaged); err != nil {
+		return err
+	}
+	if !slices.Contains(b.cfg.Clients, ClientClaude) {
+		return nil
+	}
+	return b.mutate(filepath.Join(b.root, "CLAUDE.md"), modeShared, upsertClaudeBridge)
+}
+
+// DiffLines is the change as "- old" and "+ new" lines.
+func (c FileChange) DiffLines() []string {
+	return simpleDiff(c.Before, c.After)
+}
+
+// ReviewLines is the whole plan as text: one "create" or "update" line per
+// file, followed by its diff.
 func (p *Plan) ReviewLines() []string {
 	if p == nil {
 		return nil
@@ -231,7 +277,7 @@ func (p *Plan) ReviewLines() []string {
 			action = "create"
 		}
 		lines = append(lines, fmt.Sprintf("%s %s", action, change.Path))
-		lines = append(lines, simpleDiff(change.Before, change.After)...)
+		lines = append(lines, change.DiffLines()...)
 	}
 	if len(lines) == 0 {
 		lines = append(lines, "No changes are needed.")
@@ -239,140 +285,159 @@ func (p *Plan) ReviewLines() []string {
 	return lines
 }
 
+// Apply writes the plan. It first checks that no file moved on since the plan
+// was built, then stages every file next to its target and renames them into
+// place, undoing the renames already made if one fails.
 func (p *Plan) Apply() error {
 	if p == nil {
 		return errors.New("no setup plan")
 	}
-	if len(p.Changes) == 0 {
-		return nil
-	}
 	for _, change := range p.Changes {
-		current, err := os.ReadFile(change.Path)
-		if errors.Is(err, fs.ErrNotExist) {
-			if change.Exists {
-				return fmt.Errorf("%s disappeared after review; rerun setup", change.Path)
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("read %s before applying: %w", change.Path, err)
-		}
-		if !change.Exists || string(current) != change.Before {
-			return fmt.Errorf("%s changed after review; rerun setup", change.Path)
+		if err := change.verifyUnchanged(); err != nil {
+			return err
 		}
 	}
 
 	staged := make([]stagedFile, 0, len(p.Changes))
-	cleanup := func() {
+	discard := func() {
 		for _, file := range staged {
 			_ = os.Remove(file.temp)
 		}
 	}
 	for _, change := range p.Changes {
-		dir := filepath.Dir(change.Path)
-		dirMode := fs.FileMode(0o755)
-		if change.Mode.Perm() == 0o600 {
-			dirMode = 0o700
-		}
-		if err := os.MkdirAll(dir, dirMode); err != nil {
-			cleanup()
-			return fmt.Errorf("create config directory %s: %w", dir, err)
-		}
-		file, err := os.CreateTemp(dir, ".darkubectl-agent-setup-*")
+		file, err := change.stage()
 		if err != nil {
-			cleanup()
-			return fmt.Errorf("stage %s: %w", change.Path, err)
+			discard()
+			return err
 		}
-		if _, err := file.WriteString(change.After); err != nil {
-			_ = file.Close()
-			_ = os.Remove(file.Name())
-			cleanup()
-			return fmt.Errorf("stage %s: %w", change.Path, err)
-		}
-		if err := file.Chmod(change.Mode.Perm()); err != nil {
-			_ = file.Close()
-			_ = os.Remove(file.Name())
-			cleanup()
-			return fmt.Errorf("set permissions on staged %s: %w", change.Path, err)
-		}
-		if err := file.Sync(); err != nil {
-			_ = file.Close()
-			_ = os.Remove(file.Name())
-			cleanup()
-			return fmt.Errorf("flush staged %s: %w", change.Path, err)
-		}
-		if err := file.Close(); err != nil {
-			_ = os.Remove(file.Name())
-			cleanup()
-			return fmt.Errorf("close staged %s: %w", change.Path, err)
-		}
-		staged = append(staged, stagedFile{change: change, temp: file.Name()})
+		staged = append(staged, file)
 	}
 
-	committed := make([]FileChange, 0, len(staged))
-	for _, file := range staged {
-		if err := os.Rename(file.temp, file.change.Path); err != nil {
-			cleanup()
-			if rollbackErr := rollbackFiles(committed); rollbackErr != nil {
-				return fmt.Errorf("apply %s: %w (rollback incomplete: %v)", file.change.Path, err, rollbackErr)
+	for i, file := range staged {
+		if err := os.Rename(file.temp, file.target); err != nil {
+			discard()
+			if rollbackErr := rollbackFiles(staged[:i]); rollbackErr != nil {
+				return fmt.Errorf("apply %s: %w (rollback incomplete: %w)", file.change.Path, err, rollbackErr)
 			}
 			return fmt.Errorf("apply %s: %w", file.change.Path, err)
 		}
-		committed = append(committed, file.change)
 	}
 	return nil
 }
 
+// stagedFile is a change written to a temporary file beside target, the file
+// the rename will replace.
 type stagedFile struct {
 	change FileChange
 	temp   string
+	target string
 }
 
-func rollbackFiles(changes []FileChange) error {
-	var errs []string
-	for i := len(changes) - 1; i >= 0; i-- {
-		change := changes[i]
-		if !change.Exists {
-			if err := os.Remove(change.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				errs = append(errs, fmt.Sprintf("%s: %v", change.Path, err))
-			}
-			continue
+func (c FileChange) verifyUnchanged() error {
+	current, err := os.ReadFile(c.Path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if c.Exists {
+			return fmt.Errorf("%s disappeared after review; rerun setup", c.Path)
 		}
-		if err := atomicWrite(change.Path, change.Before, change.Mode.Perm()); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", change.Path, err))
-		}
-	}
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "; "))
+		return nil
+	case err != nil:
+		return fmt.Errorf("read %s before applying: %w", c.Path, err)
+	case !c.Exists || string(current) != c.Before:
+		return fmt.Errorf("%s changed after review; rerun setup", c.Path)
 	}
 	return nil
 }
 
-func atomicWrite(path, content string, mode fs.FileMode) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".darkubectl-agent-rollback-*")
+func (c FileChange) stage() (stagedFile, error) {
+	target := writeTarget(c.Path)
+	dir := filepath.Dir(target)
+	dirMode := dirModeShared
+	if c.Mode.Perm() == modePrivate {
+		dirMode = dirModePrivate
+	}
+	if err := os.MkdirAll(dir, dirMode); err != nil {
+		return stagedFile{}, fmt.Errorf("create config directory %s: %w", dir, err)
+	}
+	temp, err := writeTemp(dir, ".darkubectl-agent-setup-*", c.After, c.Mode.Perm())
+	if err != nil {
+		return stagedFile{}, fmt.Errorf("stage %s: %w", c.Path, err)
+	}
+	return stagedFile{change: c, temp: temp, target: target}, nil
+}
+
+// writeTarget is the file a rename onto path must replace. Agent configs are
+// often symlinks into a dotfiles repository, and renaming over the link would
+// swap it for a regular file and leave the real one stale, so a link is
+// followed to the file it names.
+func writeTarget(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// writeTemp writes content to a new file in dir, synced and with mode set, and
+// returns its name. Nothing is left behind on failure.
+func writeTemp(dir, pattern, content string, mode fs.FileMode) (string, error) {
+	file, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	name := file.Name()
+	_, err = file.WriteString(content)
+	if err == nil {
+		err = file.Chmod(mode)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+// rollbackFiles puts back the files already renamed into place, last first.
+func rollbackFiles(done []stagedFile) error {
+	var errs []error
+	for _, file := range slices.Backward(done) {
+		var err error
+		if file.change.Exists {
+			err = restoreFile(file.target, file.change.Before, file.change.Mode.Perm())
+		} else if err = os.Remove(file.target); errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", file.change.Path, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func restoreFile(path, content string, mode fs.FileMode) error {
+	temp, err := writeTemp(filepath.Dir(path), ".darkubectl-agent-rollback-*", content, mode)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	if _, err := file.WriteString(content); err != nil {
-		_ = file.Close()
+	if err := os.Rename(temp, path); err != nil {
+		_ = os.Remove(temp)
 		return err
 	}
-	if err := file.Chmod(mode); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return nil
 }
 
+// planBuilder accumulates the changes of one Build, keyed by path so that two
+// edits of the same file compose into one change.
 type planBuilder struct {
+	cfg     Config
+	root    string
+	home    string
+	env     func(string) string
 	changes map[string]*FileChange
 }
 
@@ -388,7 +453,7 @@ func (b *planBuilder) mutate(path string, mode fs.FileMode, edit func(string) (s
 		exists = change.Exists
 		mode = change.Mode
 	} else {
-		data, readErr := os.ReadFile(path)
+		data, readErr := os.ReadFile(path) //nolint:gosec // the path is an agent config file this command is asked to edit
 		switch {
 		case readErr == nil:
 			current, exists = string(data), true
@@ -426,9 +491,9 @@ func mcpArgs(cfg Config) []string {
 
 func targetMode(scope Scope) fs.FileMode {
 	if scope == ScopeGlobal {
-		return 0o600
+		return modePrivate
 	}
-	return 0o644
+	return modeShared
 }
 
 func projectRoot(cwd string) (string, error) {
@@ -437,6 +502,7 @@ func projectRoot(cwd string) (string, error) {
 		return "", fmt.Errorf("resolve working directory: %w", err)
 	}
 	for current := abs; ; current = filepath.Dir(current) {
+		//nolint:gosec // walks up from the working directory looking for the repository root
 		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
 			return current, nil
 		} else if !errors.Is(err, fs.ErrNotExist) {
@@ -449,8 +515,9 @@ func projectRoot(cwd string) (string, error) {
 	}
 }
 
-func mcpConfigPath(client Client, scope Scope, root, home string) string {
-	if scope == ScopeProject {
+func (b *planBuilder) mcpConfigPath(client Client) string {
+	root, home := b.root, b.home
+	if b.cfg.Scope == ScopeProject {
 		switch client {
 		case ClientCodex:
 			return filepath.Join(root, ".codex", "config.toml")
@@ -458,27 +525,30 @@ func mcpConfigPath(client Client, scope Scope, root, home string) string {
 			return filepath.Join(root, ".mcp.json")
 		case ClientOpenCode:
 			return openCodeConfigPath(root)
+		case ClientHermes:
+			// Hermes has no project config; Validate refuses the combination.
 		}
 	}
 	switch client {
 	case ClientCodex:
-		return filepath.Join(envOr("CODEX_HOME", filepath.Join(home, ".codex")), "config.toml")
+		return filepath.Join(b.envOr("CODEX_HOME", filepath.Join(home, ".codex")), "config.toml")
 	case ClientClaude:
 		return filepath.Join(home, ".claude.json")
 	case ClientOpenCode:
-		if path := os.Getenv("OPENCODE_CONFIG"); path != "" {
+		if path := b.env("OPENCODE_CONFIG"); path != "" {
 			return path
 		}
-		return openCodeConfigPath(openCodeConfigDir(home))
+		return openCodeConfigPath(b.openCodeConfigDir())
 	case ClientHermes:
-		return filepath.Join(envOr("HERMES_HOME", filepath.Join(home, ".hermes")), "config.yaml")
+		return filepath.Join(b.envOr("HERMES_HOME", filepath.Join(home, ".hermes")), "config.yaml")
 	default:
 		return ""
 	}
 }
 
-func skillPath(client Client, scope Scope, root, home string) string {
-	if scope == ScopeProject {
+func (b *planBuilder) skillPath(client Client) string {
+	root, home := b.root, b.home
+	if b.cfg.Scope == ScopeProject {
 		if client == ClientClaude {
 			return filepath.Join(root, ".claude", "skills", "darkubectl", "SKILL.md")
 		}
@@ -486,26 +556,27 @@ func skillPath(client Client, scope Scope, root, home string) string {
 	}
 	switch client {
 	case ClientCodex:
-		return filepath.Join(envOr("CODEX_HOME", filepath.Join(home, ".codex")), "skills", "darkubectl", "SKILL.md")
+		return filepath.Join(b.envOr("CODEX_HOME", filepath.Join(home, ".codex")), "skills", "darkubectl", "SKILL.md")
 	case ClientClaude:
-		return filepath.Join(envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "skills", "darkubectl", "SKILL.md")
+		return filepath.Join(b.envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "skills", "darkubectl", "SKILL.md")
 	case ClientOpenCode:
-		return filepath.Join(openCodeConfigDir(home), "skills", "darkubectl", "SKILL.md")
+		return filepath.Join(b.openCodeConfigDir(), "skills", "darkubectl", "SKILL.md")
 	case ClientHermes:
-		return filepath.Join(envOr("HERMES_HOME", filepath.Join(home, ".hermes")), "skills", "darkubectl", "SKILL.md")
+		return filepath.Join(b.envOr("HERMES_HOME", filepath.Join(home, ".hermes")), "skills", "darkubectl", "SKILL.md")
 	default:
 		return ""
 	}
 }
 
-func globalInstructionPath(client Client, home string) string {
+func (b *planBuilder) globalInstructionPath(client Client) string {
+	home := b.home
 	switch client {
 	case ClientCodex:
-		return filepath.Join(envOr("CODEX_HOME", filepath.Join(home, ".codex")), "AGENTS.md")
+		return filepath.Join(b.envOr("CODEX_HOME", filepath.Join(home, ".codex")), "AGENTS.md")
 	case ClientClaude:
-		return filepath.Join(envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "CLAUDE.md")
+		return filepath.Join(b.envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "CLAUDE.md")
 	case ClientOpenCode:
-		return filepath.Join(openCodeConfigDir(home), "AGENTS.md")
+		return filepath.Join(b.openCodeConfigDir(), "AGENTS.md")
 	default:
 		return ""
 	}
@@ -521,62 +592,46 @@ func openCodeConfigPath(base string) string {
 	return filepath.Join(base, "opencode.json")
 }
 
-func openCodeConfigDir(home string) string {
-	if path := os.Getenv("OPENCODE_CONFIG"); path != "" {
+func (b *planBuilder) openCodeConfigDir() string {
+	home := b.home
+	if path := b.env("OPENCODE_CONFIG"); path != "" {
 		return filepath.Dir(path)
 	}
-	if path := os.Getenv("XDG_CONFIG_HOME"); path != "" {
+	if path := b.env("XDG_CONFIG_HOME"); path != "" {
 		return filepath.Join(path, "opencode")
 	}
 	return filepath.Join(home, ".config", "opencode")
 }
 
-func envOr(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
+func (b *planBuilder) envOr(key, fallback string) string {
+	if value := b.env(key); value != "" {
 		return value
 	}
 	return fallback
 }
 
-func anyStrings(items []string) []any {
-	out := make([]any, len(items))
-	for i, item := range items {
-		out[i] = item
-	}
-	return out
+// upsertManaged adds the instructions to a file between two markers, or
+// refreshes the block already there, leaving the rest of the file alone.
+func upsertManaged(before string) (string, error) {
+	return upsertBlock(before, instructionStart, instructionEnd, strings.TrimSpace(instructionsText), "instruction")
 }
 
-func upsertManaged(before, content string) (string, error) {
-	start := strings.Index(before, instructionStart)
-	end := strings.Index(before, instructionEnd)
-	if (start >= 0) != (end >= 0) || (start >= 0 && end < start) {
-		return "", errors.New("managed instruction markers are incomplete or out of order")
-	}
-	block := instructionStart + "\n" + strings.TrimSpace(content) + "\n" + instructionEnd
-	if start >= 0 {
-		end += len(instructionEnd)
-		return before[:start] + block + before[end:], nil
-	}
-	if before == "" {
-		return block + "\n", nil
-	}
-	separator := "\n"
-	if !strings.HasSuffix(before, "\n") {
-		separator = "\n\n"
-	}
-	return before + separator + block + "\n", nil
-}
-
+// upsertClaudeBridge makes CLAUDE.md import AGENTS.md, the same way.
 func upsertClaudeBridge(before string) (string, error) {
-	start := strings.Index(before, claudeBridgeStart)
-	end := strings.Index(before, claudeBridgeEnd)
+	return upsertBlock(before, claudeBridgeStart, claudeBridgeEnd, "@AGENTS.md", "Claude import")
+}
+
+// upsertBlock replaces the text between the start and end markers with body, or
+// appends a new marked block when the file has none.
+func upsertBlock(before, startMarker, endMarker, body, what string) (string, error) {
+	start := strings.Index(before, startMarker)
+	end := strings.Index(before, endMarker)
 	if (start >= 0) != (end >= 0) || (start >= 0 && end < start) {
-		return "", errors.New("managed Claude import markers are incomplete or out of order")
+		return "", fmt.Errorf("managed %s markers are incomplete or out of order", what)
 	}
-	block := claudeBridgeStart + "\n@AGENTS.md\n" + claudeBridgeEnd
+	block := startMarker + "\n" + body + "\n" + endMarker
 	if start >= 0 {
-		end += len(claudeBridgeEnd)
-		return before[:start] + block + before[end:], nil
+		return before[:start] + block + before[end+len(endMarker):], nil
 	}
 	if before == "" {
 		return block + "\n", nil
@@ -588,74 +643,17 @@ func upsertClaudeBridge(before string) (string, error) {
 	return before + separator + block + "\n", nil
 }
 
-func upsertSkill(before, content string) (string, error) {
+// upsertSkill writes the skill file, refusing to overwrite one this command
+// did not put there.
+func upsertSkill(before string) (string, error) {
 	if before != "" && !strings.Contains(before, skillMarker) {
 		return "", errors.New("a skill already exists at this path and is not managed by darkubectl; move it or choose another skill name")
 	}
-	return content, nil
+	return skillText, nil
 }
 
-func darkubectlInstructions() string {
-	return strings.Join([]string{
-		"## Darkubectl",
-		"- Darkube uses tenant for organization, namespace for project, and app for a managed application. Never guess the tenant.",
-		"- When the account, membership, or tenant is unclear, call whoami. Prefer a matching typed MCP tool; if none fits, use the generic darkubectl MCP tool. Use the CLI only when MCP is unavailable or does not expose the operation.",
-		"- Typed MCP tools may select a tenant for one call, but all calls keep the server's local configuration, credential, and API endpoint. Do not switch to the CLI to get around an MCP access denial.",
-		"- Inspect current state before making a requested change. Use dryRun where supported, review the target and proposed change, then read the affected resource back; an accepted request or HTTP 202 alone does not prove it persisted.",
-		"- Follow the MCP server's tool schemas and access instructions. Reads are enabled by default; secret reads require --allow-secrets and writes require --allow-writes, which also enables secret access. Never work around denied or blocked operations.",
-		"- Only pass --yes for a user-requested change after checking its exact target; it bypasses interactive prompts.",
-		"- Treat API keys, tokens, and secret environment values as sensitive. Do not expose them in chat, logs, or generated files; access a secret only when the user's request requires it and the configured MCP access permits it.",
-		"- Do not use delete as routine cleanup or a name-conflict fix. If app deletion is requested, verify the exact tenant and app; deletion is asynchronous and may leave an orphaned Helm release. Check get orphans before recreating an app with a blocked name.",
-		"- Creating apps or namespaces and opening pod terminals require a Console JWT; an account API key cannot perform them. Namespace creation also requires a name prefixed by the tenant slug, and deleting a populated namespace removes its workloads. Explain credential or target constraints before proceeding.",
-		"- Use Darkubectl's schemas, help, and repository guidance for platform behavior. Do not infer unsupported Darkube behavior from Kubernetes conventions.",
-	}, "\n")
-}
-
-func darkubectlSkill() string {
-	return strings.Join([]string{
-		"---",
-		"name: darkubectl",
-		"description: Safely inspect and manage Hamravesh Darkube tenants, apps, builds, domains, and support data with darkubectl MCP tools or CLI.",
-		"---",
-		"",
-		skillMarker,
-		"# Darkubectl",
-		"",
-		"Use this skill for Hamravesh Darkube operations. Prefer the platform's typed MCP tools because their schemas describe supported arguments. If none fits, use the generic darkubectl MCP command tool. Use the CLI only when MCP is unavailable or does not expose the operation. Never switch paths to bypass an MCP denial or access policy.",
-		"",
-		"## Platform model",
-		"",
-		"Darkube is Hamravesh's application platform on Kubernetes. Its API calls are usually tenant-scoped: an organization is a tenant, a namespace is a project, and an app is a managed application. Never guess which tenant the user means.",
-		"",
-		"## Workflow",
-		"",
-		"1. If the account, membership, or tenant is unclear, call whoami and use its tenant list. Typed tools accept an optional tenant to select the organization for that call; this does not change the server's credential, config, or API endpoint.",
-		"2. Use the most specific tool available, such as list_apps, describe_app, get_app_spec, get_pods, app_logs, get_domains, or rollout_status. Use the generic darkubectl tool only for commands without a typed tool; pass its args as an argument list, not shell text.",
-		"3. Follow the MCP server's command access instructions. The generic tool applies policy to the resolved command; commands not classified as reads require write access, and terminal or non-returning commands remain blocked. A CLI path is not a way around an MCP denial.",
-		"4. Inspect the current resource before proposing or making a change. Use JSON or YAML output when parsing CLI results. Check schemas, command help, or repository guidance instead of inferring behavior from Kubernetes conventions.",
-		"5. Only make changes the user requested. Use dryRun when supported and review the target and diff before writing. Read the resource back afterward; a successful request or HTTP 202 response alone does not prove the platform stored the change.",
-		"",
-		"## Access and credentials",
-		"",
-		"The MCP server uses this machine's darkubectl configuration, credential, and API endpoint for every call. The optional tenant parameter on typed tools selects the organization for that call only.",
-		"",
-		"MCP is read-only by default. The generic command tool permits reads unless a command may expose secrets; secret operations require --allow-secrets. Write tools are registered only when the server starts with --allow-writes, which also enables secret access. Commands needing a terminal or that run indefinitely remain blocked. Never bypass a denial by changing tools, credentials, or execution paths.",
-		"",
-		"The MCP child has no interactive stdin. A generic command that prompts needs --yes; only include it for a user-requested change after checking its exact target.",
-		"",
-		"Treat API keys, secret environment values, registry credentials, and deployment tokens as sensitive. Secret environment values are hidden by default. Do not print, log, or copy secrets into generated files; only pass or reveal a secret when the user's explicit task requires it and the configured MCP access permits it.",
-		"",
-		"An account API key cannot create apps or namespaces or open pod terminals; those operations require a Console JWT. Namespace creation also requires its name to start with the tenant slug. If the available credential cannot perform the requested operation, explain the requirement instead of trying another credential path.",
-		"",
-		"## Deletion and recovery",
-		"",
-		"Do not use delete as routine cleanup or as a fix for an app-name conflict. If the user requests deletion, verify the exact tenant and target first. App deletion is asynchronous and may leave its Helm release behind; use get orphans to inspect releases before recreating an app whose name is blocked, and report only the state darkubectl confirms.",
-		"",
-		"Namespace deletion is destructive: a populated namespace's workloads are removed with it. Inspect its apps first and do not rely on the API to protect them. Namespace deletion requires a Console JWT.",
-		"",
-	}, "\n")
-}
-
+// simpleDiff shows the lines that differ between the common head and tail of
+// two texts: enough for edits that touch one block of a file.
 func simpleDiff(before, after string) []string {
 	oldLines := strings.Split(strings.TrimSuffix(before, "\n"), "\n")
 	newLines := strings.Split(strings.TrimSuffix(after, "\n"), "\n")
@@ -674,11 +672,12 @@ func simpleDiff(before, after string) []string {
 		oldLines[len(oldLines)-1-suffix] == newLines[len(newLines)-1-suffix] {
 		suffix++
 	}
-	var lines []string
-	for _, line := range oldLines[prefix : len(oldLines)-suffix] {
+	removed, added := oldLines[prefix:len(oldLines)-suffix], newLines[prefix:len(newLines)-suffix]
+	lines := make([]string, 0, len(removed)+len(added))
+	for _, line := range removed {
 		lines = append(lines, "- "+line)
 	}
-	for _, line := range newLines[prefix : len(newLines)-suffix] {
+	for _, line := range added {
 		lines = append(lines, "+ "+line)
 	}
 	return lines

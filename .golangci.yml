@@ -53,6 +53,12 @@ linters:
         linters:
           - forbidigo
           - err113
+      # agentsetup backs `agent setup` and nothing else: its errors are the same
+      # one-shot messages about the user's choices and config files, shown once
+      # and never matched.
+      - path: (^|/)internal/agentsetup/
+        linters:
+          - err113
       # DTO structs mirror external JSON we do not control: the Darkube API
       # (snake_case, acronyms like enable_SSL) and the k8s remotecommand resize
       # payload ({"Width","Height"}).
