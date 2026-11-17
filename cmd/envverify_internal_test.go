@@ -26,6 +26,11 @@ func TestEnvProbeHashMatchesLocalHash(t *testing.T) {
 	if _, err := exec.LookPath("sha256sum"); err != nil {
 		t.Skip("no sha256sum")
 	}
+	// The probe reads a process's environment from procfs, which is what a pod
+	// has and a Mac does not.
+	if _, err := os.Stat("/proc/self/environ"); err != nil {
+		t.Skip("no procfs on this system")
+	}
 	value := "Server=x,1433;Database=W;User Id=sa;password=not-real$=x!%; T=1"
 	script := strings.ReplaceAll(envProbeCommand([]string{"CONN", "ABSENT"}), "/proc/1/environ", "/proc/$$/environ")
 	c := exec.CommandContext(t.Context(), "sh", "-c", script) //nolint:gosec // the script is envProbeCommand over fixed names

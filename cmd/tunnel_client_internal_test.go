@@ -42,7 +42,9 @@ func TestRunChiselClientForwardsThroughARealServer(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		// A cancelled client reports why it stopped; any answer means it did.
+		t.Logf("runChiselClient returned: %v", err)
 	case <-time.After(10 * time.Second):
 		t.Error("runChiselClient did not return after its context was cancelled")
 	}
