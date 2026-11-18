@@ -31,7 +31,7 @@ Use the filters and contextual help from [K9s](https://k9scli.io/topics/commands
 | Release | Deliverable | Exit condition |
 | --- | --- | --- |
 | 0 · Offline preview | Versioned YAML mock profile and read-only Apps tree | `darkubectl tui --mock-file demo/mock-profile.yaml` renders entirely from the file, with no API client or credentials |
-| 1A · Read-only shell | Launch, context, Apps, Summary, navigation and error states | An API-key user with a configured tenant can find and open the correct app, even when Profile is unavailable |
+| 1A · Read-only shell | Launch, context, Apps, Summary, Outbound IP, navigation and error states | An API-key user with a configured tenant can find and open the correct app, even when Profile is unavailable |
 | 1B · Read-only diagnostics | Pods, current and previous logs, Builds and build output | A Console-authenticated user can trace an unhealthy app to pod or build evidence, and the UI explains unavailable capabilities |
 | 1C · Read-only triage | Overview, Alerts and Notifications | Each feed reports its own state and scope. Verified alert links open one exact app |
 | 2 · App-specific workflows | Usage controls (autoscaling and disk), Builds/Deploy, Domains and History, plus lifecycle actions such as restart | View-specific changes stay with their app view; lifecycle mutations use review, existing validation, target binding and post-submit verification |
