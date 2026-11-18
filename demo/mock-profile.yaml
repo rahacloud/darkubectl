@@ -1,0 +1,88 @@
+version: 1
+tenants:
+  - name: demo-acme
+    apps:
+      - id: app-api-prod
+        name: api
+        namespace:
+          id: 101
+          name: production
+          cluster:
+            id: 11
+            name: demo-west
+        state:
+          type: healthy
+          text: healthy (2/2)
+          description: All replicas are ready
+        replicas: 2
+        creation_method: docker_image
+        image_repo: registry.example.test/demo/api
+        image_tag: v1.8.2
+        custom_domain_address: api.demo.example.test
+      - id: app-worker-prod
+        name: worker
+        namespace:
+          id: 101
+          name: production
+          cluster:
+            id: 11
+            name: demo-west
+        state:
+          type: not_ready
+          text: not ready (1/2)
+          description: One replica is not ready
+        replicas: 2
+        creation_method: git_repo_url
+        image_repo: registry.example.test/demo/worker
+        image_tag: build-204
+      - id: app-api-staging
+        name: api
+        namespace:
+          id: 202
+          name: staging
+          cluster:
+            id: 12
+            name: demo-east
+        state:
+          type: healthy
+          text: healthy (1/1)
+          description: All replicas are ready
+        replicas: 1
+        creation_method: docker_image
+        image_repo: registry.example.test/demo/api
+        image_tag: v1.8.1
+        custom_domain_address: api.staging.demo.example.test
+  - name: demo-labs
+    apps:
+      - id: app-notebook
+        name: notebook
+        namespace:
+          id: 301
+          name: research
+          cluster:
+            id: 21
+            name: demo-north
+        state:
+          type: healthy
+          text: healthy (1/1)
+          description: All replicas are ready
+        replicas: 1
+        creation_method: docker_image
+        image_repo: registry.example.test/labs/notebook
+        image_tag: latest
+      - id: app-api-labs
+        name: api
+        namespace:
+          id: 302
+          name: experiments
+          cluster:
+            id: 22
+            name: demo-north
+        state:
+          type: degraded
+          text: degraded (1/2)
+          description: One replica is warming up
+        replicas: 2
+        creation_method: docker_image
+        image_repo: registry.example.test/labs/api
+        image_tag: canary

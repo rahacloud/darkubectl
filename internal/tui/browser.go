@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
@@ -17,8 +18,30 @@ import (
 )
 
 type appsResult struct {
-	apps []client.App
-	err  error
+	tenant string
+	apps   []client.App
+	err    error
+}
+
+type profileResult struct {
+	profile *client.Profile
+	err     error
+}
+
+type blinkMsg struct{}
+
+type tenantOption struct {
+	name   string
+	source string
+	status string
+}
+
+// BrowserOptions contains the account and tenant-scoped reads used by the live browser.
+type BrowserOptions struct {
+	Tenant       string
+	LocalTenants []string
+	Profile      func(context.Context) (*client.Profile, error)
+	ListApps     func(context.Context, string) ([]client.App, error)
 }
 
 type namespaceKey struct {
@@ -35,7 +58,18 @@ type treeNode struct {
 
 type browser struct {
 	tenant            string
-	listApps          func() ([]client.App, error)
+	mode              string
+	listApps          func(string) ([]client.App, error)
+	profile           func(context.Context) (*client.Profile, error)
+	ctx               context.Context
+	localTenants      []string
+	tenants           []tenantOption
+	tenantCursor      int
+	selectingTenant   bool
+	profileLoaded     bool
+	profileErr        error
+	profileEmpty      bool
+	tenantStatus      string
 	apps              []client.App
 	err               error
 	loading           bool
@@ -44,35 +78,109 @@ type browser struct {
 	collapsed         map[namespaceKey]bool
 	detail            bool
 	help              bool
+	blinkOn           bool
 	width             int
 	height            int
 }
 
 // RunBrowser opens the read-only app browser using the caller's scoped client.
-func RunBrowser(ctx context.Context, tenant string, listApps func(context.Context) ([]client.App, error)) error {
+func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &browser{tenant: tenant, listApps: func() ([]client.App, error) { return listApps(ctx) }}
+	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx, blinkOn: true,
+		localTenants: append([]string(nil), options.LocalTenants...),
+		listApps:     func(tenant string) ([]client.App, error) { return options.ListApps(ctx, tenant) }}
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }
 
+// RunMockBrowser opens a browser backed only by the supplied local fixture.
+func RunMockBrowser(ctx context.Context, profile MockProfile) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	_, err := tea.NewProgram(newMockBrowser(profile), tea.WithContext(ctx)).Run()
+	return err
+}
+
+func newMockBrowser(profile MockProfile) *browser {
+	tenantProfiles := append([]MockTenant(nil), profile.Tenants...)
+	if len(tenantProfiles) == 0 {
+		tenantProfiles = []MockTenant{{Name: profile.Tenant, Apps: profile.Apps}}
+	}
+	appsByTenant := make(map[string][]client.App, len(tenantProfiles))
+	options := make([]tenantOption, 0, len(tenantProfiles))
+	for _, tenant := range tenantProfiles {
+		appsByTenant[tenant.Name] = append([]client.App(nil), tenant.Apps...)
+		options = append(options, tenantOption{name: tenant.Name, source: "Mock profile"})
+	}
+	if len(options) > 0 {
+		options[0].status = "current"
+	}
+	m := &browser{
+		tenant:  profile.Tenant,
+		mode:    "MOCK PROFILE · OFFLINE",
+		tenants: options,
+		listApps: func(tenant string) ([]client.App, error) {
+			apps, ok := appsByTenant[tenant]
+			if !ok {
+				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
+			}
+			return append([]client.App(nil), apps...), nil
+		},
+	}
+	m.selectingTenant = len(options) > 1
+	return m
+}
+
 func (m *browser) load() tea.Cmd {
 	m.loading = true
+	tenant := m.tenant
 	return func() tea.Msg {
-		apps, err := m.listApps()
-		return appsResult{apps: apps, err: err}
+		apps, err := m.listApps(tenant)
+		return appsResult{tenant: tenant, apps: apps, err: err}
 	}
 }
 
-func (m *browser) Init() tea.Cmd { return m.load() }
+func (m *browser) loadProfile() tea.Cmd {
+	if m.profile == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		profile, err := m.profile(m.ctx)
+		return profileResult{profile: profile, err: err}
+	}
+}
+
+func (m *browser) Init() tea.Cmd {
+	profileCmd := m.loadProfile()
+	if m.mode != "LIVE" {
+		return m.load()
+	}
+	if m.tenant == "" && m.mode == "LIVE" {
+		m.selectingTenant = true
+		return tea.Batch(profileCmd, blinkCmd())
+	}
+	return tea.Batch(profileCmd, m.load(), blinkCmd())
+}
+
+func blinkCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return blinkMsg{} })
+}
 
 //nolint:cyclop,gocognit,gocyclo // Message routing keeps the model's transitions together.
 func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case blinkMsg:
+		if m.mode == "LIVE" {
+			m.blinkOn = !m.blinkOn
+			return m, blinkCmd()
+		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case appsResult:
+		if msg.tenant != m.tenant {
+			return m, nil
+		}
 		m.loading = false
 		m.err = msg.err
 		if msg.err == nil { //nolint:nestif // Refresh preserves the selected app and its detail state.
@@ -104,24 +212,68 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detail = false
 			}
 		}
+	case profileResult:
+		m.profileLoaded = true
+		m.profileErr = msg.err
+		m.tenantStatus = ""
+		m.tenants = nil
+		if msg.err == nil {
+			m.profileEmpty = msg.profile == nil || len(msg.profile.Organizations) == 0
+			if msg.profile != nil {
+				for _, org := range msg.profile.Organizations {
+					status := ""
+					if org.Name == m.tenant {
+						status = "current"
+					}
+					m.tenants = append(m.tenants, tenantOption{name: org.Name, source: "Profile", status: status})
+				}
+			}
+			if m.tenant != "" && !containsTenant(m.tenants, m.tenant) {
+				m.tenantStatus = "unverified"
+			}
+		} else {
+			m.profileEmpty = false
+			for _, name := range m.localTenants {
+				m.tenants = appendTenant(m.tenants, tenantOption{name: name, source: "Local config"})
+			}
+			if m.tenant != "" {
+				m.tenants = appendTenant(m.tenants, tenantOption{name: m.tenant, source: "Local config", status: "current"})
+				m.tenantStatus = "local config"
+			}
+		}
+		if m.tenant == "" {
+			m.selectingTenant = true
+			m.tenantCursor = min(m.tenantCursor, max(0, len(m.tenants)-1))
+		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "t":
+			if !m.help && !m.detail {
+				m.selectingTenant = !m.selectingTenant
+				m.tenantCursor = 0
+			}
 		case "?":
 			m.help = !m.help
 		case keyEscape:
-			if m.help {
+			if m.selectingTenant && m.tenant != "" {
+				m.selectingTenant = false
+			} else if m.help {
 				m.help = false
 			} else {
 				m.detail = false
 			}
 		case "up", "k":
-			if !m.help && !m.detail {
+			if m.selectingTenant {
+				m.tenantCursor = max(0, m.tenantCursor-1)
+			} else if !m.help && !m.detail {
 				m.moveTree(-1)
 			}
 		case "down", "j":
-			if !m.help && !m.detail {
+			if m.selectingTenant {
+				m.tenantCursor = min(max(0, len(m.tenants)-1), m.tenantCursor+1)
+			} else if !m.help && !m.detail {
 				m.moveTree(1)
 			}
 		case "home", "g":
@@ -133,7 +285,11 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectTree(len(m.treeNodes()) - 1)
 			}
 		case "enter":
-			if !m.help && len(m.apps) > 0 {
+			if m.selectingTenant {
+				if len(m.tenants) > 0 {
+					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
+				}
+			} else if !m.help && len(m.apps) > 0 {
 				if m.namespaceSelected {
 					m.toggleNamespace()
 				} else {
@@ -149,6 +305,12 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setCollapsed(false)
 			}
 		case "r":
+			if m.selectingTenant {
+				m.profileLoaded = false
+				m.profileEmpty = false
+				m.profileErr = nil
+				return m, m.loadProfile()
+			}
 			if !m.help && !m.loading {
 				return m, m.load()
 			}
@@ -157,12 +319,59 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func appendTenant(tenants []tenantOption, option tenantOption) []tenantOption {
+	for i := range tenants {
+		if tenants[i].name == option.name {
+			if option.status != "" {
+				tenants[i].status = option.status
+			}
+			return tenants
+		}
+	}
+	return append(tenants, option)
+}
+
+func containsTenant(tenants []tenantOption, name string) bool {
+	for _, option := range tenants {
+		if option.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *browser) chooseTenant(name string) tea.Cmd {
+	for i := range m.tenants {
+		m.tenants[i].status = ""
+		if m.tenants[i].name == name {
+			m.tenants[i].status = "current"
+		}
+	}
+	if name == m.tenant {
+		m.selectingTenant = false
+		return nil
+	}
+	m.tenant = name
+	m.tenantStatus = ""
+	m.selectingTenant = false
+	m.apps = nil
+	m.err = nil
+	m.selected = 0
+	m.namespaceSelected = false
+	m.collapsed = nil
+	m.detail = false
+	return m.load()
+}
+
 func (m *browser) View() tea.View {
 	var lines []string
 	if m.width < 60 || m.height < 16 {
 		lines = []string{"Resize terminal to at least 60 x 16", "q quit"}
 	} else {
-		lines = append(lines, paint("◆ Darkubectl / Apps", output.ColorAccent, true)+"  │  Tenant: "+safeText(m.tenant)+"  │  Read only", "")
+		lines = append(lines, m.breadcrumb(), "")
+		if m.profileLoaded && m.profileErr != nil && !m.selectingTenant {
+			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
+		}
 		switch {
 		case m.help:
 			lines = append(lines, "Navigation", "Up/Down or k/j: select    Enter: toggle namespace or open app",
@@ -178,14 +387,25 @@ func (m *browser) View() tea.View {
 				lines = append(lines, "Loading apps...")
 			}
 			if m.err != nil {
-				lines = append(lines, "Refresh failed; displayed apps may be stale: "+safeText(m.err.Error()))
+				if len(m.apps) == 0 {
+					lines = append(lines, "Could not load apps: "+safeText(m.err.Error())+"  (r to retry)")
+				} else {
+					lines = append(lines, "Refresh failed; displayed apps may be stale: "+safeText(m.err.Error()))
+				}
 			}
 			if !m.loading && m.err == nil && len(m.apps) == 0 {
-				lines = append(lines, "No apps in this tenant.")
+				emptyLabel := "No apps in this tenant."
+				if strings.HasPrefix(m.mode, "MOCK") {
+					emptyLabel = "No apps in this mock profile."
+				}
+				lines = append(lines, emptyLabel)
 			}
 			lines = append(lines, m.appTree(max(0, m.height-len(lines)-footerHeight-1))...)
 		}
-		lines = append(lines, "", "j/k move  Enter open/toggle  h/l collapse/expand  r refresh  ? help  q quit")
+		lines = append(lines, "", "j/k move  Enter open/toggle  h/l collapse/expand  t tenants  r refresh  ? help  q quit")
+	}
+	if m.selectingTenant && m.width >= 60 && m.height >= 16 {
+		lines = m.tenantModal(lines)
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], max(0, m.width), "")
@@ -193,6 +413,153 @@ func (m *browser) View() tea.View {
 	v := tea.NewView(strings.Join(lines, "\n"))
 	v.AltScreen = true
 	return v
+}
+
+func (m *browser) breadcrumb() string {
+	parts := []string{"Darkubectl"}
+	if m.tenant != "" {
+		tenant := safeText(m.tenant)
+		if m.tenantStatus != "" {
+			tenant += " (" + m.tenantStatus + ")"
+		}
+		parts = append(parts, tenant)
+	}
+	parts = append(parts, "Apps")
+	if m.detail && len(m.apps) > 0 && m.selected >= 0 && m.selected < len(m.apps) {
+		app := m.apps[m.selected]
+		parts = append(parts, safeText(app.Namespace.Name), safeText(app.Name))
+	}
+	separator := paint(" / ", output.ColorMuted, false)
+	crumbs := make([]string, 0, len(parts))
+	for i, part := range parts {
+		if i == 0 {
+			crumbs = append(crumbs, paint(part, output.ColorAccent, true))
+		} else {
+			crumbs = append(crumbs, paint(part, output.ColorBranch, i == len(parts)-1))
+		}
+	}
+	path := strings.Join(crumbs, separator)
+	if m.mode == "LIVE" {
+		glyph, glyphColor := "●", output.ColorSuccess
+		if !m.blinkOn {
+			glyph, glyphColor = "○", output.ColorMuted
+		}
+		return paint(glyph, glyphColor, true) + " " + path
+	}
+	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK · OFFLINE", output.ColorMuted, false) + "  " + path
+}
+
+func (m *browser) tenantModal(background []string) []string {
+	panelWidth := min(68, m.width-4)
+	innerWidth := panelWidth - 6 // border and horizontal padding
+	messages := []string{}
+	if !m.profileLoaded {
+		messages = append(messages, "Loading account profile…")
+	}
+	if m.profileErr != nil {
+		messages = append(messages, "Profile unavailable · using local config")
+	}
+	if m.profileEmpty {
+		messages = append(messages, "Profile returned no tenant memberships")
+	}
+	noChoices := len(m.tenants) == 0 && m.profileLoaded
+	if noChoices {
+		messages = append(messages, "No tenant choices are available.", "Use darkubectl whoami, --org, or darkubectl login.")
+	}
+	maxInnerHeight := max(6, min(15, m.height-8))
+	listCapacity := max(1, maxInnerHeight-5-len(messages))
+	first := max(0, min(m.tenantCursor-listCapacity+1, len(m.tenants)-listCapacity))
+	last := min(len(m.tenants), first+listCapacity)
+	content := []string{
+		paint("◈  SWITCH TENANT", output.ColorAccent, true),
+		"Choose a tenant for this TUI session",
+		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
+	}
+	content = append(content, messages...)
+	for i := first; i < last; i++ {
+		option := m.tenants[i]
+		label := m.tenantRow(option, i, innerWidth)
+		content = append(content, label)
+	}
+	if first > 0 || last < len(m.tenants) {
+		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(m.tenants)), output.ColorMuted, false))
+	}
+	content = append(content, "", "↑/↓ or k/j move  ·  Enter select", "Esc cancel  ·  r retry profile  ·  session only")
+	style := tenantPanelStyle()
+	panel := style.Width(panelWidth).Render(strings.Join(content, "\n"))
+	panelLines := strings.Split(panel, "\n")
+	if len(background) < m.height {
+		background = append(background, make([]string, m.height-len(background))...)
+	}
+	startY := max(0, (m.height-len(panelLines))/2)
+	startX := max(0, (m.width-panelWidth)/2)
+	for i, panelLine := range panelLines {
+		y := startY + i
+		if y >= len(background) {
+			break
+		}
+		width := ansi.StringWidth(panelLine)
+		if width < panelWidth {
+			panelLine += strings.Repeat(" ", panelWidth-width)
+		}
+		base := ansi.Truncate(background[y], m.width, "")
+		base = base + strings.Repeat(" ", max(0, m.width-ansi.StringWidth(base)))
+		background[y] = ansi.Cut(base, 0, startX) + panelLine + ansi.Cut(base, startX+panelWidth, m.width)
+	}
+	return background[:m.height]
+}
+
+func (m *browser) tenantRow(option tenantOption, index, width int) string {
+	const sourceWidth = 12
+	nameWidth := max(8, width-sourceWidth-8)
+	name := ansi.Truncate(safeText(option.name), nameWidth, "…")
+	marker := " "
+	if index == m.tenantCursor {
+		marker = "›"
+	}
+	plain := " " + marker + " " + name
+	plain += strings.Repeat(" ", max(1, width-sourceWidth-3-ansi.StringWidth(plain)))
+	source := ansi.Truncate(option.source, sourceWidth, "…")
+	plain += source + "  "
+	check := " "
+	if option.status == "current" {
+		check = "✓"
+	}
+	plain += check
+	plain = ansi.Truncate(plain, width, "")
+	plain += strings.Repeat(" ", max(0, width-ansi.StringWidth(plain)))
+	if index == m.tenantCursor {
+		return tenantSelectedStyle().Width(width).Render(plain)
+	}
+	row := " " + paint(marker, output.ColorBranch, true) + " " + paint(name, output.ColorKey, false)
+	row += strings.Repeat(" ", max(1, width-sourceWidth-3-ansi.StringWidth(" "+marker+" "+name)))
+	row += paint(source, output.ColorMuted, false) + "  "
+	if check == "✓" {
+		row += paint(check, output.ColorSuccess, true)
+	} else {
+		row += check
+	}
+	return row + strings.Repeat(" ", max(0, width-ansi.StringWidth(row)))
+}
+
+func tenantPanelStyle() lipgloss.Style {
+	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
+	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
+		style = style.BorderForeground(output.ColorBorder)
+	} else {
+		style = style.Border(lipgloss.NormalBorder())
+	}
+	return style
+}
+
+func tenantSelectedStyle() lipgloss.Style {
+	style := lipgloss.NewStyle().Bold(true)
+	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
+		style = style.Foreground(lipgloss.Color("#FFFFFF")).Background(output.ColorBranch)
+	} else {
+		style = style.Reverse(true)
+	}
+	return style
 }
 
 func (m *browser) treeNodes() []treeNode {

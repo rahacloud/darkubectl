@@ -1,0 +1,195 @@
+package tui
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/rahacloud/darkubectl/internal/client"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	mockProfileVersion = 1
+	mockProfileMaxSize = 1 << 20
+	mockProfileMaxApps = 1000
+)
+
+// MockProfile contains only the safe, read-only fields the browser renders.
+type MockProfile struct {
+	Tenant  string
+	Apps    []client.App
+	Tenants []MockTenant
+}
+
+// MockTenant is one tenant and its local, read-only app snapshot.
+type MockTenant struct {
+	Name string
+	Apps []client.App
+}
+
+type mockProfileFile struct {
+	Version int                 `yaml:"version"`
+	Tenant  string              `yaml:"tenant"`
+	Apps    []mockProfileApp    `yaml:"apps"`
+	Tenants []mockProfileTenant `yaml:"tenants"`
+}
+
+type mockProfileTenant struct {
+	Name string           `yaml:"name"`
+	Apps []mockProfileApp `yaml:"apps"`
+}
+
+type mockProfileApp struct {
+	ID                  string               `yaml:"id"`
+	Name                string               `yaml:"name"`
+	Namespace           mockProfileNamespace `yaml:"namespace"`
+	State               mockProfileState     `yaml:"state"`
+	Replicas            int                  `yaml:"replicas"`
+	CreationMethod      string               `yaml:"creation_method"`
+	ImageRepo           string               `yaml:"image_repo"`
+	ImageTag            string               `yaml:"image_tag"`
+	CustomDomainAddress string               `yaml:"custom_domain_address"`
+}
+
+type mockProfileNamespace struct {
+	ID      int                `yaml:"id"`
+	Name    string             `yaml:"name"`
+	Cluster mockProfileCluster `yaml:"cluster"`
+}
+
+type mockProfileCluster struct {
+	ID   int    `yaml:"id"`
+	Name string `yaml:"name"`
+}
+
+type mockProfileState struct {
+	Type        string `yaml:"type"`
+	Text        string `yaml:"text"`
+	Description string `yaml:"description"`
+}
+
+// LoadMockProfile reads a bounded, versioned YAML fixture. Unknown fields fail
+// parsing so secrets and unsupported data cannot silently enter the UI model.
+func LoadMockProfile(path string) (MockProfile, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return MockProfile{}, fmt.Errorf("open mock profile %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(f, mockProfileMaxSize+1))
+	if err != nil {
+		return MockProfile{}, fmt.Errorf("read mock profile %q: %w", path, err)
+	}
+	if len(data) > mockProfileMaxSize {
+		return MockProfile{}, fmt.Errorf("mock profile exceeds the %d-byte limit", mockProfileMaxSize)
+	}
+	return ParseMockProfile(data)
+}
+
+// ParseMockProfile decodes one strict YAML document without exposing parser
+// snippets, which can contain values copied into a malformed fixture.
+func ParseMockProfile(data []byte) (MockProfile, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	var input mockProfileFile
+	if err := decoder.Decode(&input); err != nil {
+		return MockProfile{}, errors.New("mock profile contains invalid or unsupported YAML")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return MockProfile{}, errors.New("mock profile must contain exactly one YAML document")
+	}
+	if input.Version != mockProfileVersion {
+		return MockProfile{}, fmt.Errorf("unsupported mock profile version %d; expected %d", input.Version, mockProfileVersion)
+	}
+	if len(input.Tenants) > 0 {
+		if strings.TrimSpace(input.Tenant) != "" || len(input.Apps) > 0 {
+			return MockProfile{}, errors.New("mock profile cannot mix top-level tenant/apps with tenants")
+		}
+		if len(input.Tenants) > mockProfileMaxApps {
+			return MockProfile{}, errors.New("mock profile has too many tenants")
+		}
+		tenants := make([]MockTenant, 0, len(input.Tenants))
+		totalApps := 0
+		seenTenants := make(map[string]struct{}, len(input.Tenants))
+		for _, tenant := range input.Tenants {
+			name := strings.TrimSpace(tenant.Name)
+			if name == "" {
+				return MockProfile{}, errors.New("mock profile tenant name is required")
+			}
+			if _, exists := seenTenants[name]; exists {
+				return MockProfile{}, fmt.Errorf("mock profile has duplicate tenant %q", name)
+			}
+			seenTenants[name] = struct{}{}
+			totalApps += len(tenant.Apps)
+			if totalApps > mockProfileMaxApps {
+				return MockProfile{}, fmt.Errorf("mock profile has more than %d apps", mockProfileMaxApps)
+			}
+			apps, err := convertMockApps(tenant.Apps)
+			if err != nil {
+				return MockProfile{}, err
+			}
+			tenants = append(tenants, MockTenant{Name: name, Apps: apps})
+		}
+		return MockProfile{Tenant: tenants[0].Name, Apps: tenants[0].Apps, Tenants: tenants}, nil
+	}
+	if strings.TrimSpace(input.Tenant) == "" {
+		return MockProfile{}, errors.New("mock profile tenant is required")
+	}
+	if len(input.Apps) > mockProfileMaxApps {
+		return MockProfile{}, fmt.Errorf("mock profile has more than %d apps", mockProfileMaxApps)
+	}
+	apps, err := convertMockApps(input.Apps)
+	if err != nil {
+		return MockProfile{}, err
+	}
+	return MockProfile{Tenant: input.Tenant, Apps: apps}, nil
+}
+
+func convertMockApps(input []mockProfileApp) ([]client.App, error) {
+	apps := make([]client.App, 0, len(input))
+	seenIDs := make(map[string]struct{}, len(input))
+	for i, app := range input {
+		if strings.TrimSpace(app.ID) == "" || strings.TrimSpace(app.Name) == "" {
+			return nil, fmt.Errorf("mock profile app %d requires id and name", i+1)
+		}
+		if app.Namespace.ID < 1 || strings.TrimSpace(app.Namespace.Name) == "" {
+			return nil, fmt.Errorf("mock profile app %q requires a namespace id and name", app.ID)
+		}
+		if app.Replicas < 0 {
+			return nil, fmt.Errorf("mock profile app %q has negative replicas", app.ID)
+		}
+		if _, exists := seenIDs[app.ID]; exists {
+			return nil, fmt.Errorf("mock profile has duplicate app id %q", app.ID)
+		}
+		seenIDs[app.ID] = struct{}{}
+		apps = append(apps, client.App{
+			ID:   app.ID,
+			Name: app.Name,
+			Namespace: client.Namespace{
+				ID:   app.Namespace.ID,
+				Name: app.Namespace.Name,
+				Cluster: client.Cluster{
+					ID:   app.Namespace.Cluster.ID,
+					Name: app.Namespace.Cluster.Name,
+				},
+			},
+			State: client.State{
+				StateType:   app.State.Type,
+				Text:        app.State.Text,
+				Description: app.State.Description,
+			},
+			Replicas:            app.Replicas,
+			CreationMethod:      app.CreationMethod,
+			ImageRepo:           app.ImageRepo,
+			ImageTag:            app.ImageTag,
+			CustomDomainAddress: app.CustomDomainAddress,
+		})
+	}
+	return apps, nil
+}
