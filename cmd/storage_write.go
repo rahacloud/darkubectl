@@ -67,7 +67,7 @@ func newStorageCommand() *cli.Command {
 			"login rather than an API key.",
 		Commands: []*cli.Command{
 			{
-				Name:    "list",
+				Name:    cmdList,
 				Aliases: []string{"ls"},
 				Usage:   "List storages with their S3 endpoint, buckets and keys",
 				Action:  getStorageAction,

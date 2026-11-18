@@ -56,7 +56,7 @@ func newRegistryCommand() *cli.Command {
 			"such as registry.hamdocker.ir/<tenant>/my-api is accepted too.",
 		Commands: []*cli.Command{
 			{
-				Name:    "list",
+				Name:    cmdList,
 				Aliases: []string{"ls"},
 				Usage:   "List the registries the tenant can push to, with their storage use",
 				Action:  registryListAction,

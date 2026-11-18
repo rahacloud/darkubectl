@@ -25,6 +25,7 @@ const (
 	cmdLogs     = "logs"
 	cmdDescribe = "describe"
 	cmdWhoami   = "whoami"
+	cmdList     = "list"
 )
 
 // Command paths the MCP policy and tools both name.
@@ -79,34 +80,38 @@ func (a mcpAccess) String() string {
 // an AI agent quietly deleting an app. Every `get` subcommand is a read unless
 // listed here, and a bare command group only prints its help.
 var mcpPolicy = map[string]mcpAccess{
-	"version":           accessRead,
-	cmdWhoami:           accessRead,
-	pathDescribeApp:     accessRead,
-	pathLogsApp:         accessRead,
-	"top app":           accessRead,
-	"top apps":          accessRead,
-	"wait app":          accessRead,
-	"rollout status":    accessRead,
-	"rollout history":   accessRead,
-	"build list":        accessRead,
-	pathBuildLogs:       accessRead,
-	"registry list":     accessRead,
-	"registry images":   accessRead,
-	"registry tags":     accessRead,
-	"registry gc":       accessRead,
-	"storage list":      accessRead,
-	"ticket list":       accessRead,
-	"ticket view":       accessRead,
-	"ticket types":      accessRead,
-	"ticket priorities": accessRead,
-	"config view":       accessRead,
-	"get deploy-token":  accessSecret,
-	"get ci-config":     accessSecret,
-	"registry password": accessSecret,
-	"terminal":          accessBlocked,
-	"login":             accessBlocked,
-	"completion":        accessBlocked,
-	"mcp":               accessBlocked,
+	"version":            accessRead,
+	cmdWhoami:            accessRead,
+	pathDescribeApp:      accessRead,
+	pathLogsApp:          accessRead,
+	"top app":            accessRead,
+	"top apps":           accessRead,
+	"wait app":           accessRead,
+	"rollout status":     accessRead,
+	"rollout history":    accessRead,
+	"build list":         accessRead,
+	pathBuildLogs:        accessRead,
+	"registry list":      accessRead,
+	"registry images":    accessRead,
+	"registry tags":      accessRead,
+	"registry gc":        accessRead,
+	"storage list":       accessRead,
+	"ticket list":        accessRead,
+	"ticket view":        accessRead,
+	"ticket types":       accessRead,
+	"ticket priorities":  accessRead,
+	"config view":        accessRead,
+	"describe cluster":   accessRead,
+	"kaas whitelist get": accessRead,
+	"kaas backups":       accessRead,
+	"kaas kubeconfig":    accessSecret,
+	"get deploy-token":   accessSecret,
+	"get ci-config":      accessSecret,
+	"registry password":  accessSecret,
+	"terminal":           accessBlocked,
+	"login":              accessBlocked,
+	"completion":         accessBlocked,
+	"mcp":                accessBlocked,
 	// agent setup rewrites the MCP configuration of the clients on this
 	// machine, this server's own entry included. As a plain write, an agent
 	// holding --allow-writes for one project could grant the same to every
@@ -247,6 +252,11 @@ func (inv mcpInvocation) classify() (mcpAccess, string) {
 		if inv.flags["show-secrets"] || inv.flags[flagLive] {
 			return accessSecret, ""
 		}
+	case "kaas rotate-kubeconfig":
+		// It cuts off every holder of the old kubeconfig (CI, Argo CD), and
+		// nothing in the API undoes it; a person runs it, not an agent.
+		return accessBlocked, "it invalidates every existing kubeconfig of the cluster and cannot be undone; " +
+			"a person has to run it"
 	case "get orphans":
 		// --kubectl names a binary to run on this machine.
 		if inv.flags["kubectl"] {
@@ -293,10 +303,12 @@ func newMCPCommand() *cli.Command {
 			"--org, --config, --token and --base-url given before `mcp` apply to every call;\n" +
 			"a call may pick another tenant, never another credential.\n\n" +
 			"By default only reads run. Commands that print a secret (get deploy-token,\n" +
-			"get ci-config, get env --show-secrets, registry password, api GET) need\n" +
-			"--allow-secrets; anything that changes state needs --allow-writes, and a write\n" +
-			"that prompts still needs --yes in its args, since nobody is there to answer.\n" +
-			"terminal, login, tunnel connect, watches and follows are refused: they never return.",
+			"get ci-config, get env --show-secrets, registry password, kaas kubeconfig,\n" +
+			"api GET) need --allow-secrets; anything that changes state needs --allow-writes,\n" +
+			"and a write that prompts still needs --yes in its args, since nobody is there\n" +
+			"to answer. terminal, login, tunnel connect, watches and follows are refused:\n" +
+			"they never return. So is kaas rotate-kubeconfig, which cuts off every holder\n" +
+			"of the old kubeconfig and cannot be undone.",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: flagAllowWrites, Usage: "allow commands that change state (implies --allow-secrets)"},
 			&cli.BoolFlag{Name: flagAllowSecrets, Usage: "allow commands that print secrets"},

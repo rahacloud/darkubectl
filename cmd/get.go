@@ -120,6 +120,7 @@ func newGetCommand() *cli.Command {
 			newGetSuggestionsCommand(),
 			newGetDatabasesCommand(),
 			newGetServicesCommand(),
+			newGetClustersCommand(),
 			newGetBalanceCommand(),
 			newGetInvoicesCommand(),
 			newGetAPIKeysCommand(),

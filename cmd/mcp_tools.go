@@ -32,6 +32,7 @@ const (
 	paramTicket = "ticket"
 	paramBuild  = "build"
 	paramSet    = "set"
+	paramRanges = "ranges"
 )
 
 // mcpParam is one argument of a typed tool, named after its flag unless name
@@ -67,6 +68,9 @@ type mcpToolSpec struct {
 	// write tools are registered only with --allow-writes, and get --yes
 	// where the command prompts, since nobody is there to answer.
 	write bool
+	// secret tools hand over a credential and are registered only with
+	// --allow-secrets (which --allow-writes implies).
+	secret bool
 }
 
 func pApp() mcpParam {
@@ -87,6 +91,14 @@ func pWait() mcpParam {
 
 func pLimit(what string) mcpParam {
 	return mcpParam{kind: mcpInteger, usage: "how many " + what + " to list", flag: flagLimit}
+}
+
+func pCluster() mcpParam {
+	return mcpParam{name: cmdCluster, kind: mcpString, usage: "KaaS cluster name, from list_clusters", required: true}
+}
+
+func pRanges(what string) mcpParam {
+	return mcpParam{name: paramRanges, kind: mcpArray, usage: "IP addresses or CIDRs " + what + "; a bare IP means /32", required: true}
 }
 
 func pRegistry() mcpParam {
@@ -198,6 +210,24 @@ func mcpToolSpecs() []mcpToolSpec {
 		{name: "list_certificates", command: "get certificates",
 			description: "List the TLS certificates uploaded to the tenant."},
 
+		// Managed Kubernetes (KaaS).
+		{name: "list_clusters", command: "get clusters -o wide",
+			description: "List the tenant's managed Kubernetes (KaaS) clusters with status, version, API server host and ingress IP."},
+		{name: "describe_cluster", command: "describe cluster", params: []mcpParam{pCluster()},
+			description: "Show a KaaS cluster in full: node pools, nodes and their readiness, the API server whitelist, " +
+				"whether its version is the latest, and its newest etcd backups (warning when backups have stopped)."},
+		{name: "list_etcd_backups", command: "kaas backups", params: []mcpParam{pCluster(), pLimit("backups")},
+			description: "List a KaaS cluster's etcd backups, newest first."},
+		{name: "get_api_whitelist", command: "kaas whitelist get", params: []mcpParam{pCluster()},
+			description: "List the source addresses allowed to reach a KaaS cluster's API server (kubectl access)."},
+		{name: "download_kubeconfig", command: "kaas kubeconfig", secret: true,
+			description: "Write a KaaS cluster's admin kubeconfig (a cluster-admin bearer token) to a file, mode 0600. " +
+				"Refuses to overwrite an existing file. The API server only answers whitelisted addresses.",
+			params: []mcpParam{
+				pCluster(),
+				{name: "path", kind: mcpString, usage: "file to write the kubeconfig to", flag: flagFile, required: true},
+			}},
+
 		// Billing.
 		{name: "get_balance", command: "get balance",
 			description: "Show the tenant's balance: its cash and gift wallets."},
@@ -289,6 +319,14 @@ func mcpToolSpecs() []mcpToolSpec {
 				{kind: mcpString, usage: "CPU request, e.g. 750m (dynamic plans only)", flag: flagCPU},
 				pDryRun(),
 			}},
+		{name: "add_api_whitelist", command: "kaas whitelist add", write: true,
+			description: "Allow more addresses to reach a KaaS cluster's API server. Every existing entry is kept; " +
+				"addresses already present change nothing.",
+			params: []mcpParam{pCluster(), pRanges("to allow"), pDryRun()}},
+		{name: "remove_api_whitelist", command: "kaas whitelist remove", write: true,
+			description: "Stop allowing addresses to reach a KaaS cluster's API server. A removed address loses kubectl " +
+				"access at once; a change that would empty the list is refused.",
+			params: []mcpParam{pCluster(), pRanges("to remove"), pDryRun()}},
 		{name: "reply_ticket", command: "ticket reply", write: true,
 			description: "Reply to a support ticket. This reaches Hamravesh support staff.",
 			params: []mcpParam{
@@ -448,7 +486,7 @@ func mcpValues(p mcpParam, v any) ([]string, error) {
 
 func (s *mcpServer) registerTyped(server *mcp.Server) {
 	for _, t := range mcpToolSpecs() {
-		if t.write && !s.allowWrites {
+		if (t.write && !s.allowWrites) || (t.secret && !s.allowSecrets) {
 			continue
 		}
 		server.AddTool(&mcp.Tool{
@@ -456,7 +494,7 @@ func (s *mcpServer) registerTyped(server *mcp.Server) {
 			Description: t.description + " Runs `darkubectl " + t.command + "`.",
 			InputSchema: t.schema(),
 			Annotations: &mcp.ToolAnnotations{
-				ReadOnlyHint:    !t.write,
+				ReadOnlyHint:    !t.write && !t.secret,
 				DestructiveHint: new(t.write),
 				OpenWorldHint:   new(true),
 			},

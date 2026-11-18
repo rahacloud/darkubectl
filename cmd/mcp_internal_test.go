@@ -54,6 +54,14 @@ func TestMCPClassify(t *testing.T) {
 		{"storage key create k --bucket b --action Read", accessWrite},
 		{"storage bucket delete b", accessWrite},
 		{"agent setup --client claude --scope global --mcp --allow-writes --yes", accessBlocked},
+		{"get clusters", accessRead},
+		{"describe cluster c216", accessRead},
+		{"kaas whitelist get c216", accessRead},
+		{"kaas whitelist add c216 1.2.3.4 --yes", accessWrite},
+		{"kaas whitelist rm c216 1.2.3.4", accessWrite},
+		{"kaas backups c216", accessRead},
+		{"kaas kubeconfig c216 --file /tmp/k", accessSecret},
+		{"kaas rotate-kubeconfig c216 --yes", accessBlocked},
 	}
 	root := NewApp()
 	for _, tc := range cases {
@@ -170,8 +178,11 @@ func TestMCPToolSpecsResolve(t *testing.T) {
 			continue
 		}
 		want := accessRead
-		if spec.write {
+		switch {
+		case spec.write:
 			want = accessWrite
+		case spec.secret:
+			want = accessSecret
 		}
 		if got, why := inv.classify(); got != want {
 			t.Errorf("%s: %q classifies as %s (%s), want %s", spec.name, argv, got, why, want)
