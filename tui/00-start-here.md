@@ -22,7 +22,7 @@ Use the filters and contextual help from [K9s](https://k9scli.io/topics/commands
 | · Billing    │                              │                               |
 | · Account    │                              │                               |
 +--------------+------------------------------+-------------------------------+
-| Tab cycle panes   t tenant   n namespace   / filter   ? help   q quit        |
+| 1-4 focus panes   n namespace   / filter   ? help   q quit                  |
 +-----------------------------------------------------------------------------+
 ```
 
