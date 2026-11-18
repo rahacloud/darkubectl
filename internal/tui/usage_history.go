@@ -69,7 +69,7 @@ func (m *browser) historyLines() []string {
 	lines := []string{"", paint("History · "+window.label+" · "+metric.name, output.ColorMuted, false)}
 	switch m.historyState.status {
 	case requestIdle, requestLoading:
-		return append(lines, paint("Loading history…", output.ColorMuted, false))
+		return append(lines, m.loadingMessage("Loading history…"))
 	case requestUnavailable:
 		return append(lines, paint("History unavailable for this connection.", output.ColorMuted, false))
 	case requestFailed:
@@ -77,7 +77,7 @@ func (m *browser) historyLines() []string {
 	case requestEmpty:
 		return append(lines, paint("No samples in this range.", output.ColorMuted, false))
 	case requestRefreshing:
-		lines = append(lines, paint("Refreshing…", output.ColorMuted, false))
+		lines = append(lines, m.loadingMessage("Refreshing history…"))
 	case requestStale:
 		lines = append(lines, paint("History stale · r retry", output.ColorNumber, false))
 	case requestPartial:
