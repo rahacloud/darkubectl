@@ -29,6 +29,8 @@ type usageRange struct {
 	window, step time.Duration
 }
 
+const historyPlotHeight = 10
+
 var usageRanges = []usageRange{
 	{label: "1h", window: time.Hour, step: time.Minute},
 	{label: "6h", window: 6 * time.Hour, step: 5 * time.Minute},
@@ -66,7 +68,15 @@ func (m *browser) historyLines() []string {
 		m.historyMetric = 0
 	}
 	metric := metrics[m.historyMetric]
-	lines := []string{"", paint("History · "+window.label+" · "+metric.name, output.ColorMuted, false)}
+	_, width, _ := m.paneWidths()
+	width = max(16, width-2)
+	podName := m.historyPod
+	if podName == "" {
+		podName = "All pods"
+	}
+	controls := "[w] " + window.label + " · [m] " + metric.name + " · [p] "
+	controls += ansi.Truncate(safeText(podName), max(0, width-ansi.StringWidth(controls)), "…")
+	lines := []string{"", paint(controls, output.ColorMuted, false)}
 	switch m.historyState.status {
 	case requestIdle, requestLoading:
 		return append(lines, m.loadingMessage("Loading history…"))
@@ -86,19 +96,17 @@ func (m *browser) historyLines() []string {
 	if m.history == nil {
 		return lines
 	}
-	_, width, _ := m.paneWidths()
-	width = max(4, width-2)
-	podName := m.historyPod
-	if podName == "" {
-		podName = "All reported pods"
-	}
-	lines = append(lines, paint(ansi.Truncate("Pods · "+safeText(podName), width, "…"), output.ColorKey, false))
+	lines = append(lines, "")
 	if metric.failed(m.history.Failed) {
 		return append(lines, paint(metric.icon+" "+metric.name+" history unavailable", output.ColorMuted, false))
 	}
 	series := filterHistoryPod(metric.series(m.history), m.historyPod)
 	capacity := metric.capacity(app)
-	chart, peak, ok := historyPlot(series, m.history.Start, m.history.End, m.history.Step, width, capacity)
+	labelWidth := ansi.StringWidth(metric.format(maxHistoryScale(series, capacity)))
+	labelWidth = min(12, max(5, labelWidth))
+	axisWidth := labelWidth + 3
+	plotWidth := max(4, width-axisWidth)
+	chart, peak, ok := historyPlot(series, m.history.Start, m.history.End, m.history.Step, plotWidth, capacity)
 	if !ok {
 		return append(lines, paint(metric.icon+" "+metric.name+" · no samples", output.ColorMuted, false))
 	}
@@ -110,16 +118,98 @@ func (m *browser) historyLines() []string {
 		}
 		lines = append(lines, paint("━━ "+capacityName+" · "+metric.format(*capacity), output.ColorMatchBG, false))
 	}
-	for _, row := range chart {
-		lines = append(lines, row)
+	axisScale := maxHistoryScale(series, capacity)
+	for row, plot := range chart {
+		value := ""
+		switch row {
+		case 0:
+			value = metric.format(axisScale)
+		case historyPlotHeight / 2:
+			value = metric.format(axisScale / 2)
+		case historyPlotHeight - 1:
+			value = metric.format(0)
+		}
+		prefix := strings.Repeat(" ", max(0, labelWidth-ansi.StringWidth(value))) + value + " │ "
+		lines = append(lines, paint(prefix, output.ColorMuted, false)+plot)
 	}
+	lines = append(lines, historyXAxis(m.history.Start, m.history.End, plotWidth, axisWidth)...)
+	lines = append(lines, "")
 	for _, item := range series {
 		if item.Pod == "" {
 			continue
 		}
 		lines = append(lines, paint("● "+safeText(item.Pod), historyPodColor(item.Pod), false))
 	}
-	return append(lines, paint("Oldest → newest · gaps = no samples", output.ColorMuted, false))
+	return lines
+}
+
+func maxHistoryScale(series []client.Series, reference *float64) float64 {
+	maximum := 0.0
+	for _, item := range series {
+		for _, sample := range item.Values {
+			if sample.Value >= 0 && !math.IsNaN(sample.Value) && !math.IsInf(sample.Value, 0) {
+				maximum = math.Max(maximum, sample.Value)
+			}
+		}
+	}
+	if reference != nil && *reference > maximum {
+		maximum = *reference
+	}
+	return maximum
+}
+
+func historyXAxis(start, end time.Time, width, prefixWidth int) []string {
+	if width < 1 {
+		return nil
+	}
+	format := "15:04"
+	if end.Sub(start) >= 24*time.Hour {
+		switch {
+		case width >= 36:
+			format = "01/02 15:04"
+		case width >= 16:
+			format = "01/02"
+		default:
+			format = "15h"
+		}
+	} else if width < 8 {
+		format = "15"
+	}
+	labels := []string{start.Local().Format(format), start.Add(end.Sub(start) / 2).Local().Format(format), end.Local().Format(format)}
+	showMiddle := width >= 3*ansi.StringWidth(labels[0])+2
+	axis := make([]rune, width)
+	for i := range axis {
+		axis[i] = '─'
+	}
+	axis[0] = '└'
+	axis[min(width-1, width/2)] = '┴'
+	axis[width-1] = '┘'
+	labelLine := make([]rune, width)
+	for i := range labelLine {
+		labelLine[i] = ' '
+	}
+	occupied := make([]bool, width)
+	place := func(label string, startAt int) {
+		runes := []rune(label)
+		if startAt < 0 || startAt+len(runes) > width {
+			return
+		}
+		for i := range runes {
+			if occupied[startAt+i] {
+				return
+			}
+		}
+		for i, r := range runes {
+			labelLine[startAt+i], occupied[startAt+i] = r, true
+		}
+	}
+	place(labels[0], 0)
+	place(labels[2], width-ansi.StringWidth(labels[2]))
+	if showMiddle {
+		place(labels[1], width/2-ansi.StringWidth(labels[1])/2)
+	}
+	prefix := strings.Repeat(" ", prefixWidth)
+	return []string{paint(prefix+string(axis), output.ColorBorder, false), paint(prefix+string(labelLine), output.ColorMuted, false)}
 }
 
 type historyMetric struct {
@@ -302,34 +392,39 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 	if count < 1 || count > 10000 {
 		return nil, 0, false
 	}
-	peaks := make([]float64, len(series))
+	if len(series) == 0 {
+		return nil, 0, false
+	}
+	series = append([]client.Series(nil), series...)
+	sort.Slice(series, func(i, j int) bool { return series[i].Pod < series[j].Pod })
+	groups := min(count, max(1, width/len(series)))
+	values := make([][]float64, len(series))
+	present := make([][]bool, len(series))
+	peak := 0.0
 	found := false
-	for _, pod := range series {
+	for podIndex, pod := range series {
+		values[podIndex] = make([]float64, groups)
+		present[podIndex] = make([]bool, groups)
 		for _, sample := range pod.Values {
 			if sample.Time.Before(start) || sample.Time.After(end) || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) || sample.Value < 0 {
 				continue
 			}
+			index := int(sample.Time.Sub(start) / step)
+			group := min(groups-1, index*groups/count)
+			values[podIndex][group] = math.Max(values[podIndex][group], sample.Value)
+			present[podIndex][group] = true
+			peak = math.Max(peak, sample.Value)
 			found = true
 		}
 	}
 	if !found {
 		return nil, 0, false
 	}
-	peak := 0.0
-	for i, pod := range series {
-		for _, sample := range pod.Values {
-			if !sample.Time.Before(start) && !sample.Time.After(end) && sample.Value >= 0 && !math.IsNaN(sample.Value) && !math.IsInf(sample.Value, 0) {
-				peaks[i] = math.Max(peaks[i], sample.Value)
-			}
-		}
-		peak = math.Max(peak, peaks[i])
-	}
 	scale := peak
 	if reference != nil && *reference > scale {
 		scale = *reference
 	}
-	const height = 8
-	width = min(width, count)
+	const height = historyPlotHeight
 	rows := make([][]rune, height)
 	colors := make([][]color.Color, height)
 	for row := range rows {
@@ -339,54 +434,57 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 			rows[row][col] = ' '
 		}
 	}
+	for podIndex := range series {
+		previous := -1
+		for group := range groups {
+			if !present[podIndex][group] {
+				continue
+			}
+			if previous >= 0 && group-previous > 1 {
+				for gap := previous + 1; gap < group; gap++ {
+					fraction := float64(gap-previous) / float64(group-previous)
+					values[podIndex][gap] = values[podIndex][previous] + (values[podIndex][group]-values[podIndex][previous])*fraction
+					present[podIndex][gap] = true
+				}
+			}
+			previous = group
+		}
+	}
+	for group := range groups {
+		left, right := group*width/groups, (group+1)*width/groups
+		span := max(1, right-left)
+		for podIndex, pod := range series {
+			if !present[podIndex][group] {
+				continue
+			}
+			barLeft := left + podIndex*span/len(series)
+			barRight := left + (podIndex+1)*span/len(series)
+			if barRight <= barLeft {
+				barRight = barLeft + 1
+			}
+			barRight = min(width, barRight)
+			level := 0
+			if scale > 0 {
+				level = int(math.Round(values[podIndex][group] / scale * float64(height-1)))
+			}
+			top := height - 1 - level
+			for col := barLeft; col < barRight; col++ {
+				for row := top; row < height; row++ {
+					rows[row][col] = '█'
+					colors[row][col] = historyPodColor(pod.Pod)
+				}
+			}
+		}
+	}
 	if reference != nil && *reference > 0 && scale > 0 {
 		line := height - 1 - int(math.Round(*reference/scale*float64(height-1)))
 		for col := range rows[line] {
-			rows[line][col] = '─'
-			colors[line][col] = output.ColorMatchBG
-		}
-	}
-	for _, pod := range series {
-		levels := make([]int, width)
-		valid := make([]bool, width)
-		for col := range width {
-			first, last := col*count/width, (col+1)*count/width
-			maxValue, hasValue := 0.0, false
-			for _, sample := range pod.Values {
-				if sample.Time.Before(start) || sample.Time.After(end) || sample.Value < 0 || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
-					continue
-				}
-				i := int(sample.Time.Sub(start) / step)
-				if i >= first && i < last {
-					hasValue = true
-					maxValue = math.Max(maxValue, sample.Value)
-				}
-			}
-			if !hasValue {
-				continue
-			}
-			level := 0
-			if scale > 0 {
-				level = int(math.Round(maxValue / scale * float64(height-1)))
-			}
-			levels[col], valid[col] = level, true
-		}
-		podColor := historyPodColor(pod.Pod)
-		for col, level := range levels {
-			if !valid[col] {
-				continue
-			}
-			row := height - 1 - level
-			if col > 0 && valid[col-1] && levels[col-1] == level && rows[row][col-1] == '●' {
-				rows[row][col-1] = '─'
-				colors[row][col-1] = podColor
-			}
-			if rows[row][col] == '─' {
-				rows[row][col] = '┼'
+			if rows[line][col] == '█' {
+				rows[line][col] = '┼'
 			} else {
-				rows[row][col] = '●'
+				rows[line][col] = '─'
 			}
-			colors[row][col] = podColor
+			colors[line][col] = output.ColorMatchBG
 		}
 	}
 	out := make([]string, height)

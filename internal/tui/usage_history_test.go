@@ -28,7 +28,7 @@ func TestHistoryPlotShowsReferenceAndSampleGaps(t *testing.T) {
 	series := []client.Series{{Pod: "a", Values: []client.Sample{{Time: start, Value: 1}, {Time: start.Add(2 * time.Minute), Value: 3}}}}
 	rows, peak, ok := historyPlot(series, start, start.Add(2*time.Minute), time.Minute, 3, &reference)
 	joined := strings.Join(rows, "")
-	if !ok || peak != 3 || len(rows) != 8 || !strings.Contains(joined, "●") || !strings.Contains(joined, "─") {
+	if !ok || peak != 3 || len(rows) != 10 || !strings.Contains(joined, "█") || !strings.Contains(joined, "─") {
 		t.Fatalf("plot=%q peak=%v ok=%t", rows, peak, ok)
 	}
 }

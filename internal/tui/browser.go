@@ -1597,8 +1597,6 @@ func (m *browser) summaryPaneLines() []string {
 		if m.usageState.status == requestStale {
 			lines = append(lines, staleRequestTime("Usage", m.usageState))
 		}
-	} else if m.usageState.status == requestPartial {
-		lines = append(lines, paint("Some resource metrics are unavailable or have no current sample.", output.ColorMuted, false))
 	} else if m.usageState.status == requestUnavailable {
 		lines = append(lines, paint("Usage unavailable · showing configured totals", output.ColorMuted, false))
 	}
@@ -1703,13 +1701,13 @@ func (m *browser) appViewTabs() string {
 	if !m.selectedAppActive() {
 		return paint(focus+"[4] SUMMARY", output.ColorAccent, true)
 	}
-	summary, usage := "Summary", "Usage"
-	if m.activeAppView == appViewSummary {
-		summary = "[Summary]"
-	} else {
-		usage = "[Usage]"
+	selectedStyle := func(label string, selected bool) string {
+		if selected {
+			return paint("["+label+"]", output.ColorSuccess, true)
+		}
+		return paint(label, output.ColorMuted, false)
 	}
-	heading := paint(focus+"[4] ", output.ColorAccent, true) + paint(summary, output.ColorKey, m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + paint(usage, output.ColorKey, m.activeAppView == appViewUsage)
+	heading := paint(focus+"[4] ", output.ColorAccent, true) + selectedStyle("Summary", m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + selectedStyle("Usage", m.activeAppView == appViewUsage)
 	if m.detailState.active() || m.usageState.active() {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
 	}
@@ -1739,8 +1737,6 @@ func (m *browser) usagePaneLines() []string {
 		lines = append(lines, paint("Resource usage is unavailable for this connection.", output.ColorMuted, false))
 	case requestEmpty:
 		lines = append(lines, paint("No resource samples in the last 5 minutes.", output.ColorMuted, false))
-	case requestPartial:
-		lines = append(lines, paint("Partial snapshot · rows show current samples and missing data.", output.ColorNumber, false))
 	default:
 		if m.usageState.lastSuccessAt.IsZero() {
 			lines = append(lines, paint("No usage snapshot yet. Press r to load it.", output.ColorMuted, false))
@@ -2287,11 +2283,7 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 	if m.detail && m.selectedAppActive() && (forHelp || !m.help && !m.actionBusy && !m.actionMenu && m.confirmAction == appActionNone && !m.filterEditing && !m.selectingNamespace && !m.selectingTenant) {
 		hints = appendUniqueKeyHints(hints, keyHint{"[/]", "previous / next app view"})
 		if m.activeAppView == appViewUsage {
-			usageHints := []keyHint{{"m", "metric"}, {"w", "range"}, {"PgUp/Dn", "scroll"}}
-			if len(historyPods(m.history)) > 0 {
-				usageHints = append([]keyHint{{"p", "pod"}}, usageHints...)
-			}
-			hints = append(hints, usageHints...)
+			hints = append(hints, keyHint{"PgUp/Dn", "scroll"})
 		}
 	}
 	return hints
