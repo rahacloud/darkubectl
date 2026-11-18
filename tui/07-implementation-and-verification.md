@@ -40,6 +40,7 @@ Current implementation status and verification evidence are tracked in [08 Progr
 | --- | --- |
 | Mock profile with valid, empty, duplicate-ID, unknown-field, multi-document and oversized input | Valid profile renders as offline; malformed profiles fail before the alternate screen and parser errors never echo fixture values |
 | Mock mode with ambient credentials and explicit connection flags | Ambient credentials remain unused. Explicit connection flags are rejected; the API client constructor and network are never reached |
+| Fuzzy app filter, plain app query, `namespace/appname`, spaced slash, cancel, clear, no matches | Results update while typing, plain queries span namespaces, scoped queries match both fields, and cancel restores the prior query |
 | Missing credentials, invalid config, non-TTY stdin/stdout, help via pipe, explicit JSON output | Stable plain CLI output or error, no alternate screen on invalid launch, no API on non-TTY path |
 | API key + configured org + denied Profile, JWT-only session with no org, local fallbacks and zero tenants | Correct startup paths. No cross-tenant request or context persistence. JWT-only features carry accurate capability text. |
 | Duplicate names across namespaces/clusters, removed UUID, pagination and empty views | Correct IDs, no incorrect fallback target, data empty and filter-empty separately, stable selection after updates |

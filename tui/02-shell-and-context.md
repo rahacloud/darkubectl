@@ -39,7 +39,7 @@
 | Detail tab strip · Left/Right or `h/l` | Switch tabs in display order, stopping at either end |
 | Multi-control screen · Tab / Shift+Tab | Cycle focus among visible controls. Move focus to the nearest surviving control on resize. |
 | List or viewport · Home/End or `g/G` | First/last row or top/bottom. Viewport also supports PageUp/PageDown. |
-| List · `/`, Enter, Esc | Edit a case-insensitive substring filter live. Enter commits and Esc restores the previous filter. Esc with a committed filter clears it before leaving the list. |
+| List · `/`, Enter, Esc | Open an inline filter after the breadcrumb. Matches update as you type using case-insensitive fuzzy subsequence matching. `appname` searches app names across all namespaces; `namespace/appname` scopes both sides, allowing spaces around `/`. Up/Down leaves text entry and moves through the filtered tree; Enter opens the selected match directly. Esc while editing restores the previous query, and Esc from the list clears a query. Ctrl+U clears while editing. |
 | Browse · `:` or Ctrl+P | Open the same searchable jump panel. `:` accepts exact aliases on Enter and otherwise uses the selected match. Ctrl+P also searches scoped, already-loaded apps. No arbitrary command parsing. |
 | Browse · `a`, `r`, `?`, `q` | Scope-specific actions, active view refresh, contextual help and quit. Hide unavailable bindings from the footer. |
 | Modal or text input | Innermost component handles keys first. Printable shortcuts, including `q`, are literal in text fields. Esc closes the top overlay before changing view. Ctrl+C exits consistently and restores the terminal. |
