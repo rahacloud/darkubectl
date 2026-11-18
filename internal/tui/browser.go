@@ -17,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/output"
 )
@@ -49,6 +50,18 @@ type usageHistoryResult struct {
 	meta    requestMeta
 	history *UsageHistory
 	err     error
+}
+
+type egressRoutesResult struct {
+	meta   requestMeta
+	routes map[string]client.ClusterEgress
+	err    error
+}
+
+type podsResult struct {
+	meta requestMeta
+	pods []appstate.Pod
+	err  error
 }
 
 type appAction uint8
@@ -98,6 +111,7 @@ type appView uint8
 const (
 	appViewSummary appView = iota
 	appViewUsage
+	appViewPods
 )
 
 type appSort int
@@ -134,6 +148,8 @@ type BrowserOptions struct {
 	GetApp       func(context.Context, string, string) (*client.App, error)
 	Usage        func(context.Context, string, string) (*AppUsage, error)
 	UsageHistory func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
+	Pods         func(context.Context, string, string) ([]appstate.Pod, error)
+	EgressRoutes func(context.Context, string) (map[string]client.ClusterEgress, error)
 	Namespaces   func(context.Context, string) ([]client.Namespace, error)
 	RestartApp   func(context.Context, string, string) error
 	DeleteApp    func(context.Context, string, string) error
@@ -148,6 +164,8 @@ const (
 	requestSummary
 	requestUsage
 	requestUsageHistory
+	requestEgress
+	requestPods
 )
 
 type requestKey struct {
@@ -184,6 +202,8 @@ type browser struct {
 	getApp              func(context.Context, string, string) (*client.App, error)
 	usage               func(context.Context, string, string) (*AppUsage, error)
 	usageHistory        func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
+	fetchPods           func(context.Context, string, string) ([]appstate.Pod, error)
+	egressRoutes        func(context.Context, string) (map[string]client.ClusterEgress, error)
 	listNamespaces      func(context.Context, string) ([]client.Namespace, error)
 	profile             func(context.Context) (*client.Profile, error)
 	ctx                 context.Context
@@ -241,6 +261,10 @@ type browser struct {
 	usageAppID          string
 	usageState          requestState
 	historyState        requestState
+	podsState           requestState
+	podList             []appstate.Pod
+	egressState         requestState
+	egressData          map[string]client.ClusterEgress
 	history             *UsageHistory
 	historyRange        int
 	historyMetric       int
@@ -271,6 +295,8 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 		m.usage = options.Usage
 	}
 	m.usageHistory = options.UsageHistory
+	m.fetchPods = options.Pods
+	m.egressRoutes = options.EgressRoutes
 	if options.Namespaces != nil {
 		m.listNamespaces = options.Namespaces
 	}
@@ -299,10 +325,23 @@ func newMockBrowser(profile MockProfile) *browser {
 	}
 	appsByTenant := make(map[string][]client.App, len(tenantProfiles))
 	namespacesByTenant := make(map[string][]client.Namespace, len(tenantProfiles))
+	egressByTenant := make(map[string]map[string]client.ClusterEgress, len(tenantProfiles))
 	options := make([]tenantOption, 0, len(tenantProfiles))
 	for _, tenant := range tenantProfiles {
 		appsByTenant[tenant.Name] = append([]client.App(nil), tenant.Apps...)
 		namespacesByTenant[tenant.Name] = append([]client.Namespace(nil), tenant.Namespaces...)
+		egressByTenant[tenant.Name] = make(map[string]client.ClusterEgress)
+		for _, app := range tenant.Apps {
+			cluster := app.Namespace.Cluster
+			if cluster.ID == 0 && cluster.Name == "" {
+				continue
+			}
+			key := fmt.Sprint(cluster.ID)
+			if cluster.ID == 0 {
+				key = cluster.Name
+			}
+			egressByTenant[tenant.Name][key] = client.ClusterEgress{Cluster: cluster, DefaultOutgoingIP: "198.51.100.42"}
+		}
 		options = append(options, tenantOption{name: tenant.Name, source: "Mock profile"})
 	}
 	if len(options) > 0 {
@@ -341,6 +380,13 @@ func newMockBrowser(profile MockProfile) *browser {
 				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
 			}
 			return append([]client.Namespace(nil), namespaces...), nil
+		},
+		egressRoutes: func(_ context.Context, tenant string) (map[string]client.ClusterEgress, error) {
+			routes, ok := egressByTenant[tenant]
+			if !ok {
+				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
+			}
+			return routes, nil
 		},
 		mockDeleteApp: func(tenant, id string) {
 			if deletedApps[tenant] == nil {
@@ -420,9 +466,12 @@ func (m *browser) invalidateAppReads() {
 	m.cancelRequest(requestKey{kind: requestSummary})
 	m.cancelRequest(requestKey{kind: requestUsage})
 	m.cancelRequest(requestKey{kind: requestUsageHistory})
+	m.cancelRequest(requestKey{kind: requestPods})
 	m.detailState.reset()
 	m.usageState.reset()
 	m.historyState.reset()
+	m.podsState.reset()
+	m.podList = nil
 	m.history = nil
 	m.historyPod = ""
 	m.historyPodChosen = false
@@ -464,10 +513,11 @@ func (m *browser) load() tea.Cmd {
 		m.appsState.unavailable(fmt.Errorf("app listing is unavailable"))
 		return nil
 	}
-	return func() tea.Msg {
+	appsCmd := func() tea.Msg {
 		apps, err := m.listApps(requestCtx, tenant)
 		return appsResult{meta: meta, apps: apps, err: err}
 	}
+	return tea.Batch(appsCmd, m.loadEgressRoutes(false))
 }
 
 func (m *browser) loadProfile() tea.Cmd {
@@ -947,6 +997,37 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncHistoryPod()
 			m.historyState.succeed(samples == 0, m.requestTime())
 		}
+	case podsResult:
+		m.finishRequest(requestPods, msg.meta)
+		if !m.podsState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || m.selectedDetailTarget() != msg.meta.appID {
+			return m, nil
+		}
+		if msg.err != nil {
+			if strings.Contains(msg.err.Error(), "requires a Console JWT") {
+				m.podsState.unavailable(msg.err)
+				return m, nil
+			}
+			if strings.Contains(strings.ToLower(msg.err.Error()), "401") {
+				m.podsState.fail(fmt.Errorf("Console rejected the session; run `darkubectl login` and retry"))
+				return m, nil
+			}
+			m.podsState.fail(fmt.Errorf("pod request failed"))
+			return m, nil
+		}
+		sort.Slice(msg.pods, func(i, j int) bool { return msg.pods[i].Name < msg.pods[j].Name })
+		m.podList = msg.pods
+		m.podsState.succeed(len(m.podList) == 0, m.requestTime())
+	case egressRoutesResult:
+		m.finishRequest(requestEgress, msg.meta)
+		if !m.egressState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.egressState.fail(fmt.Errorf("outbound IP request failed"))
+			return m, nil
+		}
+		m.egressData = msg.routes
+		m.egressState.succeed(len(msg.routes) == 0, m.requestTime())
 	case namespacesResult:
 		m.finishRequest(requestNamespaces, msg.meta)
 		if !m.namespaceState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration {
@@ -1221,7 +1302,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.selectTree(len(m.treeNodes()) - 1)
 			}
 		case "pgup":
-			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+			if m.detail && (m.activeAppView == appViewUsage || m.activeAppView == appViewPods) && m.selectedAppActive() {
 				m.usageScroll = max(0, m.usageScroll-max(1, m.height-8))
 				return m, nil
 			}
@@ -1229,7 +1310,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.moveTree(-max(1, m.height-8))
 			}
 		case "pgdown":
-			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+			if m.detail && (m.activeAppView == appViewUsage || m.activeAppView == appViewPods) && m.selectedAppActive() {
 				m.usageScroll += max(1, m.height-8)
 				return m, nil
 			}
@@ -1244,7 +1325,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.selectingTenant || m.contextFocused && m.contextRow == 0 {
 				// Tenant changes are applied as soon as the highlighted row moves.
 			} else if m.contextFocused {
-				// Apps is the only implemented view; other entries are disabled.
+				// Apps is the only active global page; the remaining entries are disabled.
 			} else if !m.help && len(m.visibleAppIndices()) > 0 {
 				if m.namespaceSelected {
 					if m.filterQuery == "" {
@@ -1267,10 +1348,13 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.activeAppView == appViewUsage {
 					return m, tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
 				}
-				return m, m.loadSelectedSummary()
+				if m.activeAppView == appViewPods {
+					return m, m.loadSelectedPods()
+				}
+				return m, tea.Batch(m.loadSelectedSummary(), m.loadEgressRoutes(true))
 			}
 			if !m.help && !m.appsState.active() {
-				return m, m.load()
+				return m, tea.Batch(m.load(), m.loadEgressRoutes(true))
 			}
 		}
 	}
@@ -1366,6 +1450,9 @@ func (m *browser) loadSelectedSummary() tea.Cmd {
 	if usageCmd := m.loadSelectedUsage(); usageCmd != nil {
 		cmds = append(cmds, usageCmd)
 	}
+	if egressCmd := m.loadEgressRoutes(false); egressCmd != nil {
+		cmds = append(cmds, egressCmd)
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -1389,11 +1476,53 @@ func (m *browser) loadSelectedUsage() tea.Cmd {
 	}
 }
 
+func (m *browser) loadSelectedPods() tea.Cmd {
+	id := m.selectedDetailTarget()
+	if id == "" || m.podsState.active() {
+		return nil
+	}
+	meta, requestCtx := m.startRequest(requestPods, m.tenant, id, m.selectionGeneration)
+	m.podsState.begin(meta, m.requestTime())
+	if m.fetchPods == nil {
+		m.finishRequest(requestPods, meta)
+		m.podsState.unavailable(fmt.Errorf("pod data is unavailable"))
+		return nil
+	}
+	getPods, tenant := m.fetchPods, m.tenant
+	return func() tea.Msg {
+		pods, err := getPods(requestCtx, tenant, id)
+		return podsResult{meta: meta, pods: pods, err: err}
+	}
+}
+
+func (m *browser) loadEgressRoutes(force bool) tea.Cmd {
+	if m.egressState.active() || !force && (m.egressState.status == requestReady || m.egressState.status == requestEmpty) {
+		return nil
+	}
+	meta, requestCtx := m.startRequest(requestEgress, m.tenant, "", m.tenantGeneration)
+	m.egressState.begin(meta, m.requestTime())
+	if m.egressRoutes == nil {
+		m.finishRequest(requestEgress, meta)
+		m.egressState.unavailable(fmt.Errorf("outbound IP data is unavailable"))
+		return nil
+	}
+	getRoutes := m.egressRoutes
+	tenant := m.tenant
+	return func() tea.Msg {
+		routes, err := getRoutes(requestCtx, tenant)
+		return egressRoutesResult{meta: meta, routes: routes, err: err}
+	}
+}
+
 func (m *browser) switchAppView(delta int) tea.Cmd {
 	if !m.detail || !m.selectedAppActive() {
 		return nil
 	}
-	m.activeAppView = appView((int(m.activeAppView) + delta + 2) % 2)
+	m.activeAppView = appView((int(m.activeAppView) + delta + 3) % 3)
+	m.usageScroll = 0
+	if m.activeAppView == appViewPods && m.podsState.status == requestIdle {
+		return m.loadSelectedPods()
+	}
 	if m.activeAppView == appViewUsage && m.usageState.status == requestIdle {
 		return tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
 	}
@@ -1439,6 +1568,8 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.tenant = name
 	m.cancelRequests(true)
 	m.tenantGeneration++
+	m.egressState.reset()
+	m.egressData = nil
 	m.invalidateAppReads()
 	m.tenantStatus = ""
 	m.selectingTenant = false
@@ -1497,7 +1628,7 @@ func (m *browser) View() tea.View {
 		bodyHeight := max(1, m.height-len(lines)-footerHeight-1)
 		left := m.appPaneLines(bodyHeight)
 		right := m.summaryPaneLines()
-		if m.activeAppView == appViewUsage {
+		if m.activeAppView == appViewUsage || m.activeAppView == appViewPods {
 			right = m.usageViewport(right, bodyHeight)
 		}
 		context := m.contextPaneLines(bodyHeight)
@@ -1573,6 +1704,9 @@ func (m *browser) appPaneLines(height int) []string {
 func (m *browser) summaryPaneLines() []string {
 	if m.activeAppView == appViewUsage {
 		return m.usagePaneLines()
+	}
+	if m.activeAppView == appViewPods {
+		return m.podsPaneLines()
 	}
 	heading := m.appViewTabs()
 	if m.namespaceSelected || !m.selectedAppVisible() {
@@ -1667,6 +1801,7 @@ func (m *browser) summaryPaneLines() []string {
 	} else {
 		lines = append(lines, summaryField("External IP", "-"))
 	}
+	lines = append(lines, summaryField("Outbound IP", m.egressIPForApp(a)))
 	if probe := readinessProbeDisplay(a); probe != "" {
 		lines = append(lines, summaryField("Readiness Probe", probe))
 	}
@@ -1693,13 +1828,119 @@ func (m *browser) summaryPaneLines() []string {
 	return lines
 }
 
+func (m *browser) podsPaneLines() []string {
+	lines := []string{m.appViewTabs()}
+	if m.namespaceSelected || !m.selectedAppVisible() {
+		return append(lines, paint("No app selected. Move to an app to view its pods.", output.ColorMuted, false))
+	}
+	a := m.apps[m.selected]
+	if m.detailApp != nil && m.detailApp.ID == a.ID {
+		a = *m.detailApp
+	}
+	lines = append(lines, paint("· "+safeText(a.Name), output.ColorKey, true), "")
+	switch m.podsState.status {
+	case requestLoading:
+		return append(lines, m.loadingMessage("Loading pod snapshot…"))
+	case requestRefreshing:
+		lines = append(lines, m.loadingMessage("Refreshing pod snapshot…"))
+	case requestUnavailable:
+		message := "Pod data is unavailable in this browser mode."
+		if m.podsState.err != nil {
+			message = safeText(m.podsState.err.Error())
+		}
+		return append(lines, paint(message, output.ColorMuted, false))
+	case requestFailed:
+		message := "Pod snapshot unavailable"
+		if m.podsState.err != nil {
+			message += " · " + safeText(m.podsState.err.Error())
+		}
+		return append(lines, paint(message+" · press r to retry", output.ColorNumber, false))
+	case requestStale:
+		lines = append(lines, paint("Refresh failed · showing last successful snapshot", output.ColorNumber, false))
+	case requestEmpty:
+		return append(lines, paint("No pods are currently reported for this app.", output.ColorMuted, false))
+	default:
+		if m.podsState.lastSuccessAt.IsZero() {
+			lines = append(lines, paint("Press r to load the current pod snapshot.", output.ColorMuted, false), "")
+		}
+	}
+	for i, pod := range m.podList {
+		ready, total := pod.ReadyCount()
+		status := pod.State
+		if status == "" {
+			status = pod.Phase
+		}
+		if status == "" {
+			status = "Unknown"
+		}
+		if pod.Terminating {
+			status = "Terminating"
+		}
+		age := "-"
+		if !pod.CreatedAt.IsZero() {
+			age = podAge(time.Since(pod.CreatedAt))
+		}
+		readyText := "-"
+		if total > 0 {
+			readyText = fmt.Sprintf("%d/%d", ready, total)
+		}
+		glyph, tint := "●", output.ColorSuccess
+		if !pod.Ready {
+			glyph, tint = "●", output.ColorNumber
+		}
+		lines = append(lines,
+			paint(fmt.Sprintf("%s %s", glyph, safeText(pod.Name)), tint, true),
+			fmt.Sprintf("  Ready %s   Status %s   Restarts %d   Age %s", readyText, safeText(status), pod.Restarts(), age))
+		for _, container := range pod.Containers {
+			state := container.State
+			if state == "" {
+				state = "Unknown"
+			}
+			row := fmt.Sprintf("  └ %s · %s · %d restarts", safeText(container.Name), safeText(state), container.RestartCount)
+			if container.LastState != "" {
+				row += " · previous: " + safeText(container.LastState)
+			}
+			lines = append(lines, paint(row, output.ColorMuted, false))
+		}
+		if i < len(m.podList)-1 {
+			lines = append(lines, "")
+		}
+	}
+	if len(m.podList) > 0 {
+		lines = append(lines, "", paint("Snapshot · "+m.podsState.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST"), output.ColorMuted, false))
+	}
+	return lines
+}
+
+func podAge(age time.Duration) string {
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dm", int(age.Minutes()))
+	}
+	if age < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(age.Hours()), int(age.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd%dh", int(age.Hours()/24), int(age.Hours())%24)
+}
+
 func (m *browser) appViewTabs() string {
 	focus := "  "
 	if m.detail {
 		focus = "▸ "
 	}
 	if !m.selectedAppActive() {
-		return paint(focus+"[4] SUMMARY", output.ColorAccent, true)
+		label := "SUMMARY"
+		if m.activeAppView == appViewUsage {
+			label = "USAGE"
+		} else if m.activeAppView == appViewPods {
+			label = "PODS"
+		}
+		return paint(focus+"[4] "+label, output.ColorAccent, true)
 	}
 	selectedStyle := func(label string, selected bool) string {
 		if selected {
@@ -1707,11 +1948,72 @@ func (m *browser) appViewTabs() string {
 		}
 		return paint(label, output.ColorMuted, false)
 	}
-	heading := paint(focus+"[4] ", output.ColorAccent, true) + selectedStyle("Summary", m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + selectedStyle("Usage", m.activeAppView == appViewUsage)
-	if m.detailState.active() || m.usageState.active() {
+	heading := paint(focus+"[4] ", output.ColorAccent, true) + selectedStyle("Summary", m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + selectedStyle("Usage", m.activeAppView == appViewUsage) + paint("  ", output.ColorBorder, false) + selectedStyle("Pods", m.activeAppView == appViewPods)
+	if m.detailState.active() || m.usageState.active() || m.podsState.active() {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
 	}
 	return heading
+}
+
+func (m *browser) egressIPForApp(a client.App) string {
+	switch m.egressState.status {
+	case requestLoading, requestRefreshing:
+		return m.spinnerGlyph()
+	case requestFailed, requestUnavailable, requestEmpty, requestIdle:
+		return "-"
+	}
+	clusterID := a.Namespace.Cluster.ID
+	clusterKey := fmt.Sprint(clusterID)
+	clusterRoutes, ok := m.egressData[clusterKey]
+	if !ok {
+		for key, candidate := range m.egressData {
+			matches := clusterID != 0 && candidate.Cluster.ID == clusterID
+			if clusterID == 0 {
+				matches = candidate.Cluster.Name == a.Namespace.Cluster.Name
+			}
+			if matches {
+				clusterKey, clusterRoutes, ok = key, candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return "-"
+	}
+	effectiveIP := clusterRoutes.DefaultOutgoingIP
+	var matchedRoute *client.EgressRoute
+	for i := range clusterRoutes.Routes {
+		route := &clusterRoutes.Routes[i]
+		if !route.ApplyToAllNamespaces && egressRouteMatchesNamespace(*route, a.Namespace.ID) {
+			matchedRoute = route
+			break
+		}
+	}
+	if matchedRoute == nil {
+		for i := range clusterRoutes.Routes {
+			route := &clusterRoutes.Routes[i]
+			if route.ApplyToAllNamespaces {
+				matchedRoute = route
+				break
+			}
+		}
+	}
+	if matchedRoute != nil && matchedRoute.EgressIP != "" {
+		effectiveIP = matchedRoute.EgressIP
+	}
+	return displayValue(effectiveIP)
+}
+
+func egressRouteMatchesNamespace(route client.EgressRoute, namespaceID int) bool {
+	if route.ApplyToAllNamespaces {
+		return true
+	}
+	for _, selected := range route.SelectedNamespaces {
+		if string(selected) == fmt.Sprint(namespaceID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *browser) usagePaneLines() []string {
@@ -2282,7 +2584,7 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 	}
 	if m.detail && m.selectedAppActive() && (forHelp || !m.help && !m.actionBusy && !m.actionMenu && m.confirmAction == appActionNone && !m.filterEditing && !m.selectingNamespace && !m.selectingTenant) {
 		hints = appendUniqueKeyHints(hints, keyHint{"[/]", "previous / next app view"})
-		if m.activeAppView == appViewUsage {
+		if m.activeAppView == appViewUsage || m.activeAppView == appViewPods {
 			hints = append(hints, keyHint{"PgUp/Dn", "scroll"})
 		}
 	}

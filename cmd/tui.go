@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/tui"
 	"github.com/urfave/cli/v3"
@@ -188,6 +189,25 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 				*metric.dest = series
 			}
 			return history, nil
+		},
+		Pods: func(requestCtx context.Context, tenant, id string) ([]appstate.Pod, error) {
+			token, err := credential.consoleAccessToken(requestCtx)
+			if err != nil {
+				return nil, err
+			}
+			pods, _, err := appstate.FetchPods(requestCtx, appstate.Options{
+				BaseURL: baseURL, AccessToken: token, Org: tenant, AppID: id,
+			})
+			return pods, tuiAuthError(err)
+		},
+		EgressRoutes: func(requestCtx context.Context, tenant string) (map[string]client.ClusterEgress, error) {
+			c, err := newClient(requestCtx, tenant)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = c.Close() }()
+			routes, err := c.GetEgressRoutes(requestCtx)
+			return routes, tuiAuthError(err)
 		},
 		Namespaces: func(requestCtx context.Context, tenant string) ([]client.Namespace, error) {
 			c, err := newClient(requestCtx, tenant)

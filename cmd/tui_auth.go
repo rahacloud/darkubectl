@@ -78,6 +78,18 @@ func (c *tuiCredential) current(ctx context.Context) (client.Auth, error) {
 	return client.BearerToken(c.access), nil
 }
 
+func (c *tuiCredential) consoleAccessToken(ctx context.Context) (string, error) {
+	auth, err := c.current(ctx)
+	if err != nil {
+		return "", err
+	}
+	token, ok := strings.CutPrefix(string(auth), "Bearer ")
+	if !ok || token == "" {
+		return "", errors.New("pod data requires a Console JWT; API-key authentication cannot open the pod stream")
+	}
+	return token, nil
+}
+
 func jwtExpiry(token string) (time.Time, bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
