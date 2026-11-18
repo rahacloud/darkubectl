@@ -17,6 +17,7 @@ var ErrNoOrganizationID = errors.New("could not determine the numeric organizati
 type Port struct {
 	ContainerPort int    `json:"containerPort" yaml:"containerPort"`
 	ServicePort   int    `json:"servicePort"   yaml:"servicePort"`
+	NodePort      int    `json:"nodePort,omitempty" yaml:"nodePort,omitempty"`
 	Protocol      string `json:"protocol"      yaml:"protocol"`
 }
 

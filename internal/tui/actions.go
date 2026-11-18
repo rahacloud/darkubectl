@@ -21,7 +21,7 @@ func (m *browser) openActionMenu() {
 	if m.help || m.sorting || m.selectingNamespace || m.selectingTenant || m.contextFocused || m.actionBusy {
 		return
 	}
-	if !m.selectedAppVisible() {
+	if !m.selectedAppActive() {
 		m.actionNotice = "Select an app to view its actions."
 		return
 	}
@@ -36,6 +36,10 @@ func (m *browser) openActionMenu() {
 	m.actionMenuMessage = ""
 	m.actionNotice = ""
 	m.actionMenu = true
+}
+
+func (m *browser) selectedAppActive() bool {
+	return !m.namespaceSelected && m.selectedAppVisible()
 }
 
 func (m *browser) actionIsMock() bool {
@@ -174,6 +178,9 @@ func (m *browser) cancelActionConfirmation() {
 }
 
 func (m *browser) submitConfirmedAction() tea.Cmd {
+	if m.actionBusy || m.confirmAction == appActionNone {
+		return nil
+	}
 	if m.confirmAction == appActionDelete && m.confirmName != m.actionTargetName {
 		m.confirmError = "Type the app name exactly before deleting."
 		return nil
@@ -196,7 +203,7 @@ func (m *browser) submitConfirmedAction() tea.Cmd {
 			result.err = fmt.Errorf("cannot verify the selected app before the action")
 			return result
 		}
-		current, err := m.getApp(tenant, id)
+		current, err := m.getApp(m.ctx, tenant, id)
 		if err != nil {
 			result.err = fmt.Errorf("verify app before %s: %w", actionTitle(action), err)
 			return result
@@ -276,7 +283,7 @@ func (m *browser) applyActionResult(result appActionResult) tea.Cmd {
 }
 
 func (m *browser) handleActionMouse(msg tea.MouseClickMsg) tea.Cmd {
-	if msg.Button != tea.MouseLeft {
+	if msg.Button != tea.MouseLeft || m.actionBusy {
 		return nil
 	}
 	if m.confirmAction == appActionNone {
@@ -318,7 +325,7 @@ func (m *browser) actionMenuPanel() string {
 			label += " · disabled"
 			content = append(content, paint(label, output.ColorMuted, false))
 		} else if i == m.actionCursor {
-			content = append(content, tenantSelectedStyle().Width(innerWidth).Render(ansi.Truncate(label, innerWidth, "…")))
+			content = append(content, selectedRowStyle().Width(innerWidth).Render(ansi.Truncate(label, innerWidth, "…")))
 		} else if action == appActionDelete {
 			content = append(content, paint(ansi.Truncate(label, innerWidth, "…"), output.ColorNumber, true))
 		} else {
@@ -330,7 +337,15 @@ func (m *browser) actionMenuPanel() string {
 	} else if m.actionMenuMessage != "" {
 		content = append(content, paint(ansi.Truncate(safeText(m.actionMenuMessage), innerWidth, "…"), output.ColorNumber, false))
 	}
-	content = append(content, "", paint("↑/↓ choose · Enter select · Esc close", output.ColorMuted, false))
+	if innerWidth < 60 {
+		content = append(content,
+			"",
+			paint("↑/↓ or j/k choose · r restart · d delete", output.ColorMuted, false),
+			paint("↵ select · q/Esc close", output.ColorMuted, false),
+		)
+	} else {
+		content = append(content, "", paint("↑/↓ or j/k choose · r restart · d delete · ↵ select · q/Esc close", output.ColorMuted, false))
+	}
 	for i := range content {
 		content[i] = ansi.Truncate(content[i], innerWidth, "…")
 	}
@@ -366,17 +381,24 @@ func (m *browser) actionConfirmationContent() ([]string, int, string, string) {
 	buttonRow := len(content)
 	left := paint(leftButton, output.ColorKey, m.confirmButton == 0)
 	if m.confirmButton == 0 {
-		left = tenantSelectedStyle().Render(leftButton)
+		left = selectedRowStyle().Render(leftButton)
 	}
 	right := paint(rightButton, output.ColorNumber, true)
 	if m.confirmButton == 1 {
-		right = tenantSelectedStyle().Render(rightButton)
+		right = selectedRowStyle().Render(rightButton)
 	}
 	content = append(content, left+"   "+right)
 	if m.confirmAction == appActionDelete {
-		content = append(content, paint("Type name · click ✖ Delete or Tab then Enter · Esc cancel", output.ColorMuted, false))
+		if innerWidth < 60 {
+			content = append(content,
+				paint("Type name · click ✖ Delete or Tab then ↵", output.ColorMuted, false),
+				paint("Esc cancel", output.ColorMuted, false),
+			)
+		} else {
+			content = append(content, paint("Type name · click ✖ Delete or Tab then ↵ · Esc cancel", output.ColorMuted, false))
+		}
 	} else {
-		content = append(content, paint("←/→ choose · Enter confirm · Esc cancel", output.ColorMuted, false))
+		content = append(content, paint("←/→ choose · ↵ confirm · Esc cancel", output.ColorMuted, false))
 	}
 	for i := range content {
 		content[i] = ansi.Truncate(content[i], innerWidth, "…")

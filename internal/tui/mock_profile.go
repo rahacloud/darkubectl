@@ -52,15 +52,28 @@ type mockProfileApp struct {
 	Name                string               `yaml:"name"`
 	Namespace           mockProfileNamespace `yaml:"namespace"`
 	State               mockProfileState     `yaml:"state"`
-	Replicas            int                  `yaml:"replicas"`
+	Replicas            *int                 `yaml:"replicas"`
 	CreationMethod      string               `yaml:"creation_method"`
 	ImageRepo           string               `yaml:"image_repo"`
 	ImageTag            string               `yaml:"image_tag"`
 	CustomDomainAddress string               `yaml:"custom_domain_address"`
 	ExternalHosts       []string             `yaml:"external_hosts"`
+	Service             mockProfileService   `yaml:"service"`
+	ReadinessProbePath  string               `yaml:"readiness_probe_path"`
+	Command             string               `yaml:"command"`
+	Args                string               `yaml:"args"`
+	Inputs              []string             `yaml:"inputs"`
 	RAMLimit            string               `yaml:"ram_limit"`
 	CPURequest          string               `yaml:"cpu_request"`
 	DiskSizeInGi        int                  `yaml:"disk_size_in_gi"`
+}
+
+type mockProfileService struct {
+	Type            string                 `yaml:"type"`
+	Ports           map[string]client.Port `yaml:"ports"`
+	InternalAddress string                 `yaml:"internal_address"`
+	ExternalAddress string                 `yaml:"external_address"`
+	ExternalIP      string                 `yaml:"external_ip"`
 }
 
 type mockProfileNamespace struct {
@@ -207,7 +220,10 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 		if app.Namespace.ID < 1 || strings.TrimSpace(app.Namespace.Name) == "" {
 			return nil, fmt.Errorf("mock profile app %q requires a namespace id and name", app.ID)
 		}
-		if app.Replicas < 0 {
+		if app.Replicas == nil {
+			return nil, fmt.Errorf("mock profile app %q requires replicas", app.ID)
+		}
+		if *app.Replicas < 0 {
 			return nil, fmt.Errorf("mock profile app %q has negative replicas", app.ID)
 		}
 		if app.DiskSizeInGi < 0 {
@@ -217,6 +233,16 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 			return nil, fmt.Errorf("mock profile has duplicate app id %q", app.ID)
 		}
 		seenIDs[app.ID] = struct{}{}
+		var service *client.AppService
+		if app.Service.Type != "" || len(app.Service.Ports) > 0 || app.Service.InternalAddress != "" || app.Service.ExternalAddress != "" || app.Service.ExternalIP != "" {
+			service = &client.AppService{
+				Type:            app.Service.Type,
+				Ports:           app.Service.Ports,
+				InternalAddress: app.Service.InternalAddress,
+				ExternalAddress: app.Service.ExternalAddress,
+				ExternalIP:      app.Service.ExternalIP,
+			}
+		}
 		apps = append(apps, client.App{
 			ID:   app.ID,
 			Name: app.Name,
@@ -233,14 +259,20 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 				Text:        app.State.Text,
 				Description: app.State.Description,
 			},
-			Replicas:            app.Replicas,
+			Replicas:            *app.Replicas,
+			ReplicasPresent:     true,
 			CreationMethod:      app.CreationMethod,
+			ReadinessProbePath:  app.ReadinessProbePath,
+			Command:             app.Command,
+			Args:                app.Args,
+			Inputs:              append([]string(nil), app.Inputs...),
 			ImageRepo:           app.ImageRepo,
 			ImageTag:            app.ImageTag,
 			RAMLimit:            app.RAMLimit,
 			CPURequest:          app.CPURequest,
 			ExternalHosts:       append([]string(nil), app.ExternalHosts...),
 			CustomDomainAddress: app.CustomDomainAddress,
+			Service:             service,
 			Disk:                mockDisk(app.DiskSizeInGi),
 		})
 	}

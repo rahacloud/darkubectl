@@ -41,6 +41,7 @@ func TestMCPClassify(t *testing.T) {
 		{"exec app my-api -- ls -l", accessWrite},
 		{"terminal my-api", accessBlocked},
 		{"tui", accessBlocked},
+		{"tui --allow-writes", accessBlocked},
 		{"tunnel connect", accessBlocked},
 		{"config use-tenant acme", accessBlocked},
 		{"config view", accessRead},

@@ -1,8 +1,10 @@
 package client
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // page is the standard Django REST Framework pagination envelope.
@@ -83,25 +85,30 @@ func (p Plan) IsCreatable() bool {
 // Only the commonly used fields are typed; `darkubectl describe`/`-o json` read
 // the raw object so no data is lost to this partial view.
 type App struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	Namespace           Namespace `json:"namespace"`
-	State               State     `json:"state"`
-	Plan                *Plan     `json:"plan"`
-	Replicas            int       `json:"replicas"`
-	IsEnabled           bool      `json:"is_enabled"`
-	IsDeployable        bool      `json:"is_deployable"`
-	IsHPAEnabled        bool      `json:"is_hpa_enabled"`
-	RAMLimit            string    `json:"ram_limit"`
-	CPURequest          string    `json:"cpu_request"`
-	Disk                *Disk     `json:"disk"`
-	ExternalHosts       []string  `json:"external_hosts"`
-	CustomDomainAddress string    `json:"custom_domain_address"`
-	EnableSSL           bool      `json:"enable_SSL"`
-	ImageRepo           string    `json:"image_repo"`
-	ImageTag            string    `json:"image_tag"`
-	CreationTime        string    `json:"creation_time"`
-	UpdatedAt           string    `json:"updated_at"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Namespace Namespace `json:"namespace"`
+	State     State     `json:"state"`
+	Plan      *Plan     `json:"plan"`
+	Replicas  int       `json:"replicas"`
+	// ReplicasPresent distinguishes an explicit zero from an omitted/null API value.
+	ReplicasPresent     bool     `json:"-" yaml:"-"`
+	IsEnabled           bool     `json:"is_enabled"`
+	IsDeployable        bool     `json:"is_deployable"`
+	IsHPAEnabled        bool     `json:"is_hpa_enabled"`
+	RAMLimit            string   `json:"ram_limit"`
+	CPURequest          string   `json:"cpu_request"`
+	Disk                *Disk    `json:"disk"`
+	ExternalHosts       []string `json:"external_hosts"`
+	CustomDomainAddress string   `json:"custom_domain_address"`
+	EnableSSL           bool     `json:"enable_SSL"`
+	ReadinessProbePath  string   `json:"-" yaml:"-"`
+	Command             string   `json:"-" yaml:"-"`
+	Args                string   `json:"-" yaml:"-"`
+	ImageRepo           string   `json:"image_repo"`
+	ImageTag            string   `json:"image_tag"`
+	CreationTime        string   `json:"creation_time"`
+	UpdatedAt           string   `json:"updated_at"`
 
 	// CreationMethod is how the app came to exist, and it is the field that
 	// separates a plain workload from a managed service. There is no separate
@@ -110,7 +117,128 @@ type App struct {
 	// "postgresqlnew", "grafana", "prometheus" and so on. Without surfacing it
 	// there is no way to tell the two apart, which is why `get apps -o wide`
 	// prints it and `--type` filters on it.
-	CreationMethod string `json:"creation_method"`
+	CreationMethod string           `json:"creation_method"`
+	Service        *AppService      `json:"-" yaml:"-"`
+	CustomConfig   *AppCustomConfig `json:"-" yaml:"-"`
+	Inputs         []string         `json:"-" yaml:"-"`
+}
+
+// AppService contains the platform-provided addresses for an app's service.
+// The API uses camel-cased keys inside the otherwise snake-cased app payload.
+type AppService struct {
+	Type            string          `json:"type"`
+	Ports           map[string]Port `json:"ports"`
+	InternalAddress string          `json:"internalAddress"`
+	ExternalAddress string          `json:"externalAddress"`
+	ExternalIP      string          `json:"externalIP"`
+}
+
+// AppCustomConfig exposes only the container probe fields used in the Summary.
+// Other chart configuration is intentionally omitted from this safe read model.
+type AppCustomConfig struct {
+	Container *AppContainerConfig `json:"container"`
+}
+
+type AppContainerConfig struct {
+	ReadinessProbe *AppProbe `json:"readinessProbe"`
+}
+
+type AppProbe struct {
+	HTTPGet             *AppHTTPGet    `json:"httpGet"`
+	Exec                *AppExecAction `json:"exec"`
+	TCPSocket           *AppTCPSocket  `json:"tcpSocket"`
+	InitialDelaySeconds int            `json:"initialDelaySeconds"`
+	PeriodSeconds       int            `json:"periodSeconds"`
+	TimeoutSeconds      int            `json:"timeoutSeconds"`
+	SuccessThreshold    int            `json:"successThreshold"`
+	FailureThreshold    int            `json:"failureThreshold"`
+}
+
+type AppHTTPGet struct {
+	Path string          `json:"path"`
+	Port json.RawMessage `json:"port"`
+}
+
+type AppExecAction struct {
+	Command []string `json:"command"`
+}
+
+type AppTCPSocket struct {
+	Port json.RawMessage `json:"port"`
+}
+
+// UnmarshalJSON preserves whether desired replicas were supplied by the API.
+// JSON null and an omitted field are both treated as unknown; explicit zero is
+// a known value and remains available through Replicas as before.
+func (a *App) UnmarshalJSON(data []byte) error {
+	type appAlias App
+	var decoded appAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	raw, exists := fields["replicas"]
+	*a = App(decoded)
+	a.ReplicasPresent = exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+	a.Inputs = inputNames(fields["inputs"])
+	for name, target := range map[string]any{
+		"svc":                  &a.Service,
+		"custom_config":        &a.CustomConfig,
+		"readiness_probe_path": &a.ReadinessProbePath,
+		"command":              &a.Command,
+		"args":                 &a.Args,
+	} {
+		value, present := fields[name]
+		if present && len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			if err := json.Unmarshal(value, target); err != nil {
+				return fmt.Errorf("app.%s: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func inputNames(raw json.RawMessage) []string {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	var names []string
+	var values []json.RawMessage
+	if json.Unmarshal(raw, &values) == nil {
+		for _, value := range values {
+			var name string
+			if json.Unmarshal(value, &name) == nil {
+				continue
+			}
+			names = appendInputName(names, value)
+		}
+	} else {
+		var object map[string]json.RawMessage
+		if json.Unmarshal(raw, &object) == nil {
+			for name := range object {
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func appendInputName(names []string, raw json.RawMessage) []string {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) != nil {
+		return names
+	}
+	for _, key := range []string{"name", "key", "id"} {
+		var name string
+		if json.Unmarshal(object[key], &name) == nil && name != "" {
+			return append(names, name)
+		}
+	}
+	return names
 }
 
 // plainCreationMethods are the methods that produce an ordinary workload: an

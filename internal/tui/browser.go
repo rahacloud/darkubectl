@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image/color"
 	"math"
+	"net"
 	"net/url"
 	"os"
 	"sort"
@@ -20,22 +22,33 @@ import (
 )
 
 type appsResult struct {
-	tenant string
-	apps   []client.App
-	err    error
+	meta requestMeta
+	apps []client.App
+	err  error
 }
 
 type profileResult struct {
+	meta    requestMeta
 	profile *client.Profile
 	err     error
 }
 
 type appDetailResult struct {
-	tenant string
-	id     string
-	app    *client.App
-	usage  *AppUsage
-	err    error
+	meta requestMeta
+	app  *client.App
+	err  error
+}
+
+type appUsageResult struct {
+	meta  requestMeta
+	usage *AppUsage
+	err   error
+}
+
+type usageHistoryResult struct {
+	meta    requestMeta
+	history *UsageHistory
+	err     error
 }
 
 type appAction uint8
@@ -56,7 +69,7 @@ type appActionResult struct {
 }
 
 type namespacesResult struct {
-	tenant     string
+	meta       requestMeta
 	namespaces []client.Namespace
 	err        error
 }
@@ -66,7 +79,26 @@ type AppUsage struct {
 	CPUCores  *float64
 	RAMBytes  *float64
 	DiskBytes *float64
+	Failed    UsageMetricFailures
 }
+
+// UsageMetricFailures records per-resource query failures so partial metric
+// responses remain distinct from a successful query with no samples.
+type UsageMetricFailures struct {
+	CPU            bool
+	CPUThrottle    bool
+	RAM            bool
+	Disk           bool
+	NetworkReceive bool
+	NetworkSend    bool
+}
+
+type appView uint8
+
+const (
+	appViewSummary appView = iota
+	appViewUsage
+)
 
 type appSort int
 
@@ -87,6 +119,11 @@ type tenantOption struct {
 	status string
 }
 
+type keyHint struct {
+	key    string
+	action string
+}
+
 // BrowserOptions contains the live browser's reads and opt-in app lifecycle actions.
 type BrowserOptions struct {
 	Tenant       string
@@ -96,9 +133,31 @@ type BrowserOptions struct {
 	ListApps     func(context.Context, string) ([]client.App, error)
 	GetApp       func(context.Context, string, string) (*client.App, error)
 	Usage        func(context.Context, string, string) (*AppUsage, error)
+	UsageHistory func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
 	Namespaces   func(context.Context, string) ([]client.Namespace, error)
 	RestartApp   func(context.Context, string, string) error
 	DeleteApp    func(context.Context, string, string) error
+}
+
+type requestKind uint8
+
+const (
+	requestProfile requestKind = iota
+	requestApps
+	requestNamespaces
+	requestSummary
+	requestUsage
+	requestUsageHistory
+)
+
+type requestKey struct {
+	kind  requestKind
+	appID string
+}
+
+type inFlightRequest struct {
+	meta   requestMeta
+	cancel context.CancelFunc
 }
 
 type namespaceKey struct {
@@ -119,74 +178,83 @@ type treeNode struct {
 }
 
 type browser struct {
-	tenant             string
-	mode               string
-	listApps           func(string) ([]client.App, error)
-	getApp             func(string, string) (*client.App, error)
-	usage              func(string, string) (*AppUsage, error)
-	listNamespaces     func(string) ([]client.Namespace, error)
-	profile            func(context.Context) (*client.Profile, error)
-	ctx                context.Context
-	localTenants       []string
-	tenants            []tenantOption
-	tenantCursor       int
-	selectingTenant    bool
-	contextFocused     bool
-	contextRow         int
-	allowWrites        bool
-	actionMenu         bool
-	actionCursor       int
-	actionMenuMessage  string
-	confirmAction      appAction
-	confirmButton      int
-	confirmName        string
-	confirmError       string
-	actionBusy         bool
-	actionNotice       string
-	actionTargetTenant string
-	actionTargetID     string
-	actionTargetName   string
-	restartApp         func(string, string) error
-	deleteApp          func(string, string) error
-	mockDeleteApp      func(string, string)
-	profileLoaded      bool
-	profileErr         error
-	profileEmpty       bool
-	tenantStatus       string
-	apps               []client.App
-	err                error
-	loading            bool
-	selected           int
-	namespaceSelected  bool
-	namespaceScope     namespaceKey
-	namespaceScoped    bool
-	namespaces         []client.Namespace
-	namespacesLoaded   bool
-	namespacesLoading  bool
-	namespaceFallback  bool
-	namespaceErr       error
-	selectingNamespace bool
-	namespaceCursor    int
-	namespaceQuery     string
-	filterQuery        string
-	filterBeforeEdit   string
-	filterEditing      bool
-	filterSelection    string
-	collapsed          map[namespaceKey]bool
-	detail             bool
-	detailLoading      bool
-	detailErr          error
-	detailApp          *client.App
-	detailUsage        *AppUsage
-	usageAppID         string
-	sorting            bool
-	sortChoice         int
-	sortBy             appSort
-	sortDescending     bool
-	help               bool
-	spinnerFrame       int
-	width              int
-	height             int
+	tenant              string
+	mode                string
+	listApps            func(context.Context, string) ([]client.App, error)
+	getApp              func(context.Context, string, string) (*client.App, error)
+	usage               func(context.Context, string, string) (*AppUsage, error)
+	usageHistory        func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
+	listNamespaces      func(context.Context, string) ([]client.Namespace, error)
+	profile             func(context.Context) (*client.Profile, error)
+	ctx                 context.Context
+	now                 func() time.Time
+	nextRequestID       uint64
+	tenantGeneration    uint64
+	selectionGeneration uint64
+	inFlight            map[requestKey]inFlightRequest
+	localTenants        []string
+	tenants             []tenantOption
+	tenantCursor        int
+	selectingTenant     bool
+	contextFocused      bool
+	contextRow          int
+	allowWrites         bool
+	actionMenu          bool
+	actionCursor        int
+	actionMenuMessage   string
+	confirmAction       appAction
+	confirmButton       int
+	confirmName         string
+	confirmError        string
+	actionBusy          bool
+	actionNotice        string
+	actionTargetTenant  string
+	actionTargetID      string
+	actionTargetName    string
+	restartApp          func(string, string) error
+	deleteApp           func(string, string) error
+	mockDeleteApp       func(string, string)
+	profileState        requestState
+	tenantStatus        string
+	apps                []client.App
+	appsState           requestState
+	selected            int
+	namespaceSelected   bool
+	namespaceScope      namespaceKey
+	namespaceScoped     bool
+	namespaces          []client.Namespace
+	namespaceFallback   bool
+	namespaceState      requestState
+	selectingNamespace  bool
+	namespaceCursor     int
+	namespaceQuery      string
+	filterQuery         string
+	filterBeforeEdit    string
+	filterEditing       bool
+	filterSelection     string
+	collapsed           map[namespaceKey]bool
+	detail              bool
+	activeAppView       appView
+	detailState         requestState
+	detailApp           *client.App
+	detailUsage         *AppUsage
+	usageAppID          string
+	usageState          requestState
+	historyState        requestState
+	history             *UsageHistory
+	historyRange        int
+	historyMetric       int
+	historyPod          string
+	historyPodChosen    bool
+	usageScroll         int
+	sorting             bool
+	sortChoice          int
+	sortBy              appSort
+	sortDescending      bool
+	help                bool
+	spinnerFrame        int
+	width               int
+	height              int
 }
 
 // RunBrowser opens the app browser using the caller's scoped clients.
@@ -194,17 +262,17 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
-		allowWrites:  options.AllowWrites,
-		localTenants: append([]string(nil), options.LocalTenants...),
-		listApps:     func(tenant string) ([]client.App, error) { return options.ListApps(ctx, tenant) }}
+		allowWrites: options.AllowWrites, localTenants: append([]string(nil), options.LocalTenants...),
+		listApps: options.ListApps}
 	if options.GetApp != nil {
-		m.getApp = func(tenant, id string) (*client.App, error) { return options.GetApp(ctx, tenant, id) }
+		m.getApp = options.GetApp
 	}
 	if options.Usage != nil {
-		m.usage = func(tenant, id string) (*AppUsage, error) { return options.Usage(ctx, tenant, id) }
+		m.usage = options.Usage
 	}
+	m.usageHistory = options.UsageHistory
 	if options.Namespaces != nil {
-		m.listNamespaces = func(tenant string) ([]client.Namespace, error) { return options.Namespaces(ctx, tenant) }
+		m.listNamespaces = options.Namespaces
 	}
 	if options.RestartApp != nil {
 		m.restartApp = func(tenant, id string) error { return options.RestartApp(ctx, tenant, id) }
@@ -245,7 +313,7 @@ func newMockBrowser(profile MockProfile) *browser {
 		tenant:  profile.Tenant,
 		mode:    "MOCK PROFILE · OFFLINE",
 		tenants: options,
-		listApps: func(tenant string) ([]client.App, error) {
+		listApps: func(_ context.Context, tenant string) ([]client.App, error) {
 			apps, ok := appsByTenant[tenant]
 			if !ok {
 				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
@@ -258,7 +326,16 @@ func newMockBrowser(profile MockProfile) *browser {
 			}
 			return remaining, nil
 		},
-		listNamespaces: func(tenant string) ([]client.Namespace, error) {
+		getApp: func(_ context.Context, tenant, id string) (*client.App, error) {
+			for _, app := range appsByTenant[tenant] {
+				if app.ID == id && !deletedApps[tenant][id] {
+					copy := app
+					return &copy, nil
+				}
+			}
+			return nil, fmt.Errorf("app %q is not present in mock tenant %q", id, tenant)
+		},
+		listNamespaces: func(_ context.Context, tenant string) ([]client.Namespace, error) {
 			namespaces, ok := namespacesByTenant[tenant]
 			if !ok {
 				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
@@ -278,40 +355,150 @@ func newMockBrowser(profile MockProfile) *browser {
 	return m
 }
 
-func (m *browser) load() tea.Cmd {
-	m.loading = true
-	tenant := m.tenant
-	loadCmd := func() tea.Msg {
-		apps, err := m.listApps(tenant)
-		return appsResult{tenant: tenant, apps: apps, err: err}
+func (m *browser) requestTime() time.Time {
+	if m.now != nil {
+		return m.now()
 	}
-	return loadCmd
+	return time.Now()
+}
+
+func (m *browser) startRequest(kind requestKind, tenant, appID string, scopeGeneration uint64) (requestMeta, context.Context) {
+	if m.inFlight == nil {
+		m.inFlight = make(map[requestKey]inFlightRequest)
+	}
+	key := requestKey{kind: kind, appID: appID}
+	if active, ok := m.inFlight[key]; ok {
+		active.cancel()
+	}
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	requestCtx, cancel := context.WithCancel(parent)
+	m.nextRequestID++
+	meta := requestMeta{tenant: tenant, appID: appID, scopeGeneration: scopeGeneration, requestID: m.nextRequestID}
+	m.inFlight[key] = inFlightRequest{meta: meta, cancel: cancel}
+	return meta, requestCtx
+}
+
+func (m *browser) finishRequest(kind requestKind, meta requestMeta) {
+	key := requestKey{kind: kind, appID: meta.appID}
+	if active, ok := m.inFlight[key]; ok && active.meta.requestID == meta.requestID {
+		active.cancel()
+		delete(m.inFlight, key)
+	}
+}
+
+func (m *browser) cancelRequests(keepProfile bool) {
+	for key, active := range m.inFlight {
+		if keepProfile && key.kind == requestProfile {
+			continue
+		}
+		active.cancel()
+		delete(m.inFlight, key)
+	}
+}
+
+func (m *browser) cancelRequest(key requestKey) {
+	for activeKey, active := range m.inFlight {
+		if activeKey.kind == key.kind && (key.appID == "" || activeKey.appID == key.appID) {
+			active.cancel()
+			delete(m.inFlight, activeKey)
+		}
+	}
+}
+
+func (m *browser) markCurrentUsageStale(appID string) {
+	if m.detailUsage != nil && m.usageAppID == appID {
+		m.detailUsage.Failed = UsageMetricFailures{CPU: true, RAM: true, Disk: true}
+	}
+}
+
+func (m *browser) invalidateAppReads() {
+	m.selectionGeneration++
+	m.activeAppView = appViewSummary
+	m.cancelRequest(requestKey{kind: requestSummary})
+	m.cancelRequest(requestKey{kind: requestUsage})
+	m.cancelRequest(requestKey{kind: requestUsageHistory})
+	m.detailState.reset()
+	m.usageState.reset()
+	m.historyState.reset()
+	m.history = nil
+	m.historyPod = ""
+	m.historyPodChosen = false
+	m.usageScroll = 0
+	m.detailUsage = nil
+	m.usageAppID = ""
+}
+
+func (m *browser) selectedDetailTarget() string {
+	if m.namespaceSelected || !m.selectedAppVisible() {
+		return ""
+	}
+	return m.apps[m.selected].ID
+}
+
+func (m *browser) syncDetailTarget(previous string) tea.Cmd {
+	current := m.selectedDetailTarget()
+	if previous == current {
+		return nil
+	}
+	m.invalidateAppReads()
+	if current == "" {
+		return nil
+	}
+	selected := m.apps[m.selected]
+	m.detailApp = &selected
+	if m.detail {
+		return m.loadSelectedSummary()
+	}
+	return nil
+}
+
+func (m *browser) load() tea.Cmd {
+	tenant := m.tenant
+	meta, requestCtx := m.startRequest(requestApps, tenant, "", m.tenantGeneration)
+	m.appsState.begin(meta, m.requestTime())
+	if m.listApps == nil {
+		m.finishRequest(requestApps, meta)
+		m.appsState.unavailable(fmt.Errorf("app listing is unavailable"))
+		return nil
+	}
+	return func() tea.Msg {
+		apps, err := m.listApps(requestCtx, tenant)
+		return appsResult{meta: meta, apps: apps, err: err}
+	}
 }
 
 func (m *browser) loadProfile() tea.Cmd {
 	if m.profile == nil {
+		m.profileState.unavailable(nil)
 		return nil
 	}
+	meta, requestCtx := m.startRequest(requestProfile, "", "", 0)
+	m.profileState.begin(meta, m.requestTime())
 	return func() tea.Msg {
-		profile, err := m.profile(m.ctx)
-		return profileResult{profile: profile, err: err}
+		profile, err := m.profile(requestCtx)
+		return profileResult{meta: meta, profile: profile, err: err}
 	}
 }
 
 func (m *browser) loadNamespaces() tea.Cmd {
-	if m.namespacesLoaded || m.namespacesLoading {
+	if m.namespaceState.status == requestReady || m.namespaceState.status == requestEmpty || m.namespaceState.status == requestUnavailable || m.namespaceState.matches(m.namespaceState.meta) {
 		return nil
 	}
 	if m.listNamespaces == nil {
 		m.useAppNamespaceFallback(nil)
+		m.namespaceState.unavailable(nil)
 		m.syncNamespaceCursor()
 		return nil
 	}
-	m.namespacesLoading = true
 	tenant := m.tenant
+	meta, requestCtx := m.startRequest(requestNamespaces, tenant, "", m.tenantGeneration)
+	m.namespaceState.begin(meta, m.requestTime())
 	return func() tea.Msg {
-		namespaces, err := m.listNamespaces(tenant)
-		return namespacesResult{tenant: tenant, namespaces: namespaces, err: err}
+		namespaces, err := m.listNamespaces(requestCtx, tenant)
+		return namespacesResult{meta: meta, namespaces: namespaces, err: err}
 	}
 }
 
@@ -326,10 +513,10 @@ func (m *browser) useAppNamespaceFallback(cause error) {
 		m.namespaces = append(m.namespaces, namespace)
 	}
 	m.sortNamespaces()
-	m.namespacesLoaded = true
-	m.namespacesLoading = false
 	m.namespaceFallback = true
-	m.namespaceErr = cause
+	if cause != nil {
+		m.namespaceState.err = cause
+	}
 }
 
 func (m *browser) sortNamespaces() {
@@ -577,57 +764,75 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.width < 60 || m.height < 20 {
-			m.actionMenu = false
-			m.cancelActionConfirmation()
-		}
 	case appsResult:
-		if msg.tenant != m.tenant {
+		m.finishRequest(requestApps, msg.meta)
+		if !m.appsState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration {
 			return m, nil
 		}
-		m.loading = false
-		m.err = msg.err
-		if msg.err == nil { //nolint:nestif // Refresh preserves the selected app and its detail state.
-			selectedID := ""
-			if len(m.apps) > 0 {
-				selectedID = m.apps[m.selected].ID
+		if msg.err != nil {
+			m.appsState.fail(msg.err)
+			return m, nil
+		}
+		oldTarget := m.selectedDetailTarget()
+		selectedID := ""
+		if len(m.apps) > 0 && m.selected >= 0 && m.selected < len(m.apps) {
+			selectedID = m.apps[m.selected].ID
+		}
+		m.appsState.succeed(len(msg.apps) == 0, m.requestTime())
+		m.apps = msg.apps
+		m.sortApps()
+		m.selected = min(m.selected, max(0, len(m.apps)-1))
+		for i := range m.apps {
+			if m.apps[i].ID == selectedID && selectedID != "" {
+				m.selected = i
+				break
 			}
-			m.apps = msg.apps
-			m.sortApps()
-			m.selected = min(m.selected, max(0, len(m.apps)-1))
-			for i := range m.apps {
-				if m.apps[i].ID == selectedID && selectedID != "" {
-					m.selected = i
-					break
-				}
-			}
-			m.ensureFilterSelection()
-			if len(m.apps) == 0 {
-				m.detailApp = nil
+		}
+		m.ensureFilterSelection()
+		if len(m.apps) == 0 {
+			m.detailApp = nil
+		} else if m.detailApp == nil || m.detailApp.ID != m.apps[m.selected].ID {
+			selected := m.apps[m.selected]
+			m.detailApp = &selected
+		}
+		if oldTarget != m.selectedDetailTarget() {
+			m.invalidateAppReads()
+		}
+		if m.detail && m.selectedDetailTarget() != "" {
+			return m, m.loadSelectedSummary()
+		}
+		if m.namespaceState.status == requestReady || m.namespaceState.status == requestEmpty || m.namespaceState.status == requestPartial {
+			if m.namespaceFallback {
+				m.useAppNamespaceFallback(m.namespaceState.err)
 			} else {
-				m.detailApp = &m.apps[m.selected]
-				m.detailLoading = false
-				m.detailErr = nil
+				m.namespaces = mergeNamespaces(m.namespaces, namespacesFromApps(m.apps))
+				m.sortNamespaces()
 			}
-			if m.namespacesLoaded {
-				if m.namespaceFallback {
-					m.useAppNamespaceFallback(m.namespaceErr)
-				} else {
-					m.namespaces = mergeNamespaces(m.namespaces, namespacesFromApps(m.apps))
-					m.sortNamespaces()
-				}
-				if m.selectingNamespace {
-					m.syncNamespaceCursor()
-				}
+			if m.selectingNamespace {
+				m.syncNamespaceCursor()
 			}
 		}
 	case profileResult:
-		m.profileLoaded = true
-		m.profileErr = msg.err
-		m.tenantStatus = ""
-		m.tenants = nil
-		if msg.err == nil {
-			m.profileEmpty = msg.profile == nil || len(msg.profile.Organizations) == 0
+		m.finishRequest(requestProfile, msg.meta)
+		if !m.profileState.matches(msg.meta) {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.profileState.fail(msg.err)
+			if m.profileState.status != requestStale {
+				m.tenants = nil
+				for _, name := range m.localTenants {
+					m.tenants = appendTenant(m.tenants, tenantOption{name: name, source: "Local config"})
+				}
+				if m.tenant != "" {
+					m.tenants = appendTenant(m.tenants, tenantOption{name: m.tenant, source: "Local config", status: "current"})
+					m.tenantStatus = "local config"
+				}
+			}
+		} else {
+			m.profileState.succeed(msg.profile == nil || len(msg.profile.Organizations) == 0, m.requestTime())
+			m.tenantStatus = ""
+			m.tenants = nil
 			if msg.profile != nil {
 				for _, org := range msg.profile.Organizations {
 					status := ""
@@ -640,15 +845,6 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tenant != "" && !containsTenant(m.tenants, m.tenant) {
 				m.tenantStatus = "unverified"
 				m.tenants = appendTenant(m.tenants, tenantOption{name: m.tenant, source: "Configured org", status: "unverified"})
-			}
-		} else {
-			m.profileEmpty = false
-			for _, name := range m.localTenants {
-				m.tenants = appendTenant(m.tenants, tenantOption{name: name, source: "Local config"})
-			}
-			if m.tenant != "" {
-				m.tenants = appendTenant(m.tenants, tenantOption{name: m.tenant, source: "Local config", status: "current"})
-				m.tenantStatus = "local config"
 			}
 		}
 		if m.tenant != "" {
@@ -666,31 +862,105 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.contextRow = 0
 		}
 	case appDetailResult:
-		if msg.tenant != m.tenant || len(m.apps) == 0 || m.apps[m.selected].ID != msg.id {
+		m.finishRequest(requestSummary, msg.meta)
+		if !m.detailState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || m.selectedDetailTarget() != msg.meta.appID {
 			return m, nil
 		}
-		m.detailLoading = false
-		m.detailErr = msg.err
-		if msg.err == nil && msg.app != nil {
-			m.detailApp = msg.app
+		if msg.err != nil || msg.app == nil || msg.app.ID != msg.meta.appID {
+			if msg.err == nil {
+				msg.err = fmt.Errorf("detail response did not match the selected app")
+			}
+			m.detailState.fail(msg.err)
+			return m, nil
 		}
-		if msg.err == nil && msg.usage != nil {
-			m.detailUsage = msg.usage
-			m.usageAppID = msg.id
+		m.detailState.succeed(false, m.requestTime())
+		m.detailApp = msg.app
+	case appUsageResult:
+		m.finishRequest(requestUsage, msg.meta)
+		if !m.usageState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || m.selectedDetailTarget() != msg.meta.appID {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.markCurrentUsageStale(msg.meta.appID)
+			m.usageState.fail(fmt.Errorf("resource usage request failed"))
+			return m, nil
+		}
+		if msg.usage == nil {
+			m.markCurrentUsageStale(msg.meta.appID)
+			m.usageState.fail(fmt.Errorf("resource usage response was empty"))
+			return m, nil
+		}
+		previous := m.detailUsage
+		if m.usageAppID != msg.meta.appID {
+			previous = nil
+		}
+		usage := *msg.usage
+		if previous != nil {
+			if usage.Failed.CPU {
+				usage.CPUCores = previous.CPUCores
+			}
+			if usage.Failed.RAM {
+				usage.RAMBytes = previous.RAMBytes
+			}
+			if usage.Failed.Disk {
+				usage.DiskBytes = previous.DiskBytes
+			}
+		}
+		m.detailUsage = &usage
+		m.usageAppID = msg.meta.appID
+		failedCount := boolCount(usage.Failed.CPU) + boolCount(usage.Failed.RAM) + boolCount(usage.Failed.Disk)
+		sampleCount := boolCount(usage.CPUCores != nil) + boolCount(usage.RAMBytes != nil) + boolCount(usage.DiskBytes != nil)
+		switch {
+		case failedCount == 3:
+			m.usageState.fail(fmt.Errorf("all resource metrics are unavailable"))
+		case failedCount > 0 || sampleCount > 0 && sampleCount < 3:
+			m.usageState.partial(m.requestTime())
+		case sampleCount == 0:
+			m.usageState.succeed(true, m.requestTime())
+		default:
+			m.usageState.succeed(false, m.requestTime())
+		}
+	case usageHistoryResult:
+		m.finishRequest(requestUsageHistory, msg.meta)
+		if !m.historyState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || m.selectedDetailTarget() != msg.meta.appID {
+			return m, nil
+		}
+		if msg.err != nil || msg.history == nil {
+			m.historyState.fail(fmt.Errorf("history request failed"))
+			return m, nil
+		}
+		failed := boolCount(msg.history.Failed.CPU) + boolCount(msg.history.Failed.CPUThrottle) + boolCount(msg.history.Failed.RAM) + boolCount(msg.history.Failed.Disk) + boolCount(msg.history.Failed.NetworkReceive) + boolCount(msg.history.Failed.NetworkSend)
+		samples := len(msg.history.CPU) + len(msg.history.CPUThrottle) + len(msg.history.RAM) + len(msg.history.Disk) + len(msg.history.NetworkReceive) + len(msg.history.NetworkSend)
+		switch {
+		case failed >= 5:
+			m.historyState.fail(fmt.Errorf("history metrics unavailable"))
+		case failed > 0:
+			m.history = msg.history
+			m.syncHistoryPod()
+			m.historyState.partial(m.requestTime())
+		default:
+			m.history = msg.history
+			m.syncHistoryPod()
+			m.historyState.succeed(samples == 0, m.requestTime())
 		}
 	case namespacesResult:
-		if msg.tenant != m.tenant {
+		m.finishRequest(requestNamespaces, msg.meta)
+		if !m.namespaceState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration {
 			return m, nil
 		}
-		m.namespacesLoading = false
-		m.namespaceErr = msg.err
-		if msg.err != nil || len(msg.namespaces) == 0 && len(m.apps) > 0 {
-			m.useAppNamespaceFallback(msg.err)
+		if msg.err != nil {
+			m.namespaceState.fail(msg.err)
+			if m.namespaceState.status != requestStale {
+				m.useAppNamespaceFallback(msg.err)
+			}
+		} else if len(msg.namespaces) == 0 && len(m.apps) > 0 {
+			m.useAppNamespaceFallback(nil)
+			m.namespaceState.partial(m.requestTime())
 		} else {
 			m.namespaces = mergeNamespaces(msg.namespaces, namespacesFromApps(m.apps))
 			m.sortNamespaces()
-			m.namespacesLoaded = true
 			m.namespaceFallback = false
+			m.namespaceState.succeed(len(m.namespaces) == 0, m.requestTime())
 		}
 		m.syncNamespaceCursor()
 	case appActionResult:
@@ -698,6 +968,12 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		return m, m.handleActionMouse(msg)
 	case tea.KeyPressMsg:
+		if m.actionBusy {
+			if msg.String() == "ctrl+c" || msg.String() == "q" {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if m.actionMenu {
 			return m, m.handleActionMenuKey(msg)
 		}
@@ -708,6 +984,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleNamespaceKey(msg)
 		}
 		if m.filterEditing {
+			previousTarget := m.selectedDetailTarget()
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
@@ -739,22 +1016,52 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				m.ensureFilterSelection()
-				return m, nil
+				return m, m.syncDetailTarget(previousTarget)
 			case "backspace", "ctrl+h":
 				runes := []rune(m.filterQuery)
 				if len(runes) > 0 {
 					m.filterQuery = string(runes[:len(runes)-1])
 					m.ensureFilterSelection()
 				}
-				return m, nil
+				return m, m.syncDetailTarget(previousTarget)
 			case "ctrl+u":
 				m.filterQuery = ""
 				m.ensureFilterSelection()
-				return m, nil
+				return m, m.syncDetailTarget(previousTarget)
 			}
 			if msg.Text != "" {
 				m.filterQuery += safeText(msg.Text)
 				m.ensureFilterSelection()
+			}
+			return m, m.syncDetailTarget(previousTarget)
+		}
+		if m.sorting {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				m.sorting = false
+			case "up", "k":
+				m.sortChoice = (m.sortChoice + len(appSortNames) - 1) % len(appSortNames)
+			case "down", "j":
+				m.sortChoice = (m.sortChoice + 1) % len(appSortNames)
+			case "left", "h":
+				m.sortDescending = false
+			case "right", "l":
+				m.sortDescending = true
+			case "enter":
+				m.sortBy = appSort(m.sortChoice)
+				m.sorting = false
+				m.sortApps()
+			}
+			return m, nil
+		}
+		if m.help {
+			switch msg.String() {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "esc", "?":
+				m.help = false
 			}
 			return m, nil
 		}
@@ -787,6 +1094,33 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "a":
 			m.openActionMenu()
+		case "[":
+			return m, m.switchAppView(-1)
+		case "]":
+			return m, m.switchAppView(1)
+		case "w":
+			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+				m.historyRange = (m.historyRange + 1) % len(usageRanges)
+				m.cancelRequest(requestKey{kind: requestUsageHistory})
+				m.historyState.reset()
+				m.history = nil
+				return m, m.loadUsageHistory()
+			}
+		case "p":
+			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+				m.nextHistoryPod()
+			}
+		case "m":
+			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+				app := m.apps[m.selected]
+				if m.detailApp != nil && m.detailApp.ID == app.ID {
+					app = *m.detailApp
+				}
+				metrics := availableHistoryMetrics(app)
+				if len(metrics) > 0 {
+					m.historyMetric = (m.historyMetric + 1) % len(metrics)
+				}
+			}
 		case "n", ":":
 			if !m.help && !m.selectingTenant {
 				return m, m.openNamespacePicker()
@@ -795,6 +1129,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = !m.help
 		case "/":
 			if !m.help && !m.selectingTenant {
+				previousTarget := m.selectedDetailTarget()
 				m.filterEditing = true
 				m.contextFocused = false
 				m.detail = false
@@ -804,6 +1139,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selected >= 0 && m.selected < len(m.apps) {
 					m.filterSelection = m.apps[m.selected].ID
 				}
+				m.syncDetailTarget(previousTarget)
 			}
 		case "s":
 			if !m.help && !m.selectingTenant {
@@ -884,6 +1220,22 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.help && !m.contextFocused && !m.selectingTenant {
 				return m, m.selectTree(len(m.treeNodes()) - 1)
 			}
+		case "pgup":
+			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+				m.usageScroll = max(0, m.usageScroll-max(1, m.height-8))
+				return m, nil
+			}
+			if !m.help && !m.contextFocused && !m.selectingTenant {
+				return m, m.moveTree(-max(1, m.height-8))
+			}
+		case "pgdown":
+			if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
+				m.usageScroll += max(1, m.height-8)
+				return m, nil
+			}
+			if !m.help && !m.contextFocused && !m.selectingTenant {
+				return m, m.moveTree(max(1, m.height-8))
+			}
 		case "enter":
 			if m.sorting {
 				m.sortBy = appSort(m.sortChoice)
@@ -915,15 +1267,15 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "r":
 			if m.selectingTenant {
-				m.profileLoaded = false
-				m.profileEmpty = false
-				m.profileErr = nil
 				return m, m.loadProfile()
 			}
-			if m.detail && !m.detailLoading {
+			if m.detail {
+				if m.activeAppView == appViewUsage {
+					return m, tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
+				}
 				return m, m.loadSelectedSummary()
 			}
-			if !m.help && !m.loading {
+			if !m.help && !m.appsState.active() {
 				return m, m.load()
 			}
 		}
@@ -993,30 +1345,68 @@ func valueEqualForSort(a, b client.App, by appSort) bool {
 }
 
 func (m *browser) loadSelectedSummary() tea.Cmd {
-	if !m.selectedAppVisible() || m.namespaceSelected {
+	id := m.selectedDetailTarget()
+	if id == "" {
 		return nil
 	}
 	selected := m.apps[m.selected]
 	if m.detailApp == nil || m.detailApp.ID != selected.ID {
 		m.detailApp = &selected
 	}
-	m.detailErr = nil
-	m.detailUsage = nil
-	m.usageAppID = ""
-	if m.getApp == nil {
-		m.detailLoading = false
+	tenant := m.tenant
+	var cmds []tea.Cmd
+	if !m.detailState.active() {
+		meta, requestCtx := m.startRequest(requestSummary, tenant, id, m.selectionGeneration)
+		m.detailState.begin(meta, m.requestTime())
+		if m.getApp == nil {
+			m.finishRequest(requestSummary, meta)
+			m.detailState.unavailable(fmt.Errorf("app detail is unavailable"))
+		} else {
+			getApp := m.getApp
+			cmds = append(cmds, func() tea.Msg {
+				app, err := getApp(requestCtx, tenant, id)
+				return appDetailResult{meta: meta, app: app, err: err}
+			})
+		}
+	}
+	if usageCmd := m.loadSelectedUsage(); usageCmd != nil {
+		cmds = append(cmds, usageCmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *browser) loadSelectedUsage() tea.Cmd {
+	id := m.selectedDetailTarget()
+	if id == "" || m.usageState.active() {
 		return nil
 	}
-	m.detailLoading = true
-	tenant, id := m.tenant, m.apps[m.selected].ID
-	return func() tea.Msg {
-		app, err := m.getApp(tenant, id)
-		var usage *AppUsage
-		if err == nil && m.usage != nil {
-			usage, _ = m.usage(tenant, id)
-		}
-		return appDetailResult{tenant: tenant, id: id, app: app, usage: usage, err: err}
+	tenant := m.tenant
+	meta, requestCtx := m.startRequest(requestUsage, tenant, id, m.selectionGeneration)
+	m.usageState.begin(meta, m.requestTime())
+	if m.usage == nil {
+		m.finishRequest(requestUsage, meta)
+		m.usageState.unavailable(nil)
+		return nil
 	}
+	getUsage := m.usage
+	return func() tea.Msg {
+		usage, err := getUsage(requestCtx, tenant, id)
+		return appUsageResult{meta: meta, usage: usage, err: err}
+	}
+}
+
+func (m *browser) switchAppView(delta int) tea.Cmd {
+	if !m.detail || !m.selectedAppActive() {
+		return nil
+	}
+	m.activeAppView = appView((int(m.activeAppView) + delta + 2) % 2)
+	if m.activeAppView == appViewUsage && m.usageState.status == requestIdle {
+		return tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
+	}
+	if m.activeAppView == appViewUsage && m.historyState.status == requestIdle {
+		return m.loadUsageHistory()
+	}
+	return nil
 }
 
 func appendTenant(tenants []tenantOption, option tenantOption) []tenantOption {
@@ -1053,10 +1443,13 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 		return nil
 	}
 	m.tenant = name
+	m.cancelRequests(true)
+	m.tenantGeneration++
+	m.invalidateAppReads()
 	m.tenantStatus = ""
 	m.selectingTenant = false
 	m.apps = nil
-	m.err = nil
+	m.appsState.reset()
 	m.selected = 0
 	m.namespaceSelected = false
 	m.filterQuery = ""
@@ -1066,15 +1459,15 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.detail = false
 	m.contextFocused = false
 	m.detailApp = nil
-	m.detailErr = nil
-	m.detailLoading = false
+	m.detailState.reset()
+	m.usageState.reset()
+	m.detailUsage = nil
+	m.usageAppID = ""
 	m.namespaceScoped = false
 	m.namespaceScope = namespaceKey{}
 	m.namespaces = nil
-	m.namespacesLoaded = false
-	m.namespacesLoading = false
+	m.namespaceState.reset()
 	m.namespaceFallback = false
-	m.namespaceErr = nil
 	m.selectingNamespace = false
 	return m.load()
 }
@@ -1101,12 +1494,18 @@ func (m *browser) View() tea.View {
 		if m.actionNotice != "" {
 			lines = append(lines, paint(safeText(m.actionNotice), output.ColorNumber, false))
 		}
-		if m.profileLoaded && m.profileErr != nil && !m.selectingTenant {
-			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
+		if m.profileState.status == requestFailed || m.profileState.status == requestStale {
+			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t then r to retry profile.")
+			if m.profileState.status == requestStale {
+				lines = append(lines, staleRequestTime("Profile", m.profileState))
+			}
 		}
 		bodyHeight := max(1, m.height-len(lines)-footerHeight-1)
 		left := m.appPaneLines(bodyHeight)
 		right := m.summaryPaneLines()
+		if m.activeAppView == appViewUsage {
+			right = m.usageViewport(right, bodyHeight)
+		}
 		context := m.contextPaneLines(bodyHeight)
 		lines = append(lines, m.splitPanes(context, left, right, bodyHeight)...)
 	}
@@ -1140,18 +1539,22 @@ func (m *browser) appPaneLines(height int) []string {
 	if !m.detail {
 		heading = "▸ [3] APPS"
 	}
-	if m.loading {
+	if m.appsState.active() {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
 	}
 	lines := []string{paint(heading, output.ColorAccent, true)}
-	if m.err != nil {
+	if m.appsState.err != nil {
 		if len(m.apps) == 0 {
-			lines = append(lines, "Could not load apps: "+safeText(m.err.Error()))
+			lines = append(lines, "Could not load apps: "+safeText(m.appsState.err.Error()))
 		} else {
-			lines = append(lines, paint("Refresh failed; apps may be stale: "+safeText(m.err.Error()), output.ColorNumber, false))
+			lines = append(lines, paint("Stale · refresh failed: "+safeText(m.appsState.err.Error()), output.ColorNumber, false))
+			lines = append(lines, staleRequestTime("Apps", m.appsState))
 		}
 	}
-	if !m.loading && m.err == nil && len(m.apps) == 0 {
+	if m.appsState.status == requestUnavailable && len(m.apps) == 0 {
+		lines = append(lines, paint("App listing is unavailable.", output.ColorMuted, false))
+	}
+	if !m.appsState.active() && m.appsState.err == nil && len(m.apps) == 0 {
 		label := "No apps in this tenant."
 		if strings.HasPrefix(m.mode, "MOCK") {
 			label = "No apps in this mock profile."
@@ -1161,7 +1564,7 @@ func (m *browser) appPaneLines(height int) []string {
 		}
 		lines = append(lines, label)
 	}
-	if !m.loading && m.err == nil && len(m.apps) > 0 && len(m.visibleAppIndices()) == 0 {
+	if !m.appsState.active() && m.appsState.err == nil && len(m.apps) > 0 && len(m.visibleAppIndices()) == 0 {
 		if m.namespaceScoped && m.filterQuery == "" {
 			lines = append(lines, fmt.Sprintf("No apps in namespace %q.", safeText(m.namespaceScope.name)))
 		} else {
@@ -1174,25 +1577,40 @@ func (m *browser) appPaneLines(height int) []string {
 }
 
 func (m *browser) summaryPaneLines() []string {
-	heading := "  [4] SUMMARY"
-	if m.detail {
-		heading = "▸ [4] SUMMARY"
+	if m.activeAppView == appViewUsage {
+		return m.usagePaneLines()
 	}
-	if m.detailLoading {
-		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
-	}
+	heading := m.appViewTabs()
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return []string{paint(heading, output.ColorAccent, true), paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
+		return []string{heading, paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
 		a = *m.detailApp
 	}
 	stateGlyph, stateColor := stateStyle(appState(a))
-	headingLine := paint(heading, output.ColorAccent, true) + paint(" · ", output.ColorBorder, false) + paint(safeText(a.Name), output.ColorKey, true)
-	lines := []string{headingLine}
-	if m.detailErr != nil {
-		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailErr.Error()), output.ColorNumber, false))
+	lines := []string{heading, paint("· "+safeText(a.Name), output.ColorKey, true)}
+	if m.detailState.err != nil {
+		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailState.err.Error()), output.ColorNumber, false))
+		if m.detailState.status == requestStale {
+			lines = append(lines, staleRequestTime("Summary", m.detailState))
+		}
+	} else if m.detailState.status == requestUnavailable {
+		lines = append(lines, paint("App detail is unavailable; showing the list snapshot.", output.ColorMuted, false))
+	}
+	if m.usageState.err != nil {
+		lines = append(lines, paint("Resource usage unavailable: "+safeText(m.usageState.err.Error()), output.ColorMuted, false))
+		if m.usageState.status == requestStale {
+			lines = append(lines, staleRequestTime("Usage", m.usageState))
+		}
+	} else if m.usageState.status == requestPartial {
+		lines = append(lines, paint("Some resource metrics are unavailable or have no current sample.", output.ColorMuted, false))
+	} else if m.usageState.status == requestUnavailable {
+		lines = append(lines, paint("Usage unavailable · showing configured totals", output.ColorMuted, false))
+	}
+	replicas := "-"
+	if a.ReplicasPresent {
+		replicas = fmt.Sprintf("%d", a.Replicas)
 	}
 	lines = append(lines, "",
 		summaryField("Tenant", displayValue(m.tenant)),
@@ -1200,7 +1618,7 @@ func (m *browser) summaryPaneLines() []string {
 		summaryField("Cluster", displayValue(a.Namespace.Cluster.Name)),
 		summaryField("State", paint(stateGlyph+" "+safeText(appState(a)), stateColor, true)),
 		summaryField("Description", displayValue(a.State.Description)),
-		summaryField("Replicas", fmt.Sprintf("%d", a.Replicas)))
+		summaryField("Replicas", replicas))
 	plan := planName(a.Plan)
 	if plan == "-" {
 		lines = append(lines, summaryLabel("Plan"))
@@ -1228,14 +1646,43 @@ func (m *browser) summaryPaneLines() []string {
 		ramTotal = displayValue(a.RAMLimit)
 	}
 	lines = append(lines,
-		planResourceField("", "CPU", usageRatio(usageValue(usage, func(u *AppUsage) *float64 { return u.CPUCores }), cpuTotal, formatCores)),
-		planResourceField("", "RAM", usageRatio(usageValue(usage, func(u *AppUsage) *float64 { return u.RAMBytes }), ramTotal, formatBytes)))
-	if (a.Disk != nil && a.Disk.SizeInGi > 0) || (usage != nil && usage.DiskBytes != nil) {
+		planResourceField("", "CPU", resourceUsageText(usageValue(usage, func(u *AppUsage) *float64 { return u.CPUCores }), cpuTotal, formatCores, usage != nil && usage.Failed.CPU)),
+		planResourceField("", "RAM", resourceUsageText(usageValue(usage, func(u *AppUsage) *float64 { return u.RAMBytes }), ramTotal, formatBytes, usage != nil && usage.Failed.RAM)))
+	if (a.Disk != nil && a.Disk.SizeInGi > 0) || (usage != nil && (usage.DiskBytes != nil || usage.Failed.Disk)) {
 		diskTotal := "-"
 		if a.Disk != nil && a.Disk.SizeInGi > 0 {
 			diskTotal = fmt.Sprintf("%d GiB", a.Disk.SizeInGi)
 		}
-		lines = append(lines, planResourceField("", "Disk", usageRatio(usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), diskTotal, formatBytes)))
+		lines = append(lines, planResourceField("", "Disk", resourceUsageText(usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), diskTotal, formatBytes, usage != nil && usage.Failed.Disk)))
+	}
+	if a.Service != nil {
+		if value := displayValue(a.Service.Type); value != "-" {
+			lines = append(lines, summaryField("Service", value))
+		}
+		if port, ok := primaryServicePort(a.Service.Ports); ok {
+			servicePort := port.ServicePort
+			if servicePort == 0 {
+				servicePort = port.ContainerPort
+			}
+			if servicePort > 0 {
+				lines = append(lines, summaryField("Port Service", fmt.Sprintf("%d", servicePort)))
+			}
+		}
+		if value := strings.TrimSpace(a.Service.InternalAddress); value != "" {
+			lines = append(lines, summaryField("Internal Address", internalAddressDisplay(value, a.Service.Ports)))
+		}
+		lines = append(lines, summaryField("External IP", displayValue(a.Service.ExternalIP)))
+	} else {
+		lines = append(lines, summaryField("External IP", "-"))
+	}
+	if probe := readinessProbeDisplay(a); probe != "" {
+		lines = append(lines, summaryField("Readiness Probe", probe))
+	}
+	if command := appCommandDisplay(a); command != "" {
+		lines = append(lines, summaryField("Command", command))
+	}
+	if len(a.Inputs) > 0 {
+		lines = append(lines, summaryField("Inputs", strings.Join(a.Inputs, ", ")))
 	}
 	lines = append(lines, summaryField("Created via", creationMethodLabel(a.CreationMethod)), summaryField("Image", displayValue(a.Image())))
 	domains := appDomains(a)
@@ -1254,10 +1701,147 @@ func (m *browser) summaryPaneLines() []string {
 	return lines
 }
 
+func (m *browser) appViewTabs() string {
+	focus := "  "
+	if m.detail {
+		focus = "▸ "
+	}
+	if !m.selectedAppActive() {
+		return paint(focus+"[4] SUMMARY", output.ColorAccent, true)
+	}
+	summary, usage := "Summary", "Usage"
+	if m.activeAppView == appViewSummary {
+		summary = "[Summary]"
+	} else {
+		usage = "[Usage]"
+	}
+	heading := paint(focus+"[4] ", output.ColorAccent, true) + paint(summary, output.ColorKey, m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + paint(usage, output.ColorKey, m.activeAppView == appViewUsage)
+	if m.detailState.active() || m.usageState.active() {
+		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
+	}
+	return heading
+}
+
+func (m *browser) usagePaneLines() []string {
+	lines := []string{m.appViewTabs()}
+	if m.namespaceSelected || !m.selectedAppVisible() {
+		return append(lines, paint("No app selected. Move to an app to view its resource usage.", output.ColorMuted, false))
+	}
+	a := m.apps[m.selected]
+	if m.detailApp != nil && m.detailApp.ID == a.ID {
+		a = *m.detailApp
+	}
+	lines = append(lines, paint("· "+safeText(a.Name), output.ColorKey, true), "")
+	switch m.usageState.status {
+	case requestLoading:
+		lines = append(lines, paint("Loading current resource usage…", output.ColorMuted, false))
+	case requestRefreshing:
+		lines = append(lines, paint("Refreshing current resource usage…", output.ColorMuted, false))
+	case requestStale:
+		lines = append(lines, paint("Refresh failed · showing the last successful samples", output.ColorNumber, false), staleRequestTime("Usage", m.usageState))
+	case requestFailed:
+		lines = append(lines, paint("Resource usage is unavailable. Press r to retry.", output.ColorNumber, false))
+	case requestUnavailable:
+		lines = append(lines, paint("Resource usage is unavailable for this connection.", output.ColorMuted, false))
+	case requestEmpty:
+		lines = append(lines, paint("No resource samples in the last 5 minutes.", output.ColorMuted, false))
+	case requestPartial:
+		lines = append(lines, paint("Partial snapshot · rows show current samples and missing data.", output.ColorNumber, false))
+	default:
+		if m.usageState.lastSuccessAt.IsZero() {
+			lines = append(lines, paint("No usage snapshot yet. Press r to load it.", output.ColorMuted, false))
+		}
+	}
+	usage := m.detailUsage
+	if m.usageAppID != a.ID {
+		usage = nil
+	}
+	lines = append(lines,
+		usageField(" CPU", usageValue(usage, func(u *AppUsage) *float64 { return u.CPUCores }), resourceLimit(a, "cpu"), formatCores, usage != nil && usage.Failed.CPU),
+		usageField(" RAM", usageValue(usage, func(u *AppUsage) *float64 { return u.RAMBytes }), resourceLimit(a, "ram"), formatBytes, usage != nil && usage.Failed.RAM))
+	if a.Disk != nil && a.Disk.SizeInGi > 0 {
+		lines = append(lines, usageField(" Disk", usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), resourceLimit(a, "disk"), formatBytes, usage != nil && usage.Failed.Disk))
+	}
+	lines = append(lines, m.historyLines()...)
+	if !m.usageState.lastSuccessAt.IsZero() {
+		when := m.usageState.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
+		lines = append(lines, "", paint("Last usage response · "+when, output.ColorMuted, false))
+	}
+	lines = append(lines, paint("Window · latest samples from the last 5 minutes", output.ColorMuted, false))
+	return lines
+}
+
+func resourceLimit(app client.App, resource string) string {
+	switch resource {
+	case "cpu":
+		if app.Plan != nil && app.Plan.Detail.CPURequest > 0 {
+			return fmt.Sprintf("%dm", app.Plan.Detail.CPURequest)
+		}
+		return displayValue(app.CPURequest)
+	case "ram":
+		if app.Plan != nil && app.Plan.Detail.RAMLimit > 0 {
+			return fmt.Sprintf("%dM", app.Plan.Detail.RAMLimit)
+		}
+		return displayValue(app.RAMLimit)
+	case "disk":
+		if app.Disk != nil && app.Disk.SizeInGi > 0 {
+			return fmt.Sprintf("%d GiB", app.Disk.SizeInGi)
+		}
+	}
+	return "-"
+}
+
+func usageField(label string, value *float64, limit string, format func(float64) string, failed bool) string {
+	icon := map[string]string{"CPU": "", "RAM": "", "Disk": ""}[label]
+	field := func(shown string) string {
+		return paint(icon+" "+label+" ", output.ColorMuted, true) + paint(shown, output.ColorBranch, false)
+	}
+	if value == nil && !failed {
+		shown := "No current sample"
+		if limit != "-" {
+			shown += " / " + limit
+		}
+		return field(shown)
+	}
+	return field(resourceUsageText(value, limit, format, failed))
+}
+
+func resourceUsageText(value *float64, limit string, format func(float64) string, failed bool) string {
+	shown := ""
+	switch {
+	case failed && value == nil:
+		shown = "Unavailable"
+	case value == nil:
+		shown = displayValue(limit)
+	default:
+		shown = format(*value)
+		if failed {
+			shown += " · stale"
+		}
+	}
+	if value != nil && limit != "-" {
+		shown += " / " + limit
+	} else if failed && limit != "-" {
+		shown += " / " + limit
+	}
+	return shown
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func appDomains(app client.App) []string {
-	domains := make([]string, 0, len(app.ExternalHosts)+1)
-	seen := make(map[string]struct{}, len(app.ExternalHosts)+1)
-	for _, domain := range append([]string{app.CustomDomainAddress}, app.ExternalHosts...) {
+	domains := make([]string, 0, len(app.ExternalHosts)+3)
+	seen := make(map[string]struct{}, len(app.ExternalHosts)+3)
+	hosts := append([]string{app.CustomDomainAddress}, app.ExternalHosts...)
+	if app.Service != nil {
+		hosts = append(hosts, app.Service.ExternalAddress)
+	}
+	for _, domain := range hosts {
 		domain = strings.TrimSpace(domain)
 		if domain == "" {
 			continue
@@ -1272,8 +1856,95 @@ func appDomains(app client.App) []string {
 	return domains
 }
 
+func internalAddressDisplay(address string, ports map[string]client.Port) string {
+	if _, _, err := net.SplitHostPort(address); err == nil {
+		return safeText(address)
+	}
+	port, ok := primaryServicePort(ports)
+	if ok {
+		servicePort := port.ServicePort
+		if servicePort == 0 {
+			servicePort = port.ContainerPort
+		}
+		if servicePort > 0 {
+			return safeText(net.JoinHostPort(address, fmt.Sprint(servicePort)))
+		}
+	}
+	return safeText(address)
+}
+
+func primaryServicePort(ports map[string]client.Port) (client.Port, bool) {
+	if port, ok := ports["main"]; ok {
+		return port, true
+	}
+	if len(ports) == 1 {
+		for _, port := range ports {
+			return port, true
+		}
+	}
+	return client.Port{}, false
+}
+
+func appCommandDisplay(app client.App) string {
+	command := strings.TrimSpace(app.Command)
+	args := strings.TrimSpace(app.Args)
+	switch {
+	case command == "":
+		return args
+	case args == "":
+		return command
+	default:
+		return command + " " + args
+	}
+}
+
+func readinessProbeDisplay(app client.App) string {
+	if app.CustomConfig != nil && app.CustomConfig.Container != nil && app.CustomConfig.Container.ReadinessProbe != nil {
+		probe := app.CustomConfig.Container.ReadinessProbe
+		if probe.Exec != nil && len(probe.Exec.Command) > 0 {
+			return "exec: " + strings.Join(probe.Exec.Command, " ")
+		}
+		if probe.HTTPGet != nil {
+			value := "HTTP GET " + displayValue(probe.HTTPGet.Path)
+			if port := jsonScalar(probe.HTTPGet.Port); port != "" {
+				value += ":" + port
+			}
+			return value
+		}
+		if probe.TCPSocket != nil {
+			return "TCP " + jsonScalar(probe.TCPSocket.Port)
+		}
+	}
+	if path := strings.TrimSpace(app.ReadinessProbePath); path != "" {
+		return "HTTP GET " + safeText(path)
+	}
+	return ""
+}
+
+func jsonScalar(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if json.Unmarshal(raw, &value) == nil {
+		return safeText(value)
+	}
+	if string(raw) == "null" {
+		return ""
+	}
+	return safeText(string(raw))
+}
+
 func summaryLabel(label string) string {
-	return paint(fmt.Sprintf("%-12s", label), output.ColorMuted, true)
+	return paint(fmt.Sprintf("%-16s ", label), output.ColorMuted, true)
+}
+
+func staleRequestTime(label string, state requestState) string {
+	if state.lastSuccessAt.IsZero() {
+		return paint(label+" has no successful snapshot yet.", output.ColorMuted, false)
+	}
+	when := state.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
+	return paint(label+" last succeeded "+when+" · press r to retry", output.ColorMuted, false)
 }
 
 func summaryField(label, value string) string {
@@ -1452,9 +2123,9 @@ func (m *browser) contextPaneLines(height int) []string {
 	}
 	tenantLines = append(tenantLines, tenantHeading)
 	if len(m.tenants) == 0 {
-		if !m.profileLoaded {
+		if m.profileState.active() || m.profileState.status == requestIdle {
 			tenantLines = append(tenantLines, m.loadingMessage("Loading…"))
-		} else if m.profileErr != nil {
+		} else if m.profileState.err != nil || m.profileState.status == requestUnavailable {
 			tenantLines = append(tenantLines, paint("No choices", output.ColorMuted, false), paint("Use --org or login", output.ColorMuted, false))
 		} else {
 			tenantLines = append(tenantLines, paint("No memberships", output.ColorMuted, false))
@@ -1507,7 +2178,7 @@ func (m *browser) contextRowLine(value string, width int, selected bool) string 
 	line := ansi.Truncate(safeText(value), width, "…")
 	line += strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
 	if selected {
-		return tenantSelectedStyle().Width(width).Render(line)
+		return selectedRowStyle().Width(width).Render(line)
 	}
 	if strings.HasPrefix(value, "● Apps") {
 		return paint(line, output.ColorSuccess, true)
@@ -1519,42 +2190,137 @@ func (m *browser) contextRowLine(value string, width int, selected bool) string 
 }
 
 func (m *browser) footerLine() string {
-	items := [][2]string{{"↑↓", "move"}, {"n", "scope"}, {"/", "filter"}, {"q", "quit"}}
-	if m.width >= 72 {
-		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
-	}
-	if m.width >= 100 {
-		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"Tab", "cycle"}, {"↵", "open"}, {"a", "actions"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
-	} else if m.width >= 72 {
-		items = append(items, [2]string{"a", "actions"})
-	}
-	switch {
-	case m.actionBusy:
-		items = [][2]string{{"…", "action in progress"}, {"q", "quit"}}
-	case m.actionMenu:
-		items = [][2]string{{"↑↓", "choose"}, {"Enter", "select"}, {"Esc", "close"}}
-	case m.confirmAction == appActionRestart:
-		items = [][2]string{{"←→", "choose"}, {"y", "yes"}, {"n/Esc", "no"}, {"Enter", "confirm"}}
-	case m.confirmAction == appActionDelete:
-		items = [][2]string{{"type", "app name"}, {"Tab", "Delete button"}, {"Click", "delete"}, {"Esc", "cancel"}}
-	case m.help:
-		items = [][2]string{{"Esc", "close help"}, {"q", "quit"}}
-	case m.filterEditing:
-		items = [][2]string{{"type", "filter"}, {"↑↓", "move"}, {"Enter", "open"}, {"Esc", "cancel"}, {"Ctrl+U", "clear"}}
-	case m.sorting:
-		items = [][2]string{{"↑↓", "field"}, {"←→", "order"}, {"Enter", "apply"}, {"Esc", "close"}}
-	case m.selectingNamespace:
-		items = [][2]string{{"type", "filter"}, {"↑↓", "move"}, {"Enter", "scope"}, {"Esc", "close"}}
-	case m.selectingTenant:
-		items = [][2]string{{"↑↓", "choose"}, {"Enter", "switch"}, {"Esc", "close"}, {"r", "retry profile"}}
-	case m.contextFocused:
-		items = [][2]string{{"1-4", "panes"}, {"↑↓", "control"}, {"Enter", "select"}, {"Tab", "cycle"}}
-	}
+	items := m.keyHints(false)
+	items = fitKeyHints(items, m.width)
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
-		parts = append(parts, paint(item[0], output.ColorBranch, true)+" "+paint(item[1], output.ColorMuted, false))
+		parts = append(parts, paint(item.key, output.ColorBranch, true)+" "+paint(item.action, output.ColorMuted, false))
 	}
 	return strings.Join(parts, paint(" · ", output.ColorBorder, false))
+}
+
+func fitKeyHints(hints []keyHint, width int) []keyHint {
+	hints = append([]keyHint(nil), hints...)
+	for len(hints) > 1 {
+		parts := make([]string, len(hints))
+		for i, hint := range hints {
+			parts[i] = hint.key + " " + hint.action
+		}
+		if ansi.StringWidth(strings.Join(parts, " · ")) <= width {
+			break
+		}
+		remove := -1
+		for i := len(hints) - 1; i >= 0; i-- {
+			switch hints[i].key {
+			case "q", "?", "Esc", "Esc/?", "q/Esc", "↵", "type", "Click", "Ctrl+U", "y", "n/Esc",
+				"↑↓", "↑↓/jk", "←→", "←→/hl", "r", "d", "[/]", "w", "p", "PgUp/Dn":
+				continue
+			default:
+				remove = i
+			}
+			break
+		}
+		if remove < 0 {
+			remove = len(hints) - 2
+		}
+		hints = append(hints[:remove], hints[remove+1:]...)
+	}
+	return hints
+}
+
+// keyHints is the presentation registry used by the footer and help modal.
+// Key dispatch remains in Update and the focused modal handlers.
+func (m *browser) keyHints(forHelp bool) []keyHint {
+	var hints []keyHint
+	switch {
+	case m.actionBusy:
+		hints = []keyHint{{"…", "action in progress"}, {"q", "quit"}}
+	case m.actionMenu:
+		hints = []keyHint{{"↑↓/jk", "choose"}, {"r", "restart"}, {"d", "delete"}, {"↵", "select"}, {"q/Esc", "close"}}
+	case m.confirmAction == appActionRestart:
+		hints = []keyHint{{"←→", "choose"}, {"y", "yes"}, {"n/Esc", "no"}, {"↵", "confirm"}}
+	case m.confirmAction == appActionDelete:
+		hints = []keyHint{{"type", "app name"}, {"Tab", "Delete button"}, {"Click", "delete"}, {"Esc", "cancel"}}
+	case m.help && !forHelp:
+		hints = []keyHint{{"Esc/?", "close help"}, {"q", "quit"}}
+	case m.filterEditing:
+		hints = []keyHint{{"type", "filter"}, {"↑↓", "move"}, {"↵", "open"}, {"Esc", "cancel"}, {"Ctrl+U", "clear"}}
+	case m.selectingNamespace:
+		hints = []keyHint{{"type", "filter"}, {"↑↓", "move"}, {"↵", "scope"}, {"Esc", "close"}, {"Ctrl+U", "clear"}}
+	case m.selectingTenant:
+		hints = []keyHint{{"↑↓/jk", "choose"}, {"↵", "switch"}, {"Esc", "close"}, {"r", "retry profile"}, {"Tab/ShiftTab", "cycle"}, {"1-4", "panes"}, {"?", "help"}, {"q", "quit"}}
+	case m.contextFocused:
+		hints = []keyHint{{"1-4", "panes"}, {"↑↓/jk", "control"}, {"↵", "select"}, {"Tab/ShiftTab", "cycle"}, {"→/l", "open Apps"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
+	}
+	if len(hints) == 0 {
+		if forHelp {
+			hints = []keyHint{
+				{"↑↓/jk", "move"}, {"←→/hl", "tree / summary"},
+				{"1-4", "focus pane"}, {"Tab / Shift+Tab", "cycle panes"}, {"↵", "open / toggle"},
+				{"Home/End", "first / last"}, {"g/G", "first / last"}, {"PgUp/Dn", "move by page"},
+				{"Esc", "back / clear"}, {"n", "namespace scope"}, {"/", "fuzzy filter"}, {"s", "sort"},
+				{"r", "refresh"}, {"t", "tenant selector"},
+			}
+			if m.selectedAppActive() {
+				hints = append(hints, keyHint{"a", "app actions"})
+			}
+		} else if m.width < 72 {
+			if m.detail && m.selectedAppActive() {
+				hints = []keyHint{{"[/]", "views"}, {"r", "refresh"}, {"Esc", "Apps"}, {"?", "help"}, {"q", "quit"}}
+			} else {
+				hints = []keyHint{{"↑↓/jk", "move"}, {"n", "scope"}, {"/", "filter"}, {"?", "help"}, {"q", "quit"}}
+			}
+		} else if m.width < 100 {
+			if m.detail && m.selectedAppActive() {
+				hints = []keyHint{{"↑↓/jk", "apps"}, {"[/]", "views"}, {"r", "refresh"}, {"Esc", "back"}, {"?", "help"}, {"q", "quit"}}
+			} else {
+				hints = []keyHint{
+					{"↑↓/jk", "move"}, {"1-4", "panes"}, {"←→/hl", "tree"},
+					{"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"},
+				}
+			}
+		} else {
+			hints = []keyHint{
+				{"↑↓/jk", "move"}, {"1-4", "panes"}, {"←→/hl", "tree"},
+				{"Tab", "cycle"}, {"↵", "open"}, {"n", "scope"}, {"/", "filter"},
+				{"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"},
+			}
+			if m.selectedAppActive() {
+				hints = append(hints[:5], append([]keyHint{{"a", "actions"}}, hints[5:]...)...)
+			}
+		}
+	}
+	if forHelp {
+		hints = appendUniqueKeyHints(hints, keyHint{"Esc", "close help"}, keyHint{"?", "close help"}, keyHint{"q", "quit"})
+	}
+	if m.detail && m.selectedAppActive() && (forHelp || !m.help && !m.actionBusy && !m.actionMenu && m.confirmAction == appActionNone && !m.filterEditing && !m.selectingNamespace && !m.selectingTenant) {
+		hints = appendUniqueKeyHints(hints, keyHint{"[/]", "previous / next app view"})
+		if m.activeAppView == appViewUsage {
+			usageHints := []keyHint{{"m", "metric"}, {"w", "range"}, {"PgUp/Dn", "scroll"}}
+			if len(historyPods(m.history)) > 0 {
+				usageHints = append([]keyHint{{"p", "pod"}}, usageHints...)
+			}
+			hints = append(hints, usageHints...)
+		}
+	}
+	return hints
+}
+
+func appendUniqueKeyHints(hints []keyHint, extras ...keyHint) []keyHint {
+	for _, extra := range extras {
+		found := false
+		for i, hint := range hints {
+			if hint.key == extra.key {
+				hints[i].action = extra.action
+				found = true
+				break
+			}
+		}
+		if !found {
+			hints = append(hints, extra)
+		}
+	}
+	return hints
 }
 
 func (m *browser) sortLine() string {
@@ -1703,7 +2469,7 @@ func (m *browser) breadcrumb() string {
 	if m.mode == "LIVE" {
 		return m.liveGlyph() + " " + path
 	}
-	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK · OFFLINE", output.ColorMuted, false) + "  " + path
+	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", output.ColorMuted, false) + "  " + path
 }
 
 func (m *browser) namespaceBreadcrumb(key namespaceKey) string {
@@ -1736,7 +2502,7 @@ func fallbackText(value string) string {
 }
 
 func (m *browser) busy() bool {
-	return m.mode == "LIVE" && (!m.profileLoaded || m.loading)
+	return m.mode == "LIVE" && (m.profileState.active() || m.appsState.active())
 }
 
 func (m *browser) liveGlyph() string {
@@ -1775,8 +2541,13 @@ func (m *browser) namespaceModal(background []string) []string {
 		"Filter by namespace, cluster, or ID: " + paint(m.namespaceQuery+"▏", output.ColorBranch, true),
 		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
 	}
-	if m.namespacesLoading {
+	if m.namespaceState.active() {
 		content = append(content, m.loadingMessage("Loading namespace inventory…"))
+	}
+	if m.namespaceState.err != nil && m.namespaceState.status != requestStale {
+		content = append(content, paint("Namespace inventory failed: "+safeText(m.namespaceState.err.Error()), output.ColorNumber, false))
+	} else if m.namespaceState.status == requestStale {
+		content = append(content, paint("Cached inventory · refresh failed", output.ColorNumber, false), staleRequestTime("Namespaces", m.namespaceState))
 	}
 	if m.namespaceFallback {
 		message := "Inventory unavailable · showing namespaces with apps"
@@ -1797,7 +2568,7 @@ func (m *browser) namespaceModal(background []string) []string {
 	if first > 0 || last < len(choices) {
 		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(choices)), output.ColorMuted, false))
 	}
-	content = append(content, "", "↑/↓ move  ·  Enter select", "Type to filter  ·  Esc close")
+	content = append(content, "", "↑/↓ move  ·  ↵ select", "Type to filter  ·  Esc close")
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	if len(background) < m.height {
@@ -1834,16 +2605,17 @@ func (m *browser) helpModal(background []string) []string {
 	content := []string{
 		paint("⌘  QUICK HELP", output.ColorAccent, true),
 		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
-		paint("NAVIGATION", output.ColorKey, true),
-		row("↑/↓ · j/k", "move", "←/h", "back / collapse"),
-		row("→/l", "summary / expand", "Enter", "open / toggle"),
-		row("1 / 2 / 3 / 4", "focus pane", "Tab", "cycle panes"),
-		paint("BROWSE", output.ColorKey, true),
-		row("a", "app actions", "t", "tenant selector"),
-		row("n", "namespace scope", "s", "sort"),
-		row("/", "fuzzy filter", "r", "refresh"),
-		row("q", "quit", "?", "close help"),
-		paint("? or Esc closes help", output.ColorMuted, false),
+		paint("AVAILABLE CONTROLS", output.ColorKey, true),
+	}
+	hints := m.keyHints(true)
+	for i := 0; i < len(hints); i += 2 {
+		left := hints[i]
+		if i+1 == len(hints) {
+			content = append(content, row(left.key, left.action, "", ""))
+			continue
+		}
+		right := hints[i+1]
+		content = append(content, row(left.key, left.action, right.key, right.action))
 	}
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
@@ -1904,7 +2676,7 @@ func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) s
 	plain = ansi.Truncate(plain, width, "")
 	plain += strings.Repeat(" ", max(0, width-ansi.StringWidth(plain)))
 	if index == m.namespaceCursor {
-		return tenantSelectedStyle().Width(width).Render(plain)
+		return selectedRowStyle().Width(width).Render(plain)
 	}
 	return " " + paint(marker, output.ColorBranch, true) + " " + paint(name, output.ColorKey, false) + strings.Repeat(" ", max(1, width-ansi.StringWidth(name)-ansi.StringWidth(meta)-6)) + paint(meta, output.ColorMuted, false) + "  " + check
 }
@@ -1919,10 +2691,10 @@ func tenantPanelStyle() lipgloss.Style {
 	return style
 }
 
-func tenantSelectedStyle() lipgloss.Style {
+func selectedRowStyle() lipgloss.Style {
 	style := lipgloss.NewStyle().Bold(true)
 	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
-		style = style.Foreground(lipgloss.Color("#FFFFFF")).Background(output.ColorBranch)
+		style = style.Foreground(output.ColorSelectionFG).Background(output.ColorSelectionBG)
 	} else {
 		style = style.Reverse(true)
 	}
@@ -2004,6 +2776,7 @@ func (m *browser) treeSelection(rows []treeNode) int {
 }
 
 func (m *browser) selectTree(index int) tea.Cmd {
+	previousTarget := m.selectedDetailTarget()
 	rows := m.treeNodes()
 	if len(rows) == 0 {
 		return nil
@@ -2013,18 +2786,14 @@ func (m *browser) selectTree(index int) tea.Cmd {
 	if node.app >= 0 {
 		m.selected = node.app
 		m.detailApp = &m.apps[m.selected]
-		m.detailLoading = false
-		m.detailErr = nil
-		return nil
+		return m.syncDetailTarget(previousTarget)
 	}
 	for _, i := range m.visibleAppIndices() {
 		app := m.apps[i]
 		if (namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}) == node.key {
 			m.selected = i
 			m.detailApp = &m.apps[m.selected]
-			m.detailLoading = false
-			m.detailErr = nil
-			return nil
+			return m.syncDetailTarget(previousTarget)
 		}
 	}
 	return nil
@@ -2109,7 +2878,7 @@ func (m *browser) appTreeForWidth(height, width int) []string {
 		if i == selectedRow {
 			plain := ansi.Truncate(ansi.Strip(line), width, "")
 			plain += strings.Repeat(" ", max(0, width-ansi.StringWidth(plain)))
-			line = lipgloss.NewStyle().Reverse(true).Render(plain)
+			line = selectedRowStyle().Width(width).Render(plain)
 		}
 		result = append(result, line)
 	}

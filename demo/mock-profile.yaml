@@ -46,6 +46,23 @@ tenants:
         external_hosts:
           - api.public.demo.example.test
           - api-alt.public.demo.example.test
+        service:
+          type: LoadBalancer
+          ports:
+            http:
+              containerPort: 8080
+              servicePort: 80
+              nodePort: 30421
+              protocol: TCP
+          internal_address: api.production.demo.svc
+          external_address: app-api-prod.hsvc.example.test
+          external_ip: 192.0.2.42
+        readiness_probe_path: /healthz
+        command: /app/server
+        args: --port 8080
+        inputs:
+          - LOG_LEVEL
+          - PUBLIC_BASE_URL
       - id: app-worker-prod
         name: worker
         namespace:
