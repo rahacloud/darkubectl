@@ -542,20 +542,6 @@ func (m *browser) openNamespacePicker() tea.Cmd {
 	return m.loadNamespaces()
 }
 
-func (m *browser) openTenantSelector() {
-	m.selectingTenant = true
-	m.contextFocused = true
-	m.contextRow = 0
-	m.detail = false
-	m.tenantCursor = 0
-	for i, tenant := range m.tenants {
-		if tenant.name == m.tenant {
-			m.tenantCursor = i
-			return
-		}
-	}
-}
-
 func (m *browser) cycleFocus(reverse bool) tea.Cmd {
 	m.selectingTenant = false
 	if reverse {
@@ -616,6 +602,24 @@ func (m *browser) focusPane(index int) tea.Cmd {
 		return m.loadSelectedSummary()
 	}
 	return nil
+}
+
+func (m *browser) moveTenantSelection(delta int) tea.Cmd {
+	if len(m.tenants) == 0 {
+		return nil
+	}
+	previous := m.tenantCursor
+	m.tenantCursor = min(max(0, m.tenantCursor+delta), len(m.tenants)-1)
+	if previous == m.tenantCursor || m.tenants[m.tenantCursor].name == m.tenant {
+		return nil
+	}
+	cmd := m.chooseTenant(m.tenants[m.tenantCursor].name)
+	// Keep focus in the tenant list after the immediate switch so the user can
+	// continue moving through tenants without reopening a selector.
+	m.contextFocused = true
+	m.contextRow = 0
+	m.selectingTenant = true
+	return cmd
 }
 
 func (m *browser) handleNamespaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -1088,10 +1092,6 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.cycleFocus(true)
 		case "ctrl+c", "q":
 			return m, tea.Quit
-		case "t":
-			if !m.help {
-				m.openTenantSelector()
-			}
 		case "a":
 			m.openActionMenu()
 		case "[":
@@ -1188,9 +1188,9 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.sorting {
 				m.sortChoice = (m.sortChoice + len(appSortNames) - 1) % len(appSortNames)
 			} else if m.selectingTenant {
-				m.tenantCursor = max(0, m.tenantCursor-1)
+				return m, m.moveTenantSelection(-1)
 			} else if m.contextFocused && m.contextRow == 0 {
-				m.tenantCursor = max(0, m.tenantCursor-1)
+				return m, m.moveTenantSelection(-1)
 			} else if m.contextFocused {
 				m.contextRow = max(0, m.contextRow-1)
 			} else if !m.help && !m.detail {
@@ -1202,9 +1202,9 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.sorting {
 				m.sortChoice = (m.sortChoice + 1) % len(appSortNames)
 			} else if m.selectingTenant {
-				m.tenantCursor = min(max(0, len(m.tenants)-1), m.tenantCursor+1)
+				return m, m.moveTenantSelection(1)
 			} else if m.contextFocused && m.contextRow == 0 {
-				m.tenantCursor = min(max(0, len(m.tenants)-1), m.tenantCursor+1)
+				return m, m.moveTenantSelection(1)
 			} else if m.contextFocused {
 				m.contextRow = min(1, m.contextRow+1)
 			} else if !m.help && !m.detail {
@@ -1241,14 +1241,8 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sortBy = appSort(m.sortChoice)
 				m.sorting = false
 				m.sortApps()
-			} else if m.selectingTenant {
-				if len(m.tenants) > 0 {
-					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
-				}
-			} else if m.contextFocused && m.contextRow == 0 {
-				if len(m.tenants) > 0 {
-					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
-				}
+			} else if m.selectingTenant || m.contextFocused && m.contextRow == 0 {
+				// Tenant changes are applied as soon as the highlighted row moves.
 			} else if m.contextFocused {
 				// Apps is the only implemented view; other entries are disabled.
 			} else if !m.help && len(m.visibleAppIndices()) > 0 {
@@ -1762,6 +1756,7 @@ func (m *browser) usagePaneLines() []string {
 	if a.Disk != nil && a.Disk.SizeInGi > 0 {
 		lines = append(lines, usageField(" Disk", usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), resourceLimit(a, "disk"), formatBytes, usage != nil && usage.Failed.Disk))
 	}
+	lines = append(lines, "")
 	lines = append(lines, m.historyLines()...)
 	if !m.usageState.lastSuccessAt.IsZero() {
 		when := m.usageState.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
@@ -2190,13 +2185,9 @@ func (m *browser) contextRowLine(value string, width int, selected bool) string 
 }
 
 func (m *browser) footerLine() string {
-	items := m.keyHints(false)
-	items = fitKeyHints(items, m.width)
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		parts = append(parts, paint(item.key, output.ColorBranch, true)+" "+paint(item.action, output.ColorMuted, false))
-	}
-	return strings.Join(parts, paint(" · ", output.ColorBorder, false))
+	quit := paint("q", output.ColorBranch, true) + " " + paint("quit", output.ColorMuted, false)
+	help := paint("?", output.ColorBranch, true) + " " + paint("help", output.ColorMuted, false)
+	return quit + paint(" · ", output.ColorBorder, false) + help
 }
 
 func fitKeyHints(hints []keyHint, width int) []keyHint {
@@ -2248,9 +2239,9 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 	case m.selectingNamespace:
 		hints = []keyHint{{"type", "filter"}, {"↑↓", "move"}, {"↵", "scope"}, {"Esc", "close"}, {"Ctrl+U", "clear"}}
 	case m.selectingTenant:
-		hints = []keyHint{{"↑↓/jk", "choose"}, {"↵", "switch"}, {"Esc", "close"}, {"r", "retry profile"}, {"Tab/ShiftTab", "cycle"}, {"1-4", "panes"}, {"?", "help"}, {"q", "quit"}}
+		hints = []keyHint{{"↑↓/jk", "switch tenant"}, {"r", "retry profile"}, {"Tab/ShiftTab", "cycle"}, {"1-4", "panes"}, {"?", "help"}, {"q", "quit"}}
 	case m.contextFocused:
-		hints = []keyHint{{"1-4", "panes"}, {"↑↓/jk", "control"}, {"↵", "select"}, {"Tab/ShiftTab", "cycle"}, {"→/l", "open Apps"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
+		hints = []keyHint{{"1-4", "panes"}, {"↑↓/jk", "control / switch tenant"}, {"Tab/ShiftTab", "cycle"}, {"→/l", "open Apps"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"}}
 	}
 	if len(hints) == 0 {
 		if forHelp {
@@ -2259,7 +2250,7 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 				{"1-4", "focus pane"}, {"Tab / Shift+Tab", "cycle panes"}, {"↵", "open / toggle"},
 				{"Home/End", "first / last"}, {"g/G", "first / last"}, {"PgUp/Dn", "move by page"},
 				{"Esc", "back / clear"}, {"n", "namespace scope"}, {"/", "fuzzy filter"}, {"s", "sort"},
-				{"r", "refresh"}, {"t", "tenant selector"},
+				{"1", "Tenant · arrows switch now"},
 			}
 			if m.selectedAppActive() {
 				hints = append(hints, keyHint{"a", "app actions"})
@@ -2283,7 +2274,7 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 			hints = []keyHint{
 				{"↑↓/jk", "move"}, {"1-4", "panes"}, {"←→/hl", "tree"},
 				{"Tab", "cycle"}, {"↵", "open"}, {"n", "scope"}, {"/", "filter"},
-				{"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"},
+				{"s", "sort"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"},
 			}
 			if m.selectedAppActive() {
 				hints = append(hints[:5], append([]keyHint{{"a", "actions"}}, hints[5:]...)...)

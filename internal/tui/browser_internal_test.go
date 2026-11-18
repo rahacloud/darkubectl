@@ -38,6 +38,56 @@ func TestBrowserSelectionAndRefresh(t *testing.T) {
 	}
 }
 
+func TestTenantPaneSwitchesOnCursorMovementWithoutEnter(t *testing.T) {
+	t.Parallel()
+	profile := MockProfile{Tenant: "alpha", Tenants: []MockTenant{
+		{Name: "alpha", Apps: []client.App{{ID: "a", Name: "api"}}},
+		{Name: "beta", Apps: []client.App{{ID: "b", Name: "worker"}}},
+	}}
+	m := newMockBrowser(profile)
+	if cmd := m.Init(); cmd != nil {
+		m.Update(cmd().(appsResult))
+	}
+	m.focusPane(0)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.tenant != "beta" || m.tenantCursor != 1 || !m.contextFocused || !m.selectingTenant || cmd == nil {
+		t.Fatalf("moving to next tenant should switch immediately and retain focus: tenant=%q cursor=%d focus=%v selecting=%v cmd=%v", m.tenant, m.tenantCursor, m.contextFocused, m.selectingTenant, cmd != nil)
+	}
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.tenant != "alpha" || m.tenantCursor != 0 || cmd == nil {
+		t.Fatalf("moving back should immediately switch tenant: tenant=%q cursor=%d cmd=%v", m.tenant, m.tenantCursor, cmd != nil)
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.tenant != "alpha" {
+		t.Fatalf("Enter should not be needed to apply the selected tenant; tenant=%q", m.tenant)
+	}
+}
+
+func TestTenantShortcutRemovedFromDispatchAndHelp(t *testing.T) {
+	t.Parallel()
+	m := &browser{width: 120, height: 30}
+	m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
+	if m.selectingTenant || m.contextFocused {
+		t.Fatal("t should not open or focus tenant selection")
+	}
+	for _, hints := range [][]keyHint{m.keyHints(false), m.keyHints(true)} {
+		for _, hint := range hints {
+			if hint.key == "t" || strings.Contains(hint.action, "tenant selector") {
+				t.Fatalf("obsolete tenant shortcut appears in hints: %+v", hint)
+			}
+		}
+	}
+	foundImmediateTenantHint := false
+	for _, hint := range m.keyHints(true) {
+		if hint.key == "1" && strings.Contains(hint.action, "switch now") {
+			foundImmediateTenantHint = true
+		}
+	}
+	if !foundImmediateTenantHint {
+		t.Fatal("help should explain immediate tenant switching")
+	}
+}
+
 func TestAppTreeGroupsAndScrolls(t *testing.T) {
 	t.Parallel()
 	m := &browser{width: 80, height: 16}
@@ -135,14 +185,17 @@ func TestPageKeysMoveThroughTheAppsTree(t *testing.T) {
 	}
 }
 
-func TestFooterAndHelpShareKeyHints(t *testing.T) {
+func TestFooterShowsOnlyQuitAndHelpWhileHelpModalListsShortcuts(t *testing.T) {
 	t.Parallel()
 	m := &browser{width: 120, height: 24}
 	applyAppsResult(m, []client.App{{
 		ID: "app-1", Name: "api", Namespace: client.Namespace{ID: 1, Name: "prod"},
 	}}, nil)
 
-	footerHints := m.keyHints(false)
+	footer := ansi.Strip(m.footerLine())
+	if footer != "q quit · ? help" {
+		t.Fatalf("footer = %q, want only quit and help", footer)
+	}
 	m.help = true
 	background := make([]string, m.height)
 	help := ansi.Strip(strings.Join(m.helpModal(background), "\n"))
@@ -151,9 +204,9 @@ func TestFooterAndHelpShareKeyHints(t *testing.T) {
 			t.Errorf("help is missing hint %q %q", hint.key, hint.action)
 		}
 	}
-	for _, hint := range footerHints {
-		if !strings.Contains(help, hint.key) {
-			t.Errorf("help is missing footer key %q", hint.key)
+	for _, key := range []string{"q", "?"} {
+		if !strings.Contains(help, key) {
+			t.Errorf("help is missing global footer key %q", key)
 		}
 	}
 	for _, unavailable := range []string{"Pods", "Terminal", "Domains"} {
@@ -300,12 +353,9 @@ func TestActionMenuHintsMatchVimShortcuts(t *testing.T) {
 	if m.actionCursor != 0 {
 		t.Fatal("k should move to Restart in the action menu")
 	}
-	hints := m.keyHints(false)
 	footer := ansi.Strip(m.footerLine())
-	for _, hint := range hints {
-		if !strings.Contains(footer, hint.key) || !strings.Contains(footer, hint.action) {
-			t.Errorf("action footer is missing hint %q %q", hint.key, hint.action)
-		}
+	if footer != "q quit · ? help" {
+		t.Fatalf("action footer = %q, want only quit and help", footer)
 	}
 	if !strings.Contains(ansi.Strip(m.actionMenuPanel()), "j/k choose") {
 		t.Fatal("action menu modal should advertise j/k navigation")
