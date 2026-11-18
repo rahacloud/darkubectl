@@ -6,16 +6,24 @@
 
 A Darkube operator investigating an unhealthy app has to repeat tenant and app arguments across separate commands for app state, pods, logs and builds. The interactive describe viewer helps inspect a single object but does not maintain a navigation session across resources. Build an opt-in `darkubectl tui` that lets the operator discover a workload, verify its scope and move from symptom to evidence without repeating the target.
 
-Use the fast view jumps, filters and contextual help from [K9s](https://k9scli.io/topics/commands/), the list-to-details flow from LazyDocker and the keyboard discoverability from LazyGit. Darkube organizations, projects and apps define the screen hierarchy. Kubernetes credentials and a local `kubectl` executable are unnecessary for the core flow.
+Use the filters and contextual help from [K9s](https://k9scli.io/topics/commands/), the list-to-details flow from LazyDocker and the keyboard discoverability from LazyGit. Darkube organizations, projects and apps define the screen hierarchy. Kubernetes credentials and a local `kubectl` executable are unnecessary for the core flow.
 
 ```text
-+ Darkubectl / Apps -----------------------------------------+
-| Tenant: team-a    Namespace: All    Read only              |
-| > prod / billing-api     not ready    desired 2            |
-|   prod / gateway         healthy      desired 3            |
-+------------------------------------------------------------+
-| Enter details  / filter  : jump  Ctrl+P picker  ? help     |
-+------------------------------------------------------------+
++ Darkubectl / team-a / Apps / prod / billing-api -----------------------------+
+| [1] TENANTS  │ [3] APPS                     │ [4] SUMMARY                   |
+| › team-a     │ ▾ prod · 2 apps              │ SUMMARY · billing-api         |
+|              │ ├── billing-api  not ready   │ State      not ready           |
+| [2] PAGES    │ └── gateway      healthy     │ Desired    2                   |
+| ● Apps       │                              │                               |
+| · Activity   │                              │                               |
+| · Tickets    │                              │                               |
+| · Resources  │                              │                               |
+| · Registry   │                              │                               |
+| · Billing    │                              │                               |
+| · Account    │                              │                               |
++--------------+------------------------------+-------------------------------+
+| Tab cycle panes   t tenant   n namespace   / filter   ? help   q quit        |
++-----------------------------------------------------------------------------+
 ```
 
 ## Release boundaries

@@ -111,6 +111,8 @@ type browser struct {
 	tenants            []tenantOption
 	tenantCursor       int
 	selectingTenant    bool
+	contextFocused     bool
+	contextRow         int
 	profileLoaded      bool
 	profileErr         error
 	profileEmpty       bool
@@ -214,7 +216,9 @@ func newMockBrowser(profile MockProfile) *browser {
 			return append([]client.Namespace(nil), namespaces...), nil
 		},
 	}
-	m.selectingTenant = len(options) > 1
+	if m.tenant == "" {
+		m.contextFocused = true
+	}
 	return m
 }
 
@@ -293,6 +297,82 @@ func (m *browser) openNamespacePicker() tea.Cmd {
 		}
 	}
 	return m.loadNamespaces()
+}
+
+func (m *browser) openTenantSelector() {
+	m.selectingTenant = true
+	m.contextFocused = true
+	m.contextRow = 0
+	m.detail = false
+	m.tenantCursor = 0
+	for i, tenant := range m.tenants {
+		if tenant.name == m.tenant {
+			m.tenantCursor = i
+			return
+		}
+	}
+}
+
+func (m *browser) cycleFocus(reverse bool) tea.Cmd {
+	m.selectingTenant = false
+	if reverse {
+		switch {
+		case m.contextFocused:
+			if m.contextRow == 1 {
+				m.contextRow = 0
+				return nil
+			}
+			m.contextFocused = false
+			m.detail = true
+			return m.loadSelectedSummary()
+		case m.detail:
+			m.detail = false
+		default:
+			m.contextFocused = true
+			m.contextRow = 1
+		}
+		return nil
+	}
+	switch {
+	case m.contextFocused:
+		if m.contextRow == 0 {
+			m.contextRow = 1
+			return nil
+		}
+		m.contextFocused = false
+		m.detail = false
+	case m.detail:
+		m.detail = false
+		m.contextFocused = true
+		m.contextRow = 0
+	default:
+		m.detail = true
+		return m.loadSelectedSummary()
+	}
+	return nil
+}
+
+func (m *browser) focusPane(index int) tea.Cmd {
+	m.selectingTenant = false
+	switch index {
+	case 0:
+		m.contextFocused = true
+		m.contextRow = 0
+		m.selectingTenant = true
+		m.detail = false
+	case 1:
+		m.contextFocused = true
+		m.contextRow = 1
+		m.detail = false
+	case 2:
+		m.contextFocused = false
+		m.detail = false
+	case 3:
+		m.contextFocused = false
+		m.detail = true
+		return m.loadSelectedSummary()
+	}
+	return nil
 }
 
 func (m *browser) handleNamespaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -418,7 +498,7 @@ func (m *browser) Init() tea.Cmd {
 		return m.load()
 	}
 	if m.tenant == "" && m.mode == "LIVE" {
-		m.selectingTenant = true
+		m.contextFocused = true
 		return tea.Batch(profileCmd, animationCmd())
 	}
 	if m.mode == "LIVE" {
@@ -499,6 +579,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.tenant != "" && !containsTenant(m.tenants, m.tenant) {
 				m.tenantStatus = "unverified"
+				m.tenants = appendTenant(m.tenants, tenantOption{name: m.tenant, source: "Configured org", status: "unverified"})
 			}
 		} else {
 			m.profileEmpty = false
@@ -510,9 +591,19 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tenantStatus = "local config"
 			}
 		}
+		if m.tenant != "" {
+			for i, option := range m.tenants {
+				if option.name == m.tenant {
+					m.tenantCursor = i
+					break
+				}
+			}
+		} else if len(m.tenants) > 0 {
+			m.tenantCursor = min(m.tenantCursor, len(m.tenants)-1)
+		}
 		if m.tenant == "" {
-			m.selectingTenant = true
-			m.tenantCursor = min(m.tenantCursor, max(0, len(m.tenants)-1))
+			m.contextFocused = true
+			m.contextRow = 0
 		}
 	case appDetailResult:
 		if msg.tenant != m.tenant || len(m.apps) == 0 || m.apps[m.selected].ID != msg.id {
@@ -598,12 +689,31 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
+		case "1":
+			if !m.help && !m.sorting {
+				return m, m.focusPane(0)
+			}
+		case "2":
+			if !m.help && !m.sorting {
+				return m, m.focusPane(1)
+			}
+		case "3":
+			if !m.help && !m.sorting {
+				return m, m.focusPane(2)
+			}
+		case "4":
+			if !m.help && !m.sorting {
+				return m, m.focusPane(3)
+			}
+		case "tab":
+			return m, m.cycleFocus(false)
+		case "shift+tab", "backtab":
+			return m, m.cycleFocus(true)
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "t":
 			if !m.help {
-				m.selectingTenant = !m.selectingTenant
-				m.tenantCursor = 0
+				m.openTenantSelector()
 			}
 		case "n", ":":
 			if !m.help && !m.selectingTenant {
@@ -614,6 +724,8 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			if !m.help && !m.selectingTenant {
 				m.filterEditing = true
+				m.contextFocused = false
+				m.detail = false
 				m.filterBeforeEdit = m.filterQuery
 				m.namespaceSelected = false
 				m.filterSelection = ""
@@ -629,6 +741,8 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "h":
 			if m.sorting {
 				m.sortDescending = false
+			} else if !m.help && m.contextFocused {
+				m.selectingTenant = false
 			} else if !m.help && !m.selectingTenant && !m.detail && m.selectedAppVisible() {
 				m.setCollapsed(true)
 			} else if !m.help && !m.selectingTenant && m.detail {
@@ -637,6 +751,10 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right", "l":
 			if m.sorting {
 				m.sortDescending = true
+			} else if !m.help && m.contextFocused {
+				m.selectingTenant = false
+				m.contextFocused = false
+				m.detail = false
 			} else if !m.help && !m.selectingTenant && !m.detail && m.namespaceSelected && m.selectedAppVisible() {
 				m.setCollapsed(false)
 			} else if !m.help && !m.selectingTenant && !m.detail && !m.namespaceSelected && len(m.apps) > 0 {
@@ -646,7 +764,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyEscape:
 			if m.sorting {
 				m.sorting = false
-			} else if m.selectingTenant && m.tenant != "" {
+			} else if m.selectingTenant {
 				m.selectingTenant = false
 			} else if m.help {
 				m.help = false
@@ -663,6 +781,10 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sortChoice = (m.sortChoice + len(appSortNames) - 1) % len(appSortNames)
 			} else if m.selectingTenant {
 				m.tenantCursor = max(0, m.tenantCursor-1)
+			} else if m.contextFocused && m.contextRow == 0 {
+				m.tenantCursor = max(0, m.tenantCursor-1)
+			} else if m.contextFocused {
+				m.contextRow = max(0, m.contextRow-1)
 			} else if !m.help && !m.detail {
 				return m, m.moveTree(-1)
 			} else if !m.help && m.detail {
@@ -673,17 +795,21 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sortChoice = (m.sortChoice + 1) % len(appSortNames)
 			} else if m.selectingTenant {
 				m.tenantCursor = min(max(0, len(m.tenants)-1), m.tenantCursor+1)
+			} else if m.contextFocused && m.contextRow == 0 {
+				m.tenantCursor = min(max(0, len(m.tenants)-1), m.tenantCursor+1)
+			} else if m.contextFocused {
+				m.contextRow = min(1, m.contextRow+1)
 			} else if !m.help && !m.detail {
 				return m, m.moveTree(1)
 			} else if !m.help && m.detail {
 				return m, m.moveTree(1)
 			}
 		case "home", "g":
-			if !m.help {
+			if !m.help && !m.contextFocused && !m.selectingTenant {
 				return m, m.selectTree(0)
 			}
 		case "end", "G":
-			if !m.help {
+			if !m.help && !m.contextFocused && !m.selectingTenant {
 				return m, m.selectTree(len(m.treeNodes()) - 1)
 			}
 		case "enter":
@@ -695,6 +821,12 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.tenants) > 0 {
 					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
 				}
+			} else if m.contextFocused && m.contextRow == 0 {
+				if len(m.tenants) > 0 {
+					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
+				}
+			} else if m.contextFocused {
+				// Apps is the only implemented view; other entries are disabled.
 			} else if !m.help && len(m.visibleAppIndices()) > 0 {
 				if m.namespaceSelected {
 					if m.filterQuery == "" {
@@ -845,6 +977,7 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	}
 	if name == m.tenant {
 		m.selectingTenant = false
+		m.contextFocused = false
 		return nil
 	}
 	m.tenant = name
@@ -859,6 +992,7 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.filterEditing = false
 	m.collapsed = nil
 	m.detail = false
+	m.contextFocused = false
 	m.detailApp = nil
 	m.detailErr = nil
 	m.detailLoading = false
@@ -876,8 +1010,8 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 func (m *browser) View() tea.View {
 	var lines []string
 	footer := m.footerLine()
-	if m.width < 60 || m.height < 16 {
-		lines = []string{"Resize terminal to at least 60 x 16"}
+	if m.width < 60 || m.height < 20 {
+		lines = []string{"Resize terminal to at least 60 x 20"}
 	} else {
 		header := m.breadcrumb()
 		if m.filterQuery != "" || m.filterEditing {
@@ -898,7 +1032,8 @@ func (m *browser) View() tea.View {
 		bodyHeight := max(1, m.height-len(lines)-footerHeight-1)
 		left := m.appPaneLines(bodyHeight)
 		right := m.summaryPaneLines()
-		lines = append(lines, m.splitPanes(left, right, bodyHeight)...)
+		context := m.contextPaneLines(bodyHeight)
+		lines = append(lines, m.splitPanes(context, left, right, bodyHeight)...)
 	}
 	if len(lines) > m.height-footerHeight {
 		lines = lines[:max(0, m.height-footerHeight)]
@@ -907,11 +1042,9 @@ func (m *browser) View() tea.View {
 		lines = append(lines, "")
 	}
 	lines = append(lines, footer)
-	if m.selectingTenant && m.width >= 60 && m.height >= 16 {
-		lines = m.tenantModal(lines)
-	} else if m.selectingNamespace && m.width >= 60 && m.height >= 16 {
+	if m.selectingNamespace && m.width >= 60 && m.height >= 20 {
 		lines = m.namespaceModal(lines)
-	} else if m.help && m.width >= 60 && m.height >= 16 {
+	} else if m.help && m.width >= 60 && m.height >= 20 {
 		lines = m.helpModal(lines)
 	}
 	for i := range lines {
@@ -923,9 +1056,9 @@ func (m *browser) View() tea.View {
 }
 
 func (m *browser) appPaneLines(height int) []string {
-	heading := "  APPS"
+	heading := "  [3] APPS"
 	if !m.detail {
-		heading = "▸ APPS"
+		heading = "▸ [3] APPS"
 	}
 	if m.loading {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
@@ -956,13 +1089,14 @@ func (m *browser) appPaneLines(height int) []string {
 		}
 	}
 	room := max(0, height-len(lines))
-	return append(lines, m.appTreeForWidth(room, max(1, (m.width-3)/2))...)
+	appWidth, _, _ := m.paneWidths()
+	return append(lines, m.appTreeForWidth(room, appWidth)...)
 }
 
 func (m *browser) summaryPaneLines() []string {
-	heading := "  SUMMARY"
+	heading := "  [4] SUMMARY"
 	if m.detail {
-		heading = "▸ SUMMARY"
+		heading = "▸ [4] SUMMARY"
 	}
 	if m.detailLoading {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
@@ -1175,7 +1309,7 @@ func creationMethodLabel(method string) string {
 			words[i] = string(runes)
 		}
 	}
-	return "◆ " + safeText(strings.Join(words, " "))
+	return " " + safeText(strings.Join(words, " "))
 }
 
 func formatLocalTime(value string) string {
@@ -1186,49 +1320,145 @@ func formatLocalTime(value string) string {
 	return parsed.Local().Format("Jan 2, 2006 · 3:04 PM MST")
 }
 
-func (m *browser) splitPanes(left, right []string, height int) []string {
-	leftWidth := max(1, (m.width-3)/2)
-	rightWidth := max(1, m.width-3-leftWidth)
+func (m *browser) paneWidths() (int, int, int) {
+	contextWidth := min(28, max(18, m.width/5))
+	available := max(3, m.width-contextWidth-6)
+	appsWidth := available / 2
+	return appsWidth, available - appsWidth, contextWidth
+}
+
+func (m *browser) splitPanes(context, apps, summary []string, height int) []string {
+	appsWidth, summaryWidth, contextWidth := m.paneWidths()
 	lines := make([]string, height)
 	for i := 0; i < height; i++ {
-		l, r := "", ""
-		if i < len(left) {
-			l = left[i]
+		appLine, summaryLine, contextLine := "", "", ""
+		if i < len(apps) {
+			appLine = apps[i]
 		}
-		if i < len(right) {
-			r = right[i]
+		if i < len(summary) {
+			summaryLine = summary[i]
 		}
-		l = ansi.Truncate(l, leftWidth, "…")
-		r = ansi.Truncate(r, rightWidth, "…")
-		l += strings.Repeat(" ", max(0, leftWidth-ansi.StringWidth(l)))
-		divider := paint("│", output.ColorBorder, false)
+		if i < len(context) {
+			contextLine = context[i]
+		}
+		contextLine = ansi.Truncate(contextLine, contextWidth, "…")
+		appLine = ansi.Truncate(appLine, appsWidth, "…")
+		summaryLine = ansi.Truncate(summaryLine, summaryWidth, "…")
+		contextLine += strings.Repeat(" ", max(0, contextWidth-ansi.StringWidth(contextLine)))
+		appLine += strings.Repeat(" ", max(0, appsWidth-ansi.StringWidth(appLine)))
+		summaryLine += strings.Repeat(" ", max(0, summaryWidth-ansi.StringWidth(summaryLine)))
+		dividerOne := paint("│", output.ColorBorder, false)
+		if m.contextFocused {
+			dividerOne = paint("┃", output.ColorBranch, true)
+		}
+		dividerTwo := paint("│", output.ColorBorder, false)
 		if m.detail {
-			divider = paint("┃", output.ColorBranch, true)
+			dividerTwo = paint("┃", output.ColorBranch, true)
 		}
-		lines[i] = l + " " + divider + " " + r
+		lines[i] = contextLine + " " + dividerOne + " " + appLine + " " + dividerTwo + " " + summaryLine
 	}
 	return lines
+}
+
+func (m *browser) contextPaneLines(height int) []string {
+	_, _, width := m.paneWidths()
+	tenantHeight := height / 2
+	pageHeight := height - tenantHeight
+	tenantContentHeight := max(1, tenantHeight-1) // reserve one row for the pane divider
+	tenantLines := []string{}
+	tenantHeading := paint("[1] TENANTS", output.ColorKey, true)
+	if m.contextFocused && m.contextRow == 0 {
+		tenantHeading = paint("[1] TENANTS", output.ColorAccent, true)
+	}
+	tenantLines = append(tenantLines, tenantHeading)
+	if len(m.tenants) == 0 {
+		if !m.profileLoaded {
+			tenantLines = append(tenantLines, m.loadingMessage("Loading…"))
+		} else if m.profileErr != nil {
+			tenantLines = append(tenantLines, paint("No choices", output.ColorMuted, false), paint("Use --org or login", output.ColorMuted, false))
+		} else {
+			tenantLines = append(tenantLines, paint("No memberships", output.ColorMuted, false))
+		}
+	} else {
+		capacity := max(1, tenantContentHeight-len(tenantLines))
+		first := max(0, min(m.tenantCursor-capacity+1, len(m.tenants)-capacity))
+		last := min(len(m.tenants), first+capacity)
+		for i := first; i < last; i++ {
+			option := m.tenants[i]
+			marker := " "
+			if i == m.tenantCursor {
+				marker = "›"
+			}
+			label := marker + " " + safeText(option.name)
+			if option.name == m.tenant {
+				label += " ✓"
+			}
+			tenantLines = append(tenantLines, m.contextRowLine(label, width, m.contextFocused && m.contextRow == 0 && i == m.tenantCursor))
+		}
+	}
+	if len(tenantLines) > tenantContentHeight {
+		tenantLines = tenantLines[:tenantContentHeight]
+	}
+	for len(tenantLines) < tenantContentHeight {
+		tenantLines = append(tenantLines, "")
+	}
+	lines := append(tenantLines, paint(strings.Repeat("─", width), output.ColorBorder, false))
+
+	pageHeading := paint("[2] PAGES", output.ColorMuted, true)
+	if m.contextFocused && m.contextRow == 1 {
+		pageHeading = paint("[2] PAGES", output.ColorAccent, true)
+	}
+	pageLines := []string{pageHeading}
+	pageLines = append(pageLines, m.contextRowLine("● Apps", width, m.contextFocused && m.contextRow == 1))
+	for _, page := range []string{"Activity", "Tickets", "Resources", "Registry", "Billing", "Account"} {
+		pageLines = append(pageLines, m.contextRowLine("· "+page, width, false))
+	}
+	if len(pageLines) > pageHeight {
+		pageLines = pageLines[:pageHeight]
+	}
+	for len(pageLines) < pageHeight {
+		pageLines = append(pageLines, "")
+	}
+	lines = append(lines, pageLines...)
+	return lines
+}
+
+func (m *browser) contextRowLine(value string, width int, selected bool) string {
+	line := ansi.Truncate(safeText(value), width, "…")
+	line += strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
+	if selected {
+		return tenantSelectedStyle().Width(width).Render(line)
+	}
+	if strings.HasPrefix(value, "● Apps") {
+		return paint(line, output.ColorSuccess, true)
+	}
+	if strings.HasPrefix(value, "· ") {
+		return paint(line, output.ColorMuted, false)
+	}
+	return line
 }
 
 func (m *browser) footerLine() string {
 	items := [][2]string{{"↑↓", "move"}, {"n", "scope"}, {"/", "filter"}, {"q", "quit"}}
 	if m.width >= 72 {
-		items = [][2]string{{"↑↓", "move"}, {"←→/h/l", "tree/panes"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
+		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
 	}
 	if m.width >= 100 {
-		items = [][2]string{{"↑↓", "move"}, {"←→/h/l", "tree/panes"}, {"↵", "open/toggle"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
+		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"Tab", "cycle"}, {"↵", "open"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
 	}
-	if m.help {
+	switch {
+	case m.help:
 		items = [][2]string{{"Esc", "close help"}, {"q", "quit"}}
-	}
-	if m.filterEditing {
+	case m.filterEditing:
 		items = [][2]string{{"type", "filter"}, {"↑↓", "move"}, {"Enter", "open"}, {"Esc", "cancel"}, {"Ctrl+U", "clear"}}
-	}
-	if m.sorting {
+	case m.sorting:
 		items = [][2]string{{"↑↓", "field"}, {"←→", "order"}, {"Enter", "apply"}, {"Esc", "close"}}
-	}
-	if m.selectingNamespace {
+	case m.selectingNamespace:
 		items = [][2]string{{"type", "filter"}, {"↑↓", "move"}, {"Enter", "scope"}, {"Esc", "close"}}
+	case m.selectingTenant:
+		items = [][2]string{{"↑↓", "choose"}, {"Enter", "switch"}, {"Esc", "close"}, {"r", "retry profile"}}
+	case m.contextFocused:
+		items = [][2]string{{"1-4", "panes"}, {"↑↓", "control"}, {"Enter", "select"}, {"Tab", "cycle"}}
 	}
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
@@ -1513,18 +1743,16 @@ func (m *browser) helpModal(background []string) []string {
 	}
 	content := []string{
 		paint("⌘  QUICK HELP", output.ColorAccent, true),
-		paint("Navigate the app tree and preview details", output.ColorMuted, false),
 		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
 		paint("NAVIGATION", output.ColorKey, true),
-		row("↑/↓  j/k", "move", "→/l", "open summary / expand"),
-		row("←/h", "return / collapse", "Enter", "open / toggle group"),
-		"",
+		row("↑/↓ · j/k", "move", "←/h", "back / collapse"),
+		row("→/l", "summary / expand", "Enter", "open / toggle"),
+		row("1 / 2 / 3 / 4", "focus pane", "Tab", "cycle panes"),
 		paint("BROWSE", output.ColorKey, true),
-		row("n", "namespace scope", "/", "fuzzy app filter"),
-		row("s", "sort", "r", "refresh"),
-		row("t", "switch tenant", "q", "quit"),
-		"",
-		paint("? / Esc", output.ColorBranch, true) + " " + paint("close help", output.ColorMuted, false),
+		row("t", "tenant selector", "n", "namespace scope"),
+		row("/", "fuzzy filter", "s", "sort"),
+		row("r", "refresh", "q", "quit"),
+		paint("? or Esc closes help", output.ColorMuted, false),
 	}
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
@@ -1588,99 +1816,6 @@ func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) s
 		return tenantSelectedStyle().Width(width).Render(plain)
 	}
 	return " " + paint(marker, output.ColorBranch, true) + " " + paint(name, output.ColorKey, false) + strings.Repeat(" ", max(1, width-ansi.StringWidth(name)-ansi.StringWidth(meta)-6)) + paint(meta, output.ColorMuted, false) + "  " + check
-}
-
-func (m *browser) tenantModal(background []string) []string {
-	panelWidth := min(68, m.width-4)
-	innerWidth := panelWidth - 6 // border and horizontal padding
-	messages := []string{}
-	if !m.profileLoaded {
-		messages = append(messages, m.loadingMessage("Loading account profile…"))
-	}
-	if m.profileErr != nil {
-		messages = append(messages, "Profile unavailable · using local config")
-	}
-	if m.profileEmpty {
-		messages = append(messages, "Profile returned no tenant memberships")
-	}
-	noChoices := len(m.tenants) == 0 && m.profileLoaded
-	if noChoices {
-		messages = append(messages, "No tenant choices are available.", "Use darkubectl whoami, --org, or darkubectl login.")
-	}
-	maxInnerHeight := max(6, min(15, m.height-8))
-	listCapacity := max(1, maxInnerHeight-5-len(messages))
-	first := max(0, min(m.tenantCursor-listCapacity+1, len(m.tenants)-listCapacity))
-	last := min(len(m.tenants), first+listCapacity)
-	content := []string{
-		paint("◈  SWITCH TENANT", output.ColorAccent, true),
-		"Choose a tenant for this TUI session",
-		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
-	}
-	content = append(content, messages...)
-	for i := first; i < last; i++ {
-		option := m.tenants[i]
-		label := m.tenantRow(option, i, innerWidth)
-		content = append(content, label)
-	}
-	if first > 0 || last < len(m.tenants) {
-		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(m.tenants)), output.ColorMuted, false))
-	}
-	content = append(content, "", "↑/↓ or k/j move  ·  Enter select", "Esc cancel  ·  r retry profile  ·  session only")
-	style := tenantPanelStyle()
-	panel := style.Width(panelWidth).Render(strings.Join(content, "\n"))
-	panelLines := strings.Split(panel, "\n")
-	if len(background) < m.height {
-		background = append(background, make([]string, m.height-len(background))...)
-	}
-	startY := max(0, (m.height-len(panelLines))/2)
-	startX := max(0, (m.width-panelWidth)/2)
-	for i, panelLine := range panelLines {
-		y := startY + i
-		if y >= len(background) {
-			break
-		}
-		width := ansi.StringWidth(panelLine)
-		if width < panelWidth {
-			panelLine += strings.Repeat(" ", panelWidth-width)
-		}
-		base := ansi.Truncate(background[y], m.width, "")
-		base = base + strings.Repeat(" ", max(0, m.width-ansi.StringWidth(base)))
-		background[y] = ansi.Cut(base, 0, startX) + panelLine + ansi.Cut(base, startX+panelWidth, m.width)
-	}
-	return background[:m.height]
-}
-
-func (m *browser) tenantRow(option tenantOption, index, width int) string {
-	const sourceWidth = 12
-	nameWidth := max(8, width-sourceWidth-8)
-	name := ansi.Truncate(safeText(option.name), nameWidth, "…")
-	marker := " "
-	if index == m.tenantCursor {
-		marker = "›"
-	}
-	plain := " " + marker + " " + name
-	plain += strings.Repeat(" ", max(1, width-sourceWidth-3-ansi.StringWidth(plain)))
-	source := ansi.Truncate(option.source, sourceWidth, "…")
-	plain += source + "  "
-	check := " "
-	if option.status == "current" {
-		check = "✓"
-	}
-	plain += check
-	plain = ansi.Truncate(plain, width, "")
-	plain += strings.Repeat(" ", max(0, width-ansi.StringWidth(plain)))
-	if index == m.tenantCursor {
-		return tenantSelectedStyle().Width(width).Render(plain)
-	}
-	row := " " + paint(marker, output.ColorBranch, true) + " " + paint(name, output.ColorKey, false)
-	row += strings.Repeat(" ", max(1, width-sourceWidth-3-ansi.StringWidth(" "+marker+" "+name)))
-	row += paint(source, output.ColorMuted, false) + "  "
-	if check == "✓" {
-		row += paint(check, output.ColorSuccess, true)
-	} else {
-		row += check
-	}
-	return row + strings.Repeat(" ", max(0, width-ansi.StringWidth(row)))
 }
 
 func tenantPanelStyle() lipgloss.Style {
