@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	keyEscape    = "esc"
 	headerHeight = 2 // title line + blank line
 	footerHeight = 1 // hints or search input
 
@@ -111,7 +112,7 @@ func (m *model) resize(msg tea.WindowSizeMsg) {
 // handleKey processes navigation keys; the bool reports whether it consumed the key.
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
-	case "q", "esc", "ctrl+c":
+	case "q", keyEscape, "ctrl+c":
 		return tea.Quit, true
 	case "/":
 		m.searching = true
@@ -136,7 +137,7 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 
 func (m *model) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc":
+	case keyEscape:
 		m.searching = false
 		m.query = ""
 		m.matches = nil

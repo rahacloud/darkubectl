@@ -88,6 +88,7 @@ func NewApp() *cli.Command {
 			},
 		},
 		Commands: []*cli.Command{
+			newTUICommand(),
 			newGetCommand(),
 			newDescribeCommand(),
 			newScaleCommand(),
