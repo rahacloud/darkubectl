@@ -11,11 +11,22 @@
 +-----------------------------------------------------------------------------+
 
 + Apps / team-a / prod / billing-api ----------------------------------------+
-| [Summary] Usage Pods Logs Builds Env Terminal       Last success 12:31:08  |
-| POD              READY STATE            RESTARTS AGE                       |
-| > billing-7f2    0/1   CrashLoopBackOff         7 13m                      |
-|   billing-95d    1/1   Running                  0 12m                      |
-| Enter containers   a actions   Esc apps                                    |
+| [Summary] Usage                                    Last success 12:31:08  |
+| billing-api · not ready                                                  |
+| Namespace  prod     Cluster  cluster-west                                |
+| Replicas   2        Plan     Standard                                    |
+| CPU        125m / 500m     RAM  384 MiB / 1000M                         |
+| Image      registry.example.test/team/billing:2026.10.4                  |
+| ] Usage   a actions   Esc Apps                                          |
++----------------------------------------------------------------------------+
+
++ Apps / team-a / prod / billing-api ----------------------------------------+
+| Summary [Usage] · billing-api                     Last query 12:31:08     |
+| CPU             125m / 500m                                              |
+| RAM             384 MiB / 1000M                                          |
+| Disk            No current sample / 20 GiB                               |
+| Partial snapshot · unavailable metrics are marked below                  |
+| [/] previous / next view   r refresh   Esc apps                           |
 +----------------------------------------------------------------------------+
 
 + Pods / team-a / prod / billing-api -----------------+
@@ -40,8 +51,8 @@ For a selected app, the detail workspace offers app-specific views in this order
 
 | View | Contract |
 | --- | --- |
-| Summary · 1A | Start from the selected list row and refresh with `GetAppTyped(id)`. Show state and description, tenant, namespace/cluster, selected app ID, desired replicas, plan/resources, creation method, image or known source type, primary domain and update time when present. Display allowlisted fields and separate observations from configured values. |
-| Usage · later | Show the selected app's plan limits beside current CPU, RAM and disk usage when the platform exposes those samples. Keep the compact plan and usage snapshot in Summary; use this view for a fuller breakdown. Put autoscaling configuration and disk growth controls here. Do not imply historical graphs unless a time-series source is available. |
+| Summary · 1A | Start from the selected list row and refresh with `GetAppTyped(id)`. Show state and description, tenant, namespace/cluster, selected app ID, desired replicas, plan/resources, creation method, image or known source type, domains and update time when present. When the API returns them, also show Service type, primary Port Service, Internal Address (including its selected service port when unambiguous), External IP, readiness probe, command and input names. The future Ports view can list every port mapping. Display allowlisted fields and separate observations from configured values; never retain or display input values. |
+| Usage | Show current resource samples and a scrollable historical chart for CPU Usage, CPU Throttle, RAM Usage, Network Receive and Network Send; show Disk Usage only when the app has a configured disk. Resource glyphs identify CPU, RAM and disk. `m` cycles metrics, `w` cycles 1h, 6h and 24h windows, and `p` cycles all pods and individual pods. Every pod keeps its own stable color and legend entry; colors identify pods, not severity. CPU, RAM and disk charts show a yellow horizontal CPU request, RAM limit or disk capacity line when available. The scale spans zero to the higher of the reference and sampled peak. Spaces denote missing samples; the API's available history may be shorter than the selected window. PageUp/PageDown scrolls through the chart and legend. Distinguish failed metrics, empty results and stale snapshots. `r` refreshes usage and history; `r` in Summary refreshes detail and current metrics independently. Autoscaling and disk growth controls remain future work. |
 | Pods · 1B | On entry or refresh, obtain Console access and call `appstate.FetchPods` with base URL, org and app UUID. Use the existing settling logic for the initially stale frame. Show pod name, readiness, status/reason, restart count and age where available. |
 | Pod detail · 1B | Enter opens the selected pod's container list, then Enter on a container opens explicit logs. Show present versus previous container state where available. Actions offer current or previous logs using the same target picker as the Logs tab. |
 | Pod usage · later | Pull current CPU/memory only on demand after validating the existing `Insight` behavior and units used by `cmd/top.go`. Drop usage columns from the initial delivery. Avoid a per-row metrics fan-out. |

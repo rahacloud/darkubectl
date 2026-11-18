@@ -50,5 +50,6 @@ Phase 0 provides a safe visual preview from local fictional data. Live mode is r
 | [05 Overview and activity](05-overview-and-activity.md) | Implement health summaries, independently loaded feeds and exact drilldown |
 | [06 Actions and secondary resources](06-actions-and-secondary-resources.md) | Implement phased mutations, resource screens and terminal handoff |
 | [07 Implementation and verification](07-implementation-and-verification.md) | Split work into PRs and run the definition of done |
+| [09 Release 1A completion plan](09-release-1a-completion-plan.md) | Close the remaining shell, state, Summary, terminal, and action-audit gaps |
 
 Treat mockups as layout and state references. The written interaction and data contracts define behavior. Use synthetic fixtures throughout implementation and verification.

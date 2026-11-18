@@ -113,6 +113,7 @@ go run . tui --mock-file demo/mock-profile.yaml
 ```
 
 The fixture schema and its limits are documented in `tui/02-shell-and-context.md`.
+Live mode keeps app actions read-only by default. `darkubectl tui --allow-writes` enables only Restart and Delete: Restart requires confirmation, and Delete requires typing the exact app name before a separate Delete activation. The mock profile simulates these actions in memory and never edits the YAML file. The TUI remains unavailable through MCP, including when write actions are enabled.
 
 ## Let an AI agent run it
 
