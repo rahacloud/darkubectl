@@ -11,7 +11,7 @@
 +-----------------------------------------------------------------------------+
 
 + Apps / team-a / prod / billing-api ----------------------------------------+
-| Summary [Pods] Logs Builds                          Last success 12:31:08  |
+| [Summary] Pods Logs Builds Domains History          Last success 12:31:08  |
 | POD              READY STATE            RESTARTS AGE                       |
 | > billing-7f2    0/1   CrashLoopBackOff         7 13m                      |
 |   billing-95d    1/1   Running                  0 12m                      |
@@ -27,7 +27,7 @@
 
 ## Apps
 
-- The `n` namespace picker lists All plus the tenant's complete project inventory, keyed by namespace ID so same-name namespaces remain distinct. Include empty projects, cluster and app counts. If `ListNamespaces` fails, derive options from the single already-loaded Apps snapshot and label that empty namespaces are unavailable. Keep that fallback synchronized if the Apps snapshot arrives after the picker request. Selecting a namespace filters the local snapshot only; it triggers no list request.
+- The `n` namespace picker lists All plus the tenant's complete project inventory, keyed by namespace ID so same-name namespaces remain distinct. Include empty projects, cluster and app counts. If `ListNamespaces` fails, derive options from the single already-loaded Apps snapshot and label that empty namespaces are unavailable. Keep that fallback synchronized if the Apps snapshot arrives after the picker request. Selecting a namespace filters the local snapshot only; it triggers no list request. A narrow left rail contains equal-height Tenant and Pages panes beside the Apps and Summary columns. Pods, Logs, Builds, Domains and History belong to the selected app's drilldown, not the global page list.
 - Use `Client.ListApps` once per tenant refresh and share its snapshot with the namespace fallback, picker and Overview. Keep loaded rows keyed by app UUID. Use the namespace ID for filtering. Preserve rows with incomplete metadata and label missing fields.
 - Default sort is app name, namespace name, namespace ID, then UUID. `s` opens a chooser for name, namespace, state and last updated, with both directions. Missing data sorts after known data. Filter literal text over app name, namespace name, state label and creation method, with no remote requests.
 - At minimum width show Name, Namespace and State. Add Desired and Type first as width permits, then the Preview pane at 100+ columns. Show plan or request sizing, image and domain in Preview when those fields exist. Format sizing using the source units or the existing CLI convention. Layout changes never trigger a new fetch.
@@ -35,6 +35,8 @@
 - Preserve the selected UUID across sort and refresh. If it disappears, clamp the cursor to the nearest remaining row. An already-open detail that gets a target-specific 404 shows **App no longer available** and offers a return to the refreshed list. It never jumps to a same-name app.
 
 ## Summary and Pods
+
+For a selected app, the detail workspace offers app-specific views in this order: Summary, Pods, Logs, Builds, Domains and History. `[` moves to the previous available view and `]` to the next; navigation wraps at the ends and skips views that are unavailable for the selected app. These keys switch views within the selected app without changing the selected app in the Apps tree.
 
 | View | Contract |
 | --- | --- |
