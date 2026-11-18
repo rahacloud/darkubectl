@@ -26,6 +26,7 @@ Current implementation status and verification evidence are tracked in [08 Progr
 
 | PR | Work and dependencies | Ready to merge when |
 | --- | --- | --- |
+| 0 · Offline preview | Add strict bounded YAML profile parsing and a local demo fixture | The mock browser renders file data with a persistent offline label, ignores ambient credentials and makes no client/API calls |
 | 1A-1 · Entry and shell | Register command, terminal guards, config/auth adapters, root model, navigation and MCP block | Help works without TTY, piped launch fails before API, quit restores terminal and both key styles route through one model |
 | 1A-2 · Context and Apps | Implement Profile fallback, tenant and namespace pickers, paginated Apps, stable sorting and typed Summary | An API-key fixture can drill into the right duplicate-name app. Old tenant results never bleed into a new scope |
 | 1B-1 · Pods and logs | Implement snapshot, exact target selection, previous mode, bounded follow and search | A crash-loop diagnosis works from Apps to previous logs. Console auth is explained and the view stays responsive under slow or failed requests |
@@ -37,6 +38,8 @@ Current implementation status and verification evidence are tracked in [08 Progr
 
 | Fixture or check | Expected result |
 | --- | --- |
+| Mock profile with valid, empty, duplicate-ID, unknown-field, multi-document and oversized input | Valid profile renders as offline; malformed profiles fail before the alternate screen and parser errors never echo fixture values |
+| Mock mode with ambient credentials and explicit connection flags | Ambient credentials remain unused. Explicit connection flags are rejected; the API client constructor and network are never reached |
 | Missing credentials, invalid config, non-TTY stdin/stdout, help via pipe, explicit JSON output | Stable plain CLI output or error, no alternate screen on invalid launch, no API on non-TTY path |
 | API key + configured org + denied Profile, JWT-only session with no org, local fallbacks and zero tenants | Correct startup paths. No cross-tenant request or context persistence. JWT-only features carry accurate capability text. |
 | Duplicate names across namespaces/clusters, removed UUID, pagination and empty views | Correct IDs, no incorrect fallback target, data empty and filter-empty separately, stable selection after updates |

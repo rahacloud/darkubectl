@@ -104,6 +104,16 @@ darkubectl login                            # email + password + TOTP
 darkubectl terminal app <name>
 ```
 
+### Preview the TUI safely
+
+Try the experimental app browser with the fictional YAML profile. Fixture mode does not read credentials or connect to Darkube:
+
+```sh
+go run . tui --mock-file demo/mock-profile.yaml
+```
+
+The fixture schema and its limits are documented in `tui/02-shell-and-context.md`.
+
 ## Let an AI agent run it
 
 Darkube has no MCP server and no CLI of its own, which leaves an agent with nothing to hold. `darkubectl` closes that gap twice over: it is one static binary, every subcommand is non-interactive, every read speaks JSON, and credentials come from the environment — the four properties a coding agent (Claude Code, Codex, Cursor, or anything that can run a shell) needs to use a tool unattended — and `darkubectl mcp` serves the same commands over the [Model Context Protocol](#over-mcp) to clients that have no shell at all. Give it the binary and it can answer "is anything unhealthy in talaland-dev?" or "why did the api pod restart last night?" without a human opening the console.

@@ -4,19 +4,22 @@
 
 ## Implemented
 
-- `darkubectl tui` launches an alternate-screen, read-only browser. It requires terminal input and output, a configured or explicitly supplied tenant, and the existing REST credentials. It rejects positional arguments and non-table output. Help is available without a terminal.
-- The command resolves configuration and authentication through the existing tenant-scoped client. Its sole TUI data operation currently lists apps through `Client.ListApps`; it does not offer app writes or secret-reveal actions.
+- `darkubectl tui` launches an alternate-screen, read-only browser. It requires terminal input and output. Live mode needs existing REST credentials and resolves a tenant from flags/config or the account chooser; fixture mode uses only local YAML and needs neither. The command rejects positional arguments and non-table output. Help is available without a terminal.
+- Live mode resolves configuration and authentication through the existing client adapters. It loads account Profile for discovery and lists apps through a tenant-scoped `Client.ListApps`. Fixture mode branches before config/auth resolution and client construction, and renders only the mock profile's apps. Neither mode offers app writes or secret-reveal actions.
+- Live mode loads account Profile independently of Apps. With no tenant, the TUI offers Profile memberships; if Profile fails, it offers local config slugs. A configured tenant remains usable if Profile fails, and is marked unverified if Profile succeeds without that tenant. The `t` modal switches tenant for this run only and clears prior app data before loading the new scope.
+- The tenant chooser is a centered modal with fixed-width rows and a visible check glyph for the active tenant. The header shows a tenant breadcrumb, adding namespace and app only in app details, plus a blinking live indicator; mock mode retains an offline marker.
+- `--mock-file PATH` loads a strict version-1 YAML fixture, with either one tenant or multiple tenant-specific app snapshots. Unknown fields and multiple documents are rejected; input is capped at 1 MiB and 1000 total apps. Parser errors omit YAML snippets. The browser labels the source `MOCK PROFILE · OFFLINE`; `demo/mock-profile.yaml` contains two fictional tenants for exercising session-only tenant switching.
 - Apps are grouped by namespace with tree connectors. Namespace rows can be collapsed or expanded with Enter or Left/Right and `h`/`l`; Up/Down and `j`/`k` move through visible rows. Home/End and `g`/`G` jump to the first/last visible row.
 - Selecting an app opens a summary from the list snapshot. Manual refresh reloads the list, preserves the selected app ID when possible, and keeps old rows with a stale warning when the refresh fails. The UI has a help panel, terminal size prompt, cell-aware app-name alignment, status glyphs, colors, and reverse-video selection. `NO_COLOR` disables foreground colors.
 - MCP classifies `tui` as blocked, including when writes are enabled.
 
 ## Remaining for release 1A
 
-- Tenant discovery, Profile failure fallback, session-only tenant switching, and namespace inventory/filtering are not implemented. Startup currently requires a selected tenant.
+- Namespace inventory/filtering are not implemented. Startup can now discover tenants from Profile or fall back to local config.
 - Search/filter, sort selection, jump picker, contextual action registry, full focus handling, and the complete 1A keyboard contract remain to be implemented.
 - Summary uses the app list snapshot and does not refresh a selected app by ID. It omits several planned fields and does not distinguish omitted desired-replica values from zero.
 - The state model does not yet implement all planned loading, empty, refreshing, stale, failed and unavailable states, last-success timestamps, or request generation tracking.
-- Long-session token refresh, complete terminal capability handling, and the planned 1A fixture, terminal resize and restoration checks remain open. The terminal color and glyph appearance should be checked in real terminals.
+- Namespace inventory/filtering remain open. Long-session token refresh, complete terminal capability handling, and terminal resize/restoration checks remain open. The user has verified the multi-tenant mock in an interactive terminal; live API acceptance remains unverified.
 
 ## Later releases
 
@@ -24,7 +27,9 @@ Pods, logs, builds, overview, activity, mutations, registry, tickets, and the br
 
 ## Verification recorded so far
 
-- `go build ./...` and `go test -race ./...` passed; the tests include MCP classification and browser model behavior using synthetic data.
-- `darkubectl tui --help` was run without an interactive terminal. No live API or interactive terminal acceptance was recorded.
+- Before the offline profile change, `go build ./...` and `go test -race ./...` passed; those results cover the earlier implementation state.
+- `darkubectl tui --help` was run without an interactive terminal. The user verified the multi-tenant mock in an interactive terminal; no live API acceptance was recorded.
+- Current offline profile validation: `go build ./...`, `go test ./internal/tui`, and the focused mock-mode CLI flag test passed. The broader `go test ./cmd ./internal/tui` run is blocked by the sandbox denying localhost listeners in an existing `httptest` case (`cmd/wait_internal_test.go`). Markdown lint and `git diff --check` pass. The current tenant-discovery changes compile with `go build ./...`; their behavior and real API flow have not been exercised.
+- Mock profile tests load the checked-in demo file, exercise offline rendering, and reject unknown fields and multiple YAML documents. The user confirmed the multi-tenant mock runs and looks good in an interactive terminal.
 - `golangci-lint run ./...` passed with zero issues using the repository's v2.14.0 version built with Go 1.27. The preinstalled binary was incompatible, so the compatible binary was built separately in `/tmp`.
 - `markdownlint-cli2 'tui/*.md'` passed with zero issues.

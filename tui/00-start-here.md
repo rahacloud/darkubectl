@@ -22,13 +22,14 @@ Use the fast view jumps, filters and contextual help from [K9s](https://k9scli.i
 
 | Release | Deliverable | Exit condition |
 | --- | --- | --- |
+| 0 · Offline preview | Versioned YAML mock profile and read-only Apps tree | `darkubectl tui --mock-file demo/mock-profile.yaml` renders entirely from the file, with no API client or credentials |
 | 1A · Read-only shell | Launch, context, Apps, Summary, navigation and error states | An API-key user with a configured tenant can find and open the correct app, even when Profile is unavailable |
 | 1B · Read-only diagnostics | Pods, current and previous logs, Builds and build output | A Console-authenticated user can trace an unhealthy app to pod or build evidence, and the UI explains unavailable capabilities |
 | 1C · Read-only triage | Overview, Alerts and Notifications | Each feed reports its own state and scope. Verified alert links open one exact app |
 | 2 · App operations | Domains and History first, then deliberate restart and scale. Autoscale, image and build actions follow | Each enabled mutation uses review, existing validation, target binding and post-submit verification |
 | 3 · Broader navigation | Read-only Resources, Registry and Tickets, then individually specified writes and terminal handoff | Each new workflow has a verified scope, auth model and independent acceptance checks |
 
-Phase 1 ships without mutation routes, secret retrieval, arbitrary command execution or config persistence. Bulk/spec operations, raw API, MCP, CI output, credential management, copying files and tunnels stay CLI workflows. Start on **Apps** for fastest time to diagnosis. Overview is a jump destination when 1C lands. Default refresh is manual for resource screens. Live log follow is opt-in per view.
+Phase 0 provides a safe visual preview from local fictional data. Phase 1 ships without mutation routes, secret retrieval, arbitrary command execution or config persistence. Bulk/spec operations, raw API, MCP, CI output, credential management, copying files and tunnels stay CLI workflows. Start on **Apps** for fastest time to diagnosis. Overview is a jump destination when 1C lands. Default refresh is manual for resource screens. Live log follow is opt-in per view.
 
 ## Read and implement in order
 
