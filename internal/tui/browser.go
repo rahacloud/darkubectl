@@ -28,7 +28,7 @@ type profileResult struct {
 	err     error
 }
 
-type blinkMsg struct{}
+type spinnerMsg struct{}
 
 type tenantOption struct {
 	name   string
@@ -75,10 +75,14 @@ type browser struct {
 	loading           bool
 	selected          int
 	namespaceSelected bool
+	filterQuery       string
+	filterBeforeEdit  string
+	filterEditing     bool
+	filterSelection   string
 	collapsed         map[namespaceKey]bool
 	detail            bool
 	help              bool
-	blinkOn           bool
+	spinnerFrame      int
 	width             int
 	height            int
 }
@@ -87,7 +91,7 @@ type browser struct {
 func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx, blinkOn: true,
+	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
 		localTenants: append([]string(nil), options.LocalTenants...),
 		listApps:     func(tenant string) ([]client.App, error) { return options.ListApps(ctx, tenant) }}
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
@@ -135,10 +139,11 @@ func newMockBrowser(profile MockProfile) *browser {
 func (m *browser) load() tea.Cmd {
 	m.loading = true
 	tenant := m.tenant
-	return func() tea.Msg {
+	loadCmd := func() tea.Msg {
 		apps, err := m.listApps(tenant)
 		return appsResult{tenant: tenant, apps: apps, err: err}
 	}
+	return loadCmd
 }
 
 func (m *browser) loadProfile() tea.Cmd {
@@ -158,22 +163,25 @@ func (m *browser) Init() tea.Cmd {
 	}
 	if m.tenant == "" && m.mode == "LIVE" {
 		m.selectingTenant = true
-		return tea.Batch(profileCmd, blinkCmd())
+		return tea.Batch(profileCmd, animationCmd())
 	}
-	return tea.Batch(profileCmd, m.load(), blinkCmd())
+	if m.mode == "LIVE" {
+		return tea.Batch(profileCmd, m.load(), animationCmd())
+	}
+	return m.load()
 }
 
-func blinkCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return blinkMsg{} })
+func animationCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return spinnerMsg{} })
 }
 
 //nolint:cyclop,gocognit,gocyclo // Message routing keeps the model's transitions together.
 func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case blinkMsg:
+	case spinnerMsg:
 		if m.mode == "LIVE" {
-			m.blinkOn = !m.blinkOn
-			return m, blinkCmd()
+			m.spinnerFrame++
+			return m, animationCmd()
 		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -208,6 +216,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+			m.ensureFilterSelection()
 			if m.detail && (len(m.apps) == 0 || m.apps[m.selected].ID != selectedID) {
 				m.detail = false
 			}
@@ -246,6 +255,56 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tenantCursor = min(m.tenantCursor, max(0, len(m.tenants)-1))
 		}
 	case tea.KeyPressMsg:
+		if m.filterEditing {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "enter":
+				m.filterEditing = false
+				m.filterBeforeEdit = m.filterQuery
+				if len(m.visibleAppIndices()) > 0 {
+					m.namespaceSelected = false
+					m.detail = true
+				}
+				return m, nil
+			case "up", "down":
+				m.filterEditing = false
+				m.filterBeforeEdit = m.filterQuery
+				if msg.String() == "up" {
+					m.moveTree(-1)
+				} else {
+					m.moveTree(1)
+				}
+				return m, nil
+			case "esc":
+				m.filterEditing = false
+				m.filterQuery = m.filterBeforeEdit
+				for i := range m.apps {
+					if m.apps[i].ID == m.filterSelection && m.filterSelection != "" {
+						m.selected = i
+						break
+					}
+				}
+				m.ensureFilterSelection()
+				return m, nil
+			case "backspace", "ctrl+h":
+				runes := []rune(m.filterQuery)
+				if len(runes) > 0 {
+					m.filterQuery = string(runes[:len(runes)-1])
+					m.ensureFilterSelection()
+				}
+				return m, nil
+			case "ctrl+u":
+				m.filterQuery = ""
+				m.ensureFilterSelection()
+				return m, nil
+			}
+			if msg.Text != "" {
+				m.filterQuery += safeText(msg.Text)
+				m.ensureFilterSelection()
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -256,13 +315,28 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "?":
 			m.help = !m.help
+		case "/":
+			if !m.help && !m.detail && !m.selectingTenant {
+				m.filterEditing = true
+				m.filterBeforeEdit = m.filterQuery
+				m.namespaceSelected = false
+				m.filterSelection = ""
+				if m.selected >= 0 && m.selected < len(m.apps) {
+					m.filterSelection = m.apps[m.selected].ID
+				}
+			}
 		case keyEscape:
 			if m.selectingTenant && m.tenant != "" {
 				m.selectingTenant = false
 			} else if m.help {
 				m.help = false
 			} else {
-				m.detail = false
+				if m.detail {
+					m.detail = false
+				} else if m.filterQuery != "" {
+					m.filterQuery = ""
+					m.ensureFilterSelection()
+				}
 			}
 		case "up", "k":
 			if m.selectingTenant {
@@ -289,19 +363,24 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.tenants) > 0 {
 					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
 				}
-			} else if !m.help && len(m.apps) > 0 {
+			} else if !m.help && len(m.visibleAppIndices()) > 0 {
 				if m.namespaceSelected {
-					m.toggleNamespace()
+					if m.filterQuery == "" {
+						m.toggleNamespace()
+					} else {
+						m.namespaceSelected = false
+						m.detail = true
+					}
 				} else {
 					m.detail = true
 				}
 			}
 		case "left", "h":
-			if !m.help && !m.detail && len(m.apps) > 0 {
+			if !m.help && !m.detail && m.filterQuery == "" && len(m.visibleAppIndices()) > 0 {
 				m.setCollapsed(true)
 			}
 		case "right", "l":
-			if !m.help && !m.detail && len(m.apps) > 0 {
+			if !m.help && !m.detail && m.filterQuery == "" && len(m.visibleAppIndices()) > 0 {
 				m.setCollapsed(false)
 			}
 		case "r":
@@ -358,6 +437,9 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.err = nil
 	m.selected = 0
 	m.namespaceSelected = false
+	m.filterQuery = ""
+	m.filterBeforeEdit = ""
+	m.filterEditing = false
 	m.collapsed = nil
 	m.detail = false
 	return m.load()
@@ -368,14 +450,18 @@ func (m *browser) View() tea.View {
 	if m.width < 60 || m.height < 16 {
 		lines = []string{"Resize terminal to at least 60 x 16", "q quit"}
 	} else {
-		lines = append(lines, m.breadcrumb(), "")
+		header := m.breadcrumb()
+		if m.filterQuery != "" || m.filterEditing {
+			header += "   " + m.filterLine()
+		}
+		lines = append(lines, header, "")
 		if m.profileLoaded && m.profileErr != nil && !m.selectingTenant {
 			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
 		}
 		switch {
 		case m.help:
 			lines = append(lines, "Navigation", "Up/Down or k/j: select    Enter: toggle namespace or open app",
-				"Left/Right or h/l: collapse/expand    Esc: back", "Home/End or g/G: first/last    r: refresh    q: quit",
+				"/ filter  ·  namespace/app narrows fuzzy matches", "Left/Right or h/l: collapse/expand    Esc: back", "Home/End or g/G: first/last    r: refresh    q: quit",
 				"", "Press ? or Esc to close help")
 		case m.detail && len(m.apps) > 0:
 			a := m.apps[m.selected]
@@ -383,9 +469,6 @@ func (m *browser) View() tea.View {
 				"State: "+safeText(appState(a)), fmt.Sprintf("Desired replicas: %d", a.Replicas),
 				"Type: "+safeText(a.CreationMethod), "Image: "+safeText(a.Image()), "Domain: "+safeText(a.CustomDomainAddress))
 		default:
-			if m.loading {
-				lines = append(lines, "Loading apps...")
-			}
 			if m.err != nil {
 				if len(m.apps) == 0 {
 					lines = append(lines, "Could not load apps: "+safeText(m.err.Error())+"  (r to retry)")
@@ -400,9 +483,18 @@ func (m *browser) View() tea.View {
 				}
 				lines = append(lines, emptyLabel)
 			}
+			if !m.loading && m.err == nil && len(m.apps) > 0 && len(m.visibleAppIndices()) == 0 {
+				lines = append(lines, "No apps match this filter.  Press Esc to clear it.")
+			}
 			lines = append(lines, m.appTree(max(0, m.height-len(lines)-footerHeight-1))...)
 		}
-		lines = append(lines, "", "j/k move  Enter open/toggle  h/l collapse/expand  t tenants  r refresh  ? help  q quit")
+		footer := "j/k move  Enter open/toggle  h/l collapse/expand  / filter  t tenants  r refresh  ? help  q quit"
+		if m.filterEditing {
+			footer = "type to filter  ↑/↓ navigate  Enter open  Esc cancel  Ctrl+U clear"
+		} else if m.filterQuery != "" {
+			footer = "j/k move  Enter open  / edit filter  Esc clear filter  t tenants  r refresh  q quit"
+		}
+		lines = append(lines, "", footer)
 	}
 	if m.selectingTenant && m.width >= 60 && m.height >= 16 {
 		lines = m.tenantModal(lines)
@@ -413,6 +505,81 @@ func (m *browser) View() tea.View {
 	v := tea.NewView(strings.Join(lines, "\n"))
 	v.AltScreen = true
 	return v
+}
+
+func (m *browser) filterLine() string {
+	query := safeText(m.filterQuery)
+	line := paint("⌕", output.ColorBranch, true) + "  " + paint("FILTER", output.ColorMuted, true) + "  " + paint("›", output.ColorBorder, false) + " "
+	if query == "" && m.filterEditing {
+		line += paint("type app or namespace/app", output.ColorMuted, false)
+	} else if query != "" {
+		line += paint(query, output.ColorBranch, true)
+	}
+	if m.filterEditing {
+		line += paint("▏", output.ColorNumber, true)
+	}
+	if !m.filterEditing && m.filterQuery != "" {
+		matches := len(m.visibleAppIndices())
+		matchColor := output.ColorMuted
+		if matches == 0 {
+			matchColor = output.ColorDanger
+		} else {
+			matchColor = output.ColorNumber
+		}
+		line += paint(fmt.Sprintf("   ·   %d matches", matches), matchColor, false)
+	}
+	return line
+}
+
+func (m *browser) ensureFilterSelection() {
+	visible := m.visibleAppIndices()
+	if len(visible) == 0 {
+		m.namespaceSelected = false
+		return
+	}
+	for _, index := range visible {
+		if index == m.selected {
+			return
+		}
+	}
+	m.selected = visible[0]
+	m.namespaceSelected = false
+}
+
+func (m *browser) visibleAppIndices() []int {
+	query := strings.TrimSpace(m.filterQuery)
+	namespaceQuery, appQuery, scoped := strings.Cut(query, "/")
+	namespaceQuery = strings.TrimSpace(namespaceQuery)
+	appQuery = strings.TrimSpace(appQuery)
+	indices := make([]int, 0, len(m.apps))
+	for i, app := range m.apps {
+		if scoped {
+			if fuzzyMatch(app.Namespace.Name, namespaceQuery) && fuzzyMatch(app.Name, appQuery) {
+				indices = append(indices, i)
+			}
+		} else if fuzzyMatch(app.Name, query) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func fuzzyMatch(value, query string) bool {
+	queryRunes := []rune(strings.ToLower(strings.TrimSpace(query)))
+	if len(queryRunes) == 0 {
+		return true
+	}
+	valueRunes := []rune(strings.ToLower(value))
+	queryIndex := 0
+	for _, valueRune := range valueRunes {
+		if valueRune == queryRunes[queryIndex] {
+			queryIndex++
+			if queryIndex == len(queryRunes) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *browser) breadcrumb() string {
@@ -440,13 +607,40 @@ func (m *browser) breadcrumb() string {
 	}
 	path := strings.Join(crumbs, separator)
 	if m.mode == "LIVE" {
-		glyph, glyphColor := "●", output.ColorSuccess
-		if !m.blinkOn {
-			glyph, glyphColor = "○", output.ColorMuted
-		}
-		return paint(glyph, glyphColor, true) + " " + path
+		return m.liveGlyph() + " " + path
 	}
 	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK · OFFLINE", output.ColorMuted, false) + "  " + path
+}
+
+func (m *browser) busy() bool {
+	return m.mode == "LIVE" && (!m.profileLoaded || m.loading)
+}
+
+func (m *browser) liveGlyph() string {
+	if m.busy() {
+		return paint(m.spinnerGlyph(), output.ColorBranch, true)
+	}
+	pulse := m.spinnerFrame % 8
+	if _, disabled := os.LookupEnv("NO_COLOR"); disabled {
+		if pulse < 2 || pulse >= 6 {
+			return "○"
+		}
+		return "●"
+	}
+	style := lipgloss.NewStyle().Foreground(output.ColorBranch)
+	if pulse < 2 || pulse >= 6 {
+		style = style.Faint(true)
+	}
+	return style.Render("●")
+}
+
+func (m *browser) spinnerGlyph() string {
+	frames := [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	return frames[m.spinnerFrame%len(frames)]
+}
+
+func (m *browser) loadingMessage(label string) string {
+	return paint(m.spinnerGlyph(), output.ColorBranch, true) + " " + paint(label, output.ColorKey, false)
 }
 
 func (m *browser) tenantModal(background []string) []string {
@@ -454,7 +648,7 @@ func (m *browser) tenantModal(background []string) []string {
 	innerWidth := panelWidth - 6 // border and horizontal padding
 	messages := []string{}
 	if !m.profileLoaded {
-		messages = append(messages, "Loading account profile…")
+		messages = append(messages, m.loadingMessage("Loading account profile…"))
 	}
 	if m.profileErr != nil {
 		messages = append(messages, "Profile unavailable · using local config")
@@ -564,35 +758,58 @@ func tenantSelectedStyle() lipgloss.Style {
 
 func (m *browser) treeNodes() []treeNode {
 	var rows []treeNode
+	visible := m.visibleAppIndices()
 	namespaceIDs := make(map[string]map[int]bool)
-	for _, app := range m.apps {
+	namespaceCounts := make(map[namespaceKey]int, len(visible))
+	for _, appIndex := range visible {
+		app := m.apps[appIndex]
+		key := namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}
+		namespaceCounts[key]++
 		if namespaceIDs[app.Namespace.Name] == nil {
 			namespaceIDs[app.Namespace.Name] = make(map[int]bool)
 		}
 		namespaceIDs[app.Namespace.Name][app.Namespace.ID] = true
 	}
-	for i, app := range m.apps {
+	for position, appIndex := range visible {
+		app := m.apps[appIndex]
 		key := namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}
-		if i == 0 || app.Namespace.ID != m.apps[i-1].Namespace.ID || app.Namespace.Name != m.apps[i-1].Namespace.Name {
-			name := app.Namespace.Name
-			if name == "" {
-				name = "Unknown namespace"
+		if position == 0 {
+			rows = append(rows, treeNode{app: -1, key: key, heading: namespaceHeading(app, namespaceIDs, namespaceCounts[key])})
+		} else {
+			previous := m.apps[visible[position-1]]
+			if app.Namespace.ID != previous.Namespace.ID || app.Namespace.Name != previous.Namespace.Name {
+				rows = append(rows, treeNode{app: -1, key: key, heading: namespaceHeading(app, namespaceIDs, namespaceCounts[key])})
 			}
-			if len(namespaceIDs[app.Namespace.Name]) > 1 {
-				name += fmt.Sprintf(" (ID %d)", app.Namespace.ID)
-			}
-			rows = append(rows, treeNode{app: -1, key: key, heading: name})
 		}
-		if !m.collapsed[key] {
-			last := i+1 == len(m.apps) || app.Namespace.ID != m.apps[i+1].Namespace.ID || app.Namespace.Name != m.apps[i+1].Namespace.Name
-			rows = append(rows, treeNode{app: i, key: key, heading: rows[len(rows)-1].heading, last: last})
+		if m.filterQuery != "" || !m.collapsed[key] {
+			last := position+1 == len(visible)
+			if !last {
+				next := m.apps[visible[position+1]]
+				last = app.Namespace.ID != next.Namespace.ID || app.Namespace.Name != next.Namespace.Name
+			}
+			rows = append(rows, treeNode{app: appIndex, key: key, heading: rows[len(rows)-1].heading, last: last})
 		}
 	}
 	return rows
 }
 
+func namespaceHeading(app client.App, namespaceIDs map[string]map[int]bool, appCount int) string {
+	name := app.Namespace.Name
+	if name == "" {
+		name = "Unknown namespace"
+	}
+	if len(namespaceIDs[app.Namespace.Name]) > 1 {
+		name += fmt.Sprintf(" (ID %d)", app.Namespace.ID)
+	}
+	appLabel := "apps"
+	if appCount == 1 {
+		appLabel = "app"
+	}
+	return fmt.Sprintf("%s  ·  %d %s", name, appCount, appLabel)
+}
+
 func (m *browser) treeSelection(rows []treeNode) int {
-	if len(m.apps) == 0 {
+	if len(m.visibleAppIndices()) == 0 {
 		return 0
 	}
 	a := m.apps[m.selected]
@@ -616,7 +833,8 @@ func (m *browser) selectTree(index int) {
 		m.selected = node.app
 		return
 	}
-	for i, app := range m.apps {
+	for _, i := range m.visibleAppIndices() {
+		app := m.apps[i]
 		if (namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}) == node.key {
 			m.selected = i
 			return
@@ -657,7 +875,8 @@ func (m *browser) appTree(height int) []string {
 	}
 	selectedRow := m.treeSelection(rows)
 	nameWidth := 0
-	for _, app := range m.apps {
+	for _, appIndex := range m.visibleAppIndices() {
+		app := m.apps[appIndex]
 		nameWidth = max(nameWidth, ansi.StringWidth(safeText(app.Name)))
 	}
 	const minNameWidth = 8

@@ -37,12 +37,12 @@ func TestAppTreeGroupsAndScrolls(t *testing.T) {
 		{ID: "a", Name: "api", Namespace: client.Namespace{ID: 1, Name: "prod"}},
 	}})
 	got := ansi.Strip(strings.Join(m.appTree(6), "\n"))
-	if !strings.Contains(got, "▾ prod (ID 1)\n  ├── api") || !strings.Contains(got, "▾ prod (ID 2)\n  └── api") {
+	if !strings.Contains(got, "▾ prod (ID 1)  ·  2 apps\n  ├── api") || !strings.Contains(got, "▾ prod (ID 2)  ·  1 app\n  └── api") {
 		t.Fatalf("unexpected tree: %s", got)
 	}
 	m.selected = 1
 	got = ansi.Strip(strings.Join(m.appTree(2), "\n"))
-	if !strings.Contains(got, "prod (ID 1)\n  └── worker") {
+	if !strings.Contains(got, "prod (ID 1)  ·  2 apps\n  └── worker") {
 		t.Fatalf("selected app lost its namespace while scrolling: %s", got)
 	}
 	m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
