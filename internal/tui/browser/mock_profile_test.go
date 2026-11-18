@@ -1,16 +1,17 @@
-package tui
+package browser
 
 import (
 	"reflect"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func TestLoadDemoMockProfile(t *testing.T) {
 	t.Parallel()
-	profile, err := LoadMockProfile("../../demo/mock-profile.yaml")
+	profile, err := LoadMockProfile("../../../demo/mock-profile.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,12 +81,20 @@ func TestMockBrowserUsesOfflineProfileData(t *testing.T) {
 	}}}
 	m := newMockBrowser(profile)
 	cmd := m.Init()
-	result := cmd().(appsResult)
+	var result appsResult
+	for _, batched := range cmd().(tea.BatchMsg) {
+		switch msg := batched().(type) {
+		case appsResult:
+			result = msg
+			m.Update(msg)
+		case egressRoutesResult:
+			m.Update(msg)
+		}
+	}
 	if result.err != nil || len(result.apps) != 1 {
 		t.Fatalf("fixture load returned apps=%d err=%v", len(result.apps), result.err)
 	}
 	m.width, m.height = 100, 24
-	m.Update(result)
 	view := m.View().Content
 	if !strings.Contains(view, "MOCK PROFILE") || !strings.Contains(view, "api") {
 		t.Fatalf("mock view did not identify fixture data: %s", view)

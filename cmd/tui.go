@@ -5,11 +5,8 @@ import (
 	"errors"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/rahacloud/darkubectl/internal/appstate"
-	"github.com/rahacloud/darkubectl/internal/client"
-	"github.com/rahacloud/darkubectl/internal/tui"
+	browserUI "github.com/rahacloud/darkubectl/internal/tui/browser"
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
 )
@@ -52,11 +49,11 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 		return errors.New("tui requires a terminal on stdin and stdout")
 	}
 	if mockFileSet {
-		profile, err := tui.LoadMockProfile(mockPath)
+		profile, err := browserUI.LoadMockProfile(mockPath)
 		if err != nil {
 			return err
 		}
-		return tui.RunMockBrowser(ctx, profile)
+		return browserUI.RunMockBrowser(ctx, profile)
 	}
 	cfg, err := loadConfig(cmd)
 	if err != nil {
@@ -68,173 +65,7 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 	}
 	baseURL := resolveBaseURL(cmd, cfg)
 	org := resolveOrg(cmd, cfg)
-	newClient := func(requestCtx context.Context, tenant string) (*client.Client, error) {
-		auth, err := credential.current(requestCtx)
-		if err != nil {
-			return nil, err
-		}
-		return client.New(baseURL, auth, tenant), nil
-	}
-	return tui.RunBrowser(ctx, tui.BrowserOptions{
-		Tenant:       org,
-		LocalTenants: append([]string(nil), cfg.Tenants...),
-		AllowWrites:  cmd.Bool(flagTUIAllowWrites),
-		Profile: func(requestCtx context.Context) (*client.Profile, error) {
-			c, err := newClient(requestCtx, org)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			profile, err := c.Profile(requestCtx)
-			return profile, tuiAuthError(err)
-		},
-		ListApps: func(requestCtx context.Context, tenant string) ([]client.App, error) {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			apps, err := c.ListApps(requestCtx)
-			return apps, tuiAuthError(err)
-		},
-		GetApp: func(requestCtx context.Context, tenant, id string) (*client.App, error) {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			app, err := c.GetAppTyped(requestCtx, id)
-			return app, tuiAuthError(err)
-		},
-		Usage: func(requestCtx context.Context, tenant, id string) (*tui.AppUsage, error) {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			end := time.Now()
-			usage := &tui.AppUsage{}
-			for _, metric := range []struct {
-				typeName string
-				dest     **float64
-				failed   *bool
-			}{
-				{client.InsightCPU, &usage.CPUCores, &usage.Failed.CPU},
-				{client.InsightRAM, &usage.RAMBytes, &usage.Failed.RAM},
-				{client.InsightDisk, &usage.DiskBytes, &usage.Failed.Disk},
-			} {
-				series, err := insightWithRetry(requestCtx, c, client.InsightQuery{
-					AppID: id, Type: metric.typeName, Pod: client.AllPods,
-					Start: end.Add(-5 * time.Minute), End: end, Step: time.Minute,
-				})
-				if err != nil {
-					if requestCtx.Err() != nil {
-						return nil, requestCtx.Err()
-					}
-					if tuiCredentialRejected(err) {
-						return nil, tuiAuthError(err)
-					}
-					*metric.failed = true
-					continue
-				}
-				var total float64
-				found := false
-				for _, pod := range series {
-					if sample, ok := pod.Latest(); ok {
-						total += sample.Value
-						found = true
-					}
-				}
-				if found {
-					value := total
-					*metric.dest = &value
-				}
-			}
-			return usage, nil
-		},
-		UsageHistory: func(requestCtx context.Context, tenant, id string, window, step time.Duration) (*tui.UsageHistory, error) {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			end := time.Now().Truncate(time.Second)
-			history := &tui.UsageHistory{Start: end.Add(-window), End: end, Step: step}
-			for _, metric := range []struct {
-				typeName string
-				dest     *[]client.Series
-				failed   *bool
-			}{
-				{client.InsightCPU, &history.CPU, &history.Failed.CPU},
-				{client.InsightCPUThrottling, &history.CPUThrottle, &history.Failed.CPUThrottle},
-				{client.InsightRAM, &history.RAM, &history.Failed.RAM},
-				{client.InsightDisk, &history.Disk, &history.Failed.Disk},
-				{client.InsightNetworkReceive, &history.NetworkReceive, &history.Failed.NetworkReceive},
-				{client.InsightNetworkSend, &history.NetworkSend, &history.Failed.NetworkSend},
-			} {
-				series, err := insightWithRetry(requestCtx, c, client.InsightQuery{
-					AppID: id, Type: metric.typeName, Pod: client.AllPods,
-					Start: history.Start, End: end, Step: step,
-				})
-				if err != nil {
-					if requestCtx.Err() != nil {
-						return nil, requestCtx.Err()
-					}
-					if tuiCredentialRejected(err) {
-						return nil, tuiAuthError(err)
-					}
-					*metric.failed = true
-					continue
-				}
-				*metric.dest = series
-			}
-			return history, nil
-		},
-		Pods: func(requestCtx context.Context, tenant, id string) ([]appstate.Pod, error) {
-			token, err := credential.consoleAccessToken(requestCtx)
-			if err != nil {
-				return nil, err
-			}
-			pods, _, err := appstate.FetchPods(requestCtx, appstate.Options{
-				BaseURL: baseURL, AccessToken: token, Org: tenant, AppID: id,
-			})
-			return pods, tuiAuthError(err)
-		},
-		EgressRoutes: func(requestCtx context.Context, tenant string) (map[string]client.ClusterEgress, error) {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			routes, err := c.GetEgressRoutes(requestCtx)
-			return routes, tuiAuthError(err)
-		},
-		Namespaces: func(requestCtx context.Context, tenant string) ([]client.Namespace, error) {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = c.Close() }()
-			ns, err := c.ListNamespaces(requestCtx)
-			return ns, tuiAuthError(err)
-		},
-		RestartApp: func(requestCtx context.Context, tenant, id string) error {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = c.Close() }()
-			return tuiAuthError(c.RestartApp(requestCtx, id))
-		},
-		DeleteApp: func(requestCtx context.Context, tenant, id string) error {
-			c, err := newClient(requestCtx, tenant)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = c.Close() }()
-			return tuiAuthError(c.DeleteApp(requestCtx, id))
-		},
-	})
+	return browserUI.RunBrowser(ctx, newTUIBrowserOptions(ctx, cmd, cfg, credential, baseURL, org))
 }
 
 func rejectMockConnectionFlags(cmd *cli.Command) error {
