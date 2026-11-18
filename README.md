@@ -536,7 +536,7 @@ Architecture, the reverse-engineered API/auth details, and contributor conventio
 
 ## Contributing
 
-Issues and pull requests are welcome — especially new endpoint findings, since the API surface is mapped by observation. Keep `golangci-lint` at zero issues and `go test -race ./...` green, and the CI will agree with you.
+Issues and pull requests are welcome — especially new endpoint findings, since the API surface is mapped by observation. Keep `golangci-lint` at zero issues and `go test -race ./...` green, and the CI will agree with you. [`CONTRIBUTING.md`](CONTRIBUTING.md) says where new code goes, which tests a change needs and what a pull request should contain.
 
 If `darkubectl` saved you a trip to the console, a ⭐ helps other Darkube users find it.
 
