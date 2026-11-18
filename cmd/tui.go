@@ -19,12 +19,16 @@ func newTUICommand() *cli.Command {
 		Usage: "Browse Darkube apps interactively (experimental)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagMockFile, Usage: "load a local YAML profile without connecting to Darkube"},
+			&cli.BoolFlag{Name: flagTUIAllowWrites, Usage: "enable confirmed write actions in the TUI"},
 		},
 		Action: tuiAction,
 	}
 }
 
-const flagMockFile = "mock-file"
+const (
+	flagMockFile       = "mock-file"
+	flagTUIAllowWrites = "allow-writes"
+)
 
 func tuiAction(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Args().Len() != 0 {
@@ -68,6 +72,7 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 	return tui.RunBrowser(ctx, tui.BrowserOptions{
 		Tenant:       org,
 		LocalTenants: append([]string(nil), cfg.Tenants...),
+		AllowWrites:  cmd.Bool(flagTUIAllowWrites),
 		Profile:      profileClient.Profile,
 		ListApps: func(requestCtx context.Context, tenant string) ([]client.App, error) {
 			c := client.New(baseURL, auth, tenant)
@@ -114,6 +119,16 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 			c := client.New(baseURL, auth, tenant)
 			defer func() { _ = c.Close() }()
 			return c.ListNamespaces(requestCtx)
+		},
+		RestartApp: func(requestCtx context.Context, tenant, id string) error {
+			c := client.New(baseURL, auth, tenant)
+			defer func() { _ = c.Close() }()
+			return c.RestartApp(requestCtx, id)
+		},
+		DeleteApp: func(requestCtx context.Context, tenant, id string) error {
+			c := client.New(baseURL, auth, tenant)
+			defer func() { _ = c.Close() }()
+			return c.DeleteApp(requestCtx, id)
 		},
 	})
 }

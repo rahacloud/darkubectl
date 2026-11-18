@@ -38,6 +38,23 @@ type appDetailResult struct {
 	err    error
 }
 
+type appAction uint8
+
+const (
+	appActionNone appAction = iota
+	appActionRestart
+	appActionDelete
+)
+
+type appActionResult struct {
+	tenant string
+	id     string
+	name   string
+	action appAction
+	mock   bool
+	err    error
+}
+
 type namespacesResult struct {
 	tenant     string
 	namespaces []client.Namespace
@@ -70,15 +87,18 @@ type tenantOption struct {
 	status string
 }
 
-// BrowserOptions contains the account and tenant-scoped reads used by the live browser.
+// BrowserOptions contains the live browser's reads and opt-in app lifecycle actions.
 type BrowserOptions struct {
 	Tenant       string
 	LocalTenants []string
+	AllowWrites  bool
 	Profile      func(context.Context) (*client.Profile, error)
 	ListApps     func(context.Context, string) ([]client.App, error)
 	GetApp       func(context.Context, string, string) (*client.App, error)
 	Usage        func(context.Context, string, string) (*AppUsage, error)
 	Namespaces   func(context.Context, string) ([]client.Namespace, error)
+	RestartApp   func(context.Context, string, string) error
+	DeleteApp    func(context.Context, string, string) error
 }
 
 type namespaceKey struct {
@@ -113,6 +133,22 @@ type browser struct {
 	selectingTenant    bool
 	contextFocused     bool
 	contextRow         int
+	allowWrites        bool
+	actionMenu         bool
+	actionCursor       int
+	actionMenuMessage  string
+	confirmAction      appAction
+	confirmButton      int
+	confirmName        string
+	confirmError       string
+	actionBusy         bool
+	actionNotice       string
+	actionTargetTenant string
+	actionTargetID     string
+	actionTargetName   string
+	restartApp         func(string, string) error
+	deleteApp          func(string, string) error
+	mockDeleteApp      func(string, string)
 	profileLoaded      bool
 	profileErr         error
 	profileEmpty       bool
@@ -153,11 +189,12 @@ type browser struct {
 	height             int
 }
 
-// RunBrowser opens the read-only app browser using the caller's scoped client.
+// RunBrowser opens the app browser using the caller's scoped clients.
 func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
+		allowWrites:  options.AllowWrites,
 		localTenants: append([]string(nil), options.LocalTenants...),
 		listApps:     func(tenant string) ([]client.App, error) { return options.ListApps(ctx, tenant) }}
 	if options.GetApp != nil {
@@ -168,6 +205,12 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	}
 	if options.Namespaces != nil {
 		m.listNamespaces = func(tenant string) ([]client.Namespace, error) { return options.Namespaces(ctx, tenant) }
+	}
+	if options.RestartApp != nil {
+		m.restartApp = func(tenant, id string) error { return options.RestartApp(ctx, tenant, id) }
+	}
+	if options.DeleteApp != nil {
+		m.deleteApp = func(tenant, id string) error { return options.DeleteApp(ctx, tenant, id) }
 	}
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
@@ -197,6 +240,7 @@ func newMockBrowser(profile MockProfile) *browser {
 	if len(options) > 0 {
 		options[0].status = "current"
 	}
+	deletedApps := make(map[string]map[string]bool)
 	m := &browser{
 		tenant:  profile.Tenant,
 		mode:    "MOCK PROFILE · OFFLINE",
@@ -206,7 +250,13 @@ func newMockBrowser(profile MockProfile) *browser {
 			if !ok {
 				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
 			}
-			return append([]client.App(nil), apps...), nil
+			remaining := make([]client.App, 0, len(apps))
+			for _, app := range apps {
+				if !deletedApps[tenant][app.ID] {
+					remaining = append(remaining, app)
+				}
+			}
+			return remaining, nil
 		},
 		listNamespaces: func(tenant string) ([]client.Namespace, error) {
 			namespaces, ok := namespacesByTenant[tenant]
@@ -214,6 +264,12 @@ func newMockBrowser(profile MockProfile) *browser {
 				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
 			}
 			return append([]client.Namespace(nil), namespaces...), nil
+		},
+		mockDeleteApp: func(tenant, id string) {
+			if deletedApps[tenant] == nil {
+				deletedApps[tenant] = make(map[string]bool)
+			}
+			deletedApps[tenant][id] = true
 		},
 	}
 	if m.tenant == "" {
@@ -521,6 +577,10 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.width < 60 || m.height < 20 {
+			m.actionMenu = false
+			m.cancelActionConfirmation()
+		}
 	case appsResult:
 		if msg.tenant != m.tenant {
 			return m, nil
@@ -633,7 +693,17 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.namespaceFallback = false
 		}
 		m.syncNamespaceCursor()
+	case appActionResult:
+		return m, m.applyActionResult(msg)
+	case tea.MouseClickMsg:
+		return m, m.handleActionMouse(msg)
 	case tea.KeyPressMsg:
+		if m.actionMenu {
+			return m, m.handleActionMenuKey(msg)
+		}
+		if m.confirmAction != appActionNone {
+			return m, m.handleActionConfirmationKey(msg)
+		}
 		if m.selectingNamespace {
 			return m.handleNamespaceKey(msg)
 		}
@@ -715,6 +785,8 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.help {
 				m.openTenantSelector()
 			}
+		case "a":
+			m.openActionMenu()
 		case "n", ":":
 			if !m.help && !m.selectingTenant {
 				return m, m.openNamespacePicker()
@@ -1026,6 +1098,9 @@ func (m *browser) View() tea.View {
 		padding := max(1, m.width-ansi.StringWidth(header)-ansi.StringWidth(rightIndicators))
 		header += strings.Repeat(" ", padding) + rightIndicators
 		lines = append(lines, header, "")
+		if m.actionNotice != "" {
+			lines = append(lines, paint(safeText(m.actionNotice), output.ColorNumber, false))
+		}
 		if m.profileLoaded && m.profileErr != nil && !m.selectingTenant {
 			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
 		}
@@ -1042,7 +1117,11 @@ func (m *browser) View() tea.View {
 		lines = append(lines, "")
 	}
 	lines = append(lines, footer)
-	if m.selectingNamespace && m.width >= 60 && m.height >= 20 {
+	if m.actionMenu && m.width >= 60 && m.height >= 20 {
+		lines = m.renderActionMenu(lines)
+	} else if m.confirmAction != appActionNone && m.width >= 60 && m.height >= 20 {
+		lines = m.renderActionConfirmation(lines)
+	} else if m.selectingNamespace && m.width >= 60 && m.height >= 20 {
 		lines = m.namespaceModal(lines)
 	} else if m.help && m.width >= 60 && m.height >= 20 {
 		lines = m.helpModal(lines)
@@ -1052,6 +1131,7 @@ func (m *browser) View() tea.View {
 	}
 	v := tea.NewView(strings.Join(lines, "\n"))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
@@ -1444,9 +1524,19 @@ func (m *browser) footerLine() string {
 		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
 	}
 	if m.width >= 100 {
-		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"Tab", "cycle"}, {"↵", "open"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
+		items = [][2]string{{"↑↓", "move"}, {"1-4", "panes"}, {"←→/h/l", "tree"}, {"Tab", "cycle"}, {"↵", "open"}, {"a", "actions"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
+	} else if m.width >= 72 {
+		items = append(items, [2]string{"a", "actions"})
 	}
 	switch {
+	case m.actionBusy:
+		items = [][2]string{{"…", "action in progress"}, {"q", "quit"}}
+	case m.actionMenu:
+		items = [][2]string{{"↑↓", "choose"}, {"Enter", "select"}, {"Esc", "close"}}
+	case m.confirmAction == appActionRestart:
+		items = [][2]string{{"←→", "choose"}, {"y", "yes"}, {"n/Esc", "no"}, {"Enter", "confirm"}}
+	case m.confirmAction == appActionDelete:
+		items = [][2]string{{"type", "app name"}, {"Tab", "Delete button"}, {"Click", "delete"}, {"Esc", "cancel"}}
 	case m.help:
 		items = [][2]string{{"Esc", "close help"}, {"q", "quit"}}
 	case m.filterEditing:
@@ -1749,9 +1839,10 @@ func (m *browser) helpModal(background []string) []string {
 		row("→/l", "summary / expand", "Enter", "open / toggle"),
 		row("1 / 2 / 3 / 4", "focus pane", "Tab", "cycle panes"),
 		paint("BROWSE", output.ColorKey, true),
-		row("t", "tenant selector", "n", "namespace scope"),
-		row("/", "fuzzy filter", "s", "sort"),
-		row("r", "refresh", "q", "quit"),
+		row("a", "app actions", "t", "tenant selector"),
+		row("n", "namespace scope", "s", "sort"),
+		row("/", "fuzzy filter", "r", "refresh"),
+		row("q", "quit", "?", "close help"),
 		paint("? or Esc closes help", output.ColorMuted, false),
 	}
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
