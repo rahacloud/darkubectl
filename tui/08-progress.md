@@ -7,6 +7,7 @@
 - `darkubectl tui` launches an alternate-screen, read-only browser. It requires terminal input and output. Live mode needs existing REST credentials and resolves a tenant from flags/config or the account chooser; fixture mode uses only local YAML and needs neither. The command rejects positional arguments and non-table output. Help is available without a terminal.
 - Live mode resolves configuration and authentication through the existing client adapters. It loads account Profile for discovery and lists apps through a tenant-scoped `Client.ListApps`. Fixture mode branches before config/auth resolution and client construction, and renders only the mock profile's apps. Neither mode offers app writes or secret-reveal actions.
 - Live mode loads account Profile independently of Apps. With no tenant, the TUI offers Profile memberships; if Profile fails, it offers local config slugs. A configured tenant remains usable if Profile fails, and is marked unverified if Profile succeeds without that tenant. The `t` modal switches tenant for this run only and clears prior app data before loading the new scope.
+- `n` opens a fuzzy namespace picker. It lazily loads complete inventory through `Client.ListNamespaces`, keeps distinct namespace IDs, shows per-namespace app counts including empty projects, and scopes the Apps tree without a second app request. If inventory is unavailable, it falls back to namespaces in the loaded app snapshot and labels the omission of empty projects. Mock files may include tenant-specific `namespaces` for offline previews of empty projects.
 - The tenant chooser is a centered modal with fixed-width rows and a visible check glyph for the active tenant. The header shows a tenant breadcrumb, adding namespace and app only in app details, with a pulsing blue live marker that becomes an animated spinner during Profile or Apps requests; mock mode retains an offline marker.
 - `/` opens an inline app filter after the breadcrumb. It applies case-insensitive fuzzy subsequence matching as text is entered; `namespace/appname` scopes both fields, while an app-only query searches all namespaces. Up/Down moves through filtered rows without a commit step; Enter opens the selected match, and Esc cancels editing or clears the query.
 - `--mock-file PATH` loads a strict version-1 YAML fixture, with either one tenant or multiple tenant-specific app snapshots. Unknown fields and multiple documents are rejected; input is capped at 1 MiB and 1000 total apps. Parser errors omit YAML snippets. The browser labels the source `MOCK PROFILE · OFFLINE`; `demo/mock-profile.yaml` contains two fictional tenants for exercising session-only tenant switching.
@@ -19,11 +20,11 @@
 
 ## Remaining for release 1A
 
-- Namespace inventory/filtering are not implemented. Startup can now discover tenants from Profile or fall back to local config.
+- Startup discovers tenants from Profile or falls back to local config.
 - Jump picker, contextual action registry, full focus handling, and the complete 1A keyboard contract remain to be implemented.
 - Summary still cannot distinguish an omitted desired-replica value from zero because the shared typed app field has no presence information.
 - The state model does not yet implement all planned loading, empty, refreshing, stale, failed and unavailable states, last-success timestamps, or request generation tracking.
-- Namespace inventory/filtering remain open. Long-session token refresh, complete terminal capability handling, and terminal resize/restoration checks remain open. The user has verified the multi-tenant mock in an interactive terminal; live API acceptance remains unverified.
+- Long-session token refresh, complete terminal capability handling, and terminal resize/restoration checks remain open. The user has verified the multi-tenant mock in an interactive terminal; live API acceptance remains unverified.
 
 ## Later releases
 

@@ -1,6 +1,27 @@
 version: 1
 tenants:
   - name: demo-acme
+    namespaces:
+      - id: 101
+        name: production
+        cluster:
+          id: 11
+          name: demo-west
+      - id: 202
+        name: staging
+        cluster:
+          id: 12
+          name: demo-east
+      - id: 203
+        name: preview
+        cluster:
+          id: 12
+          name: demo-east
+      - id: 204
+        name: production
+        cluster:
+          id: 12
+          name: demo-east
     apps:
       - id: app-api-prod
         name: api
@@ -59,6 +80,22 @@ tenants:
         image_tag: v1.8.1
         custom_domain_address: api.staging.demo.example.test
   - name: demo-labs
+    namespaces:
+      - id: 301
+        name: research
+        cluster:
+          id: 21
+          name: demo-north
+      - id: 302
+        name: experiments
+        cluster:
+          id: 22
+          name: demo-north
+      - id: 303
+        name: scratch
+        cluster:
+          id: 22
+          name: demo-north
     apps:
       - id: app-notebook
         name: notebook

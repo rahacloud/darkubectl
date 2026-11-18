@@ -110,6 +110,11 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 			}
 			return usage, nil
 		},
+		Namespaces: func(requestCtx context.Context, tenant string) ([]client.Namespace, error) {
+			c := client.New(baseURL, auth, tenant)
+			defer func() { _ = c.Close() }()
+			return c.ListNamespaces(requestCtx)
+		},
 	})
 }
 

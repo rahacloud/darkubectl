@@ -7,7 +7,7 @@
 |   billing-api staging    healthy           1  | git_repo_url                |
 |   session-db  prod       healthy           1  | Updated 5m ago              |
 +-----------------------------------------------+-----------------------------+
-| 3 apps  Enter details  / filter  s sort  :ns namespace  r refresh           |
+| 3 apps  Enter details  / filter  s sort  n namespace  r refresh             |
 +-----------------------------------------------------------------------------+
 
 + Apps / team-a / prod / billing-api ----------------------------------------+
@@ -27,6 +27,7 @@
 
 ## Apps
 
+- The `n` namespace picker lists All plus the tenant's complete project inventory, keyed by namespace ID so same-name namespaces remain distinct. Include empty projects, cluster and app counts. If `ListNamespaces` fails, derive options from the single already-loaded Apps snapshot and label that empty namespaces are unavailable. Keep that fallback synchronized if the Apps snapshot arrives after the picker request. Selecting a namespace filters the local snapshot only; it triggers no list request.
 - Use `Client.ListApps` once per tenant refresh and share its snapshot with the namespace fallback, picker and Overview. Keep loaded rows keyed by app UUID. Use the namespace ID for filtering. Preserve rows with incomplete metadata and label missing fields.
 - Default sort is app name, namespace name, namespace ID, then UUID. `s` opens a chooser for name, namespace, state and last updated, with both directions. Missing data sorts after known data. Filter literal text over app name, namespace name, state label and creation method, with no remote requests.
 - At minimum width show Name, Namespace and State. Add Desired and Type first as width permits, then the Preview pane at 100+ columns. Show plan or request sizing, image and domain in Preview when those fields exist. Format sizing using the source units or the existing CLI convention. Layout changes never trigger a new fetch.

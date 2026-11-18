@@ -20,27 +20,31 @@ const (
 
 // MockProfile contains only the safe, read-only fields the browser renders.
 type MockProfile struct {
-	Tenant  string
-	Apps    []client.App
-	Tenants []MockTenant
+	Tenant     string
+	Apps       []client.App
+	Namespaces []client.Namespace
+	Tenants    []MockTenant
 }
 
 // MockTenant is one tenant and its local, read-only app snapshot.
 type MockTenant struct {
-	Name string
-	Apps []client.App
+	Name       string
+	Apps       []client.App
+	Namespaces []client.Namespace
 }
 
 type mockProfileFile struct {
-	Version int                 `yaml:"version"`
-	Tenant  string              `yaml:"tenant"`
-	Apps    []mockProfileApp    `yaml:"apps"`
-	Tenants []mockProfileTenant `yaml:"tenants"`
+	Version    int                    `yaml:"version"`
+	Tenant     string                 `yaml:"tenant"`
+	Apps       []mockProfileApp       `yaml:"apps"`
+	Namespaces []mockProfileNamespace `yaml:"namespaces"`
+	Tenants    []mockProfileTenant    `yaml:"tenants"`
 }
 
 type mockProfileTenant struct {
-	Name string           `yaml:"name"`
-	Apps []mockProfileApp `yaml:"apps"`
+	Name       string                 `yaml:"name"`
+	Apps       []mockProfileApp       `yaml:"apps"`
+	Namespaces []mockProfileNamespace `yaml:"namespaces"`
 }
 
 type mockProfileApp struct {
@@ -112,7 +116,7 @@ func ParseMockProfile(data []byte) (MockProfile, error) {
 		return MockProfile{}, fmt.Errorf("unsupported mock profile version %d; expected %d", input.Version, mockProfileVersion)
 	}
 	if len(input.Tenants) > 0 {
-		if strings.TrimSpace(input.Tenant) != "" || len(input.Apps) > 0 {
+		if strings.TrimSpace(input.Tenant) != "" || len(input.Apps) > 0 || len(input.Namespaces) > 0 {
 			return MockProfile{}, errors.New("mock profile cannot mix top-level tenant/apps with tenants")
 		}
 		if len(input.Tenants) > mockProfileMaxApps {
@@ -138,9 +142,13 @@ func ParseMockProfile(data []byte) (MockProfile, error) {
 			if err != nil {
 				return MockProfile{}, err
 			}
-			tenants = append(tenants, MockTenant{Name: name, Apps: apps})
+			namespaces, err := convertMockNamespaces(tenant.Namespaces)
+			if err != nil {
+				return MockProfile{}, err
+			}
+			tenants = append(tenants, MockTenant{Name: name, Apps: apps, Namespaces: mergeNamespaces(namespaces, namespacesFromApps(apps))})
 		}
-		return MockProfile{Tenant: tenants[0].Name, Apps: tenants[0].Apps, Tenants: tenants}, nil
+		return MockProfile{Tenant: tenants[0].Name, Apps: tenants[0].Apps, Namespaces: tenants[0].Namespaces, Tenants: tenants}, nil
 	}
 	if strings.TrimSpace(input.Tenant) == "" {
 		return MockProfile{}, errors.New("mock profile tenant is required")
@@ -152,7 +160,41 @@ func ParseMockProfile(data []byte) (MockProfile, error) {
 	if err != nil {
 		return MockProfile{}, err
 	}
-	return MockProfile{Tenant: input.Tenant, Apps: apps}, nil
+	namespaces, err := convertMockNamespaces(input.Namespaces)
+	if err != nil {
+		return MockProfile{}, err
+	}
+	return MockProfile{Tenant: input.Tenant, Apps: apps, Namespaces: mergeNamespaces(namespaces, namespacesFromApps(apps))}, nil
+}
+
+func convertMockNamespaces(input []mockProfileNamespace) ([]client.Namespace, error) {
+	if len(input) > mockProfileMaxApps {
+		return nil, fmt.Errorf("mock profile has more than %d namespaces", mockProfileMaxApps)
+	}
+	out := make([]client.Namespace, 0, len(input))
+	seen := make(map[int]struct{}, len(input))
+	for i, namespace := range input {
+		if namespace.ID < 1 || strings.TrimSpace(namespace.Name) == "" {
+			return nil, fmt.Errorf("mock profile namespace %d requires a positive id and name", i+1)
+		}
+		if _, exists := seen[namespace.ID]; exists {
+			return nil, fmt.Errorf("mock profile has duplicate namespace id %d", namespace.ID)
+		}
+		seen[namespace.ID] = struct{}{}
+		out = append(out, client.Namespace{
+			ID: namespace.ID, Name: namespace.Name,
+			Cluster: client.Cluster{ID: namespace.Cluster.ID, Name: namespace.Cluster.Name},
+		})
+	}
+	return out, nil
+}
+
+func namespacesFromApps(apps []client.App) []client.Namespace {
+	var namespaces []client.Namespace
+	for _, app := range apps {
+		namespaces = append(namespaces, app.Namespace)
+	}
+	return uniqueNamespaces(namespaces)
 }
 
 func convertMockApps(input []mockProfileApp) ([]client.App, error) {

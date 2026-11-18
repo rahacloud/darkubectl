@@ -38,6 +38,12 @@ type appDetailResult struct {
 	err    error
 }
 
+type namespacesResult struct {
+	tenant     string
+	namespaces []client.Namespace
+	err        error
+}
+
 // AppUsage is an optional latest resource snapshot, in CPU cores and bytes.
 type AppUsage struct {
 	CPUCores  *float64
@@ -72,11 +78,17 @@ type BrowserOptions struct {
 	ListApps     func(context.Context, string) ([]client.App, error)
 	GetApp       func(context.Context, string, string) (*client.App, error)
 	Usage        func(context.Context, string, string) (*AppUsage, error)
+	Namespaces   func(context.Context, string) ([]client.Namespace, error)
 }
 
 type namespaceKey struct {
 	id   int
 	name string
+}
+
+type namespaceChoice struct {
+	key    namespaceKey
+	scoped bool
 }
 
 type treeNode struct {
@@ -87,45 +99,56 @@ type treeNode struct {
 }
 
 type browser struct {
-	tenant            string
-	mode              string
-	listApps          func(string) ([]client.App, error)
-	getApp            func(string, string) (*client.App, error)
-	usage             func(string, string) (*AppUsage, error)
-	profile           func(context.Context) (*client.Profile, error)
-	ctx               context.Context
-	localTenants      []string
-	tenants           []tenantOption
-	tenantCursor      int
-	selectingTenant   bool
-	profileLoaded     bool
-	profileErr        error
-	profileEmpty      bool
-	tenantStatus      string
-	apps              []client.App
-	err               error
-	loading           bool
-	selected          int
-	namespaceSelected bool
-	filterQuery       string
-	filterBeforeEdit  string
-	filterEditing     bool
-	filterSelection   string
-	collapsed         map[namespaceKey]bool
-	detail            bool
-	detailLoading     bool
-	detailErr         error
-	detailApp         *client.App
-	detailUsage       *AppUsage
-	usageAppID        string
-	sorting           bool
-	sortChoice        int
-	sortBy            appSort
-	sortDescending    bool
-	help              bool
-	spinnerFrame      int
-	width             int
-	height            int
+	tenant             string
+	mode               string
+	listApps           func(string) ([]client.App, error)
+	getApp             func(string, string) (*client.App, error)
+	usage              func(string, string) (*AppUsage, error)
+	listNamespaces     func(string) ([]client.Namespace, error)
+	profile            func(context.Context) (*client.Profile, error)
+	ctx                context.Context
+	localTenants       []string
+	tenants            []tenantOption
+	tenantCursor       int
+	selectingTenant    bool
+	profileLoaded      bool
+	profileErr         error
+	profileEmpty       bool
+	tenantStatus       string
+	apps               []client.App
+	err                error
+	loading            bool
+	selected           int
+	namespaceSelected  bool
+	namespaceScope     namespaceKey
+	namespaceScoped    bool
+	namespaces         []client.Namespace
+	namespacesLoaded   bool
+	namespacesLoading  bool
+	namespaceFallback  bool
+	namespaceErr       error
+	selectingNamespace bool
+	namespaceCursor    int
+	namespaceQuery     string
+	filterQuery        string
+	filterBeforeEdit   string
+	filterEditing      bool
+	filterSelection    string
+	collapsed          map[namespaceKey]bool
+	detail             bool
+	detailLoading      bool
+	detailErr          error
+	detailApp          *client.App
+	detailUsage        *AppUsage
+	usageAppID         string
+	sorting            bool
+	sortChoice         int
+	sortBy             appSort
+	sortDescending     bool
+	help               bool
+	spinnerFrame       int
+	width              int
+	height             int
 }
 
 // RunBrowser opens the read-only app browser using the caller's scoped client.
@@ -140,6 +163,9 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	}
 	if options.Usage != nil {
 		m.usage = func(tenant, id string) (*AppUsage, error) { return options.Usage(ctx, tenant, id) }
+	}
+	if options.Namespaces != nil {
+		m.listNamespaces = func(tenant string) ([]client.Namespace, error) { return options.Namespaces(ctx, tenant) }
 	}
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
@@ -156,12 +182,14 @@ func RunMockBrowser(ctx context.Context, profile MockProfile) error {
 func newMockBrowser(profile MockProfile) *browser {
 	tenantProfiles := append([]MockTenant(nil), profile.Tenants...)
 	if len(tenantProfiles) == 0 {
-		tenantProfiles = []MockTenant{{Name: profile.Tenant, Apps: profile.Apps}}
+		tenantProfiles = []MockTenant{{Name: profile.Tenant, Apps: profile.Apps, Namespaces: profile.Namespaces}}
 	}
 	appsByTenant := make(map[string][]client.App, len(tenantProfiles))
+	namespacesByTenant := make(map[string][]client.Namespace, len(tenantProfiles))
 	options := make([]tenantOption, 0, len(tenantProfiles))
 	for _, tenant := range tenantProfiles {
 		appsByTenant[tenant.Name] = append([]client.App(nil), tenant.Apps...)
+		namespacesByTenant[tenant.Name] = append([]client.Namespace(nil), tenant.Namespaces...)
 		options = append(options, tenantOption{name: tenant.Name, source: "Mock profile"})
 	}
 	if len(options) > 0 {
@@ -177,6 +205,13 @@ func newMockBrowser(profile MockProfile) *browser {
 				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
 			}
 			return append([]client.App(nil), apps...), nil
+		},
+		listNamespaces: func(tenant string) ([]client.Namespace, error) {
+			namespaces, ok := namespacesByTenant[tenant]
+			if !ok {
+				return nil, fmt.Errorf("tenant %q is not present in this mock profile", tenant)
+			}
+			return append([]client.Namespace(nil), namespaces...), nil
 		},
 	}
 	m.selectingTenant = len(options) > 1
@@ -201,6 +236,180 @@ func (m *browser) loadProfile() tea.Cmd {
 		profile, err := m.profile(m.ctx)
 		return profileResult{profile: profile, err: err}
 	}
+}
+
+func (m *browser) loadNamespaces() tea.Cmd {
+	if m.namespacesLoaded || m.namespacesLoading {
+		return nil
+	}
+	if m.listNamespaces == nil {
+		m.useAppNamespaceFallback(nil)
+		m.syncNamespaceCursor()
+		return nil
+	}
+	m.namespacesLoading = true
+	tenant := m.tenant
+	return func() tea.Msg {
+		namespaces, err := m.listNamespaces(tenant)
+		return namespacesResult{tenant: tenant, namespaces: namespaces, err: err}
+	}
+}
+
+func (m *browser) useAppNamespaceFallback(cause error) {
+	byKey := make(map[namespaceKey]client.Namespace)
+	for _, app := range m.apps {
+		ns := app.Namespace
+		byKey[namespaceKey{id: ns.ID, name: ns.Name}] = ns
+	}
+	m.namespaces = m.namespaces[:0]
+	for _, namespace := range byKey {
+		m.namespaces = append(m.namespaces, namespace)
+	}
+	m.sortNamespaces()
+	m.namespacesLoaded = true
+	m.namespacesLoading = false
+	m.namespaceFallback = true
+	m.namespaceErr = cause
+}
+
+func (m *browser) sortNamespaces() {
+	sort.Slice(m.namespaces, func(i, j int) bool {
+		if !strings.EqualFold(m.namespaces[i].Name, m.namespaces[j].Name) {
+			return strings.ToLower(m.namespaces[i].Name) < strings.ToLower(m.namespaces[j].Name)
+		}
+		return m.namespaces[i].ID < m.namespaces[j].ID
+	})
+}
+
+func (m *browser) openNamespacePicker() tea.Cmd {
+	m.selectingNamespace = true
+	m.namespaceQuery = ""
+	m.namespaceCursor = 0
+	choices := m.namespaceChoices()
+	for i, choice := range choices {
+		if choice.scoped == m.namespaceScoped && (!choice.scoped || choice.key == m.namespaceScope) {
+			m.namespaceCursor = i
+			break
+		}
+	}
+	return m.loadNamespaces()
+}
+
+func (m *browser) handleNamespaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	choices := m.namespaceChoices()
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.selectingNamespace = false
+		m.namespaceQuery = ""
+	case "enter":
+		if len(choices) > 0 {
+			m.chooseNamespace(choices[m.namespaceCursor])
+		}
+	case "up":
+		m.namespaceCursor = max(0, m.namespaceCursor-1)
+	case "down":
+		m.namespaceCursor = min(max(0, len(choices)-1), m.namespaceCursor+1)
+	case "ctrl+u":
+		m.namespaceQuery = ""
+		m.namespaceCursor = 0
+	case "backspace", "ctrl+h":
+		query := []rune(m.namespaceQuery)
+		if len(query) > 0 {
+			m.namespaceQuery = string(query[:len(query)-1])
+			m.namespaceCursor = 0
+		}
+	default:
+		if msg.Text != "" {
+			m.namespaceQuery += safeText(msg.Text)
+			m.namespaceCursor = 0
+		}
+	}
+	return m, nil
+}
+
+func (m *browser) namespaceChoices() []namespaceChoice {
+	choices := []namespaceChoice{{}}
+	for _, namespace := range m.namespaces {
+		key := namespaceKey{id: namespace.ID, name: namespace.Name}
+		query := strings.TrimSpace(m.namespaceQuery)
+		if query != "" && !fuzzyMatch(namespace.Name, query) && !fuzzyMatch(namespace.Cluster.Name, query) && !fuzzyMatch(fmt.Sprint(namespace.ID), query) {
+			continue
+		}
+		choices = append(choices, namespaceChoice{key: key, scoped: true})
+	}
+	if strings.TrimSpace(m.namespaceQuery) != "" && !fuzzyMatch("All namespaces", m.namespaceQuery) {
+		choices = choices[1:]
+	}
+	return choices
+}
+
+func (m *browser) namespaceAppCount(key namespaceKey) int {
+	count := 0
+	for _, app := range m.apps {
+		if app.Namespace.ID == key.id && app.Namespace.Name == key.name {
+			count++
+		}
+	}
+	return count
+}
+
+func (m *browser) chooseNamespace(choice namespaceChoice) {
+	m.namespaceScoped = choice.scoped
+	m.namespaceScope = choice.key
+	m.selectingNamespace = false
+	m.namespaceQuery = ""
+	m.filterQuery = ""
+	m.filterEditing = false
+	m.namespaceSelected = false
+	m.detail = false
+	m.ensureFilterSelection()
+}
+
+func (m *browser) syncNamespaceCursor() {
+	choices := m.namespaceChoices()
+	for i, choice := range choices {
+		if choice.scoped == m.namespaceScoped && (!choice.scoped || choice.key == m.namespaceScope) {
+			m.namespaceCursor = i
+			return
+		}
+	}
+	m.namespaceCursor = 0
+}
+
+func uniqueNamespaces(input []client.Namespace) []client.Namespace {
+	out := make([]client.Namespace, 0, len(input))
+	seen := make(map[namespaceKey]struct{}, len(input))
+	for _, namespace := range input {
+		if strings.TrimSpace(namespace.Name) == "" {
+			continue
+		}
+		key := namespaceKey{id: namespace.ID, name: namespace.Name}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, namespace)
+	}
+	return out
+}
+
+func mergeNamespaces(inventory, appNamespaces []client.Namespace) []client.Namespace {
+	merged := append([]client.Namespace(nil), inventory...)
+	seen := make(map[namespaceKey]struct{}, len(inventory)+len(appNamespaces))
+	for _, namespace := range inventory {
+		seen[namespaceKey{id: namespace.ID, name: namespace.Name}] = struct{}{}
+	}
+	for _, namespace := range appNamespaces {
+		key := namespaceKey{id: namespace.ID, name: namespace.Name}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, namespace)
+	}
+	return uniqueNamespaces(merged)
 }
 
 func (m *browser) Init() tea.Cmd {
@@ -260,6 +469,17 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailLoading = false
 				m.detailErr = nil
 			}
+			if m.namespacesLoaded {
+				if m.namespaceFallback {
+					m.useAppNamespaceFallback(m.namespaceErr)
+				} else {
+					m.namespaces = mergeNamespaces(m.namespaces, namespacesFromApps(m.apps))
+					m.sortNamespaces()
+				}
+				if m.selectingNamespace {
+					m.syncNamespaceCursor()
+				}
+			}
 		}
 	case profileResult:
 		m.profileLoaded = true
@@ -307,7 +527,25 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailUsage = msg.usage
 			m.usageAppID = msg.id
 		}
+	case namespacesResult:
+		if msg.tenant != m.tenant {
+			return m, nil
+		}
+		m.namespacesLoading = false
+		m.namespaceErr = msg.err
+		if msg.err != nil || len(msg.namespaces) == 0 && len(m.apps) > 0 {
+			m.useAppNamespaceFallback(msg.err)
+		} else {
+			m.namespaces = mergeNamespaces(msg.namespaces, namespacesFromApps(m.apps))
+			m.sortNamespaces()
+			m.namespacesLoaded = true
+			m.namespaceFallback = false
+		}
+		m.syncNamespaceCursor()
 	case tea.KeyPressMsg:
+		if m.selectingNamespace {
+			return m.handleNamespaceKey(msg)
+		}
 		if m.filterEditing {
 			switch msg.String() {
 			case "ctrl+c":
@@ -367,6 +605,10 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectingTenant = !m.selectingTenant
 				m.tenantCursor = 0
 			}
+		case "n", ":":
+			if !m.help && !m.selectingTenant {
+				return m, m.openNamespacePicker()
+			}
 		case "?":
 			m.help = !m.help
 		case "/":
@@ -387,7 +629,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "h":
 			if m.sorting {
 				m.sortDescending = false
-			} else if !m.help && !m.selectingTenant && !m.detail && len(m.apps) > 0 {
+			} else if !m.help && !m.selectingTenant && !m.detail && m.selectedAppVisible() {
 				m.setCollapsed(true)
 			} else if !m.help && !m.selectingTenant && m.detail {
 				m.detail = false
@@ -395,7 +637,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right", "l":
 			if m.sorting {
 				m.sortDescending = true
-			} else if !m.help && !m.selectingTenant && !m.detail && m.namespaceSelected && len(m.apps) > 0 {
+			} else if !m.help && !m.selectingTenant && !m.detail && m.namespaceSelected && m.selectedAppVisible() {
 				m.setCollapsed(false)
 			} else if !m.help && !m.selectingTenant && !m.detail && !m.namespaceSelected && len(m.apps) > 0 {
 				m.detail = true
@@ -547,7 +789,7 @@ func valueEqualForSort(a, b client.App, by appSort) bool {
 }
 
 func (m *browser) loadSelectedSummary() tea.Cmd {
-	if len(m.apps) == 0 || m.selected < 0 || m.selected >= len(m.apps) {
+	if !m.selectedAppVisible() || m.namespaceSelected {
 		return nil
 	}
 	selected := m.apps[m.selected]
@@ -620,6 +862,14 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.detailApp = nil
 	m.detailErr = nil
 	m.detailLoading = false
+	m.namespaceScoped = false
+	m.namespaceScope = namespaceKey{}
+	m.namespaces = nil
+	m.namespacesLoaded = false
+	m.namespacesLoading = false
+	m.namespaceFallback = false
+	m.namespaceErr = nil
+	m.selectingNamespace = false
 	return m.load()
 }
 
@@ -633,9 +883,14 @@ func (m *browser) View() tea.View {
 		if m.filterQuery != "" || m.filterEditing {
 			header += "   " + m.filterLine()
 		}
-		sortIndicator := m.sortLine()
-		padding := max(1, m.width-ansi.StringWidth(header)-ansi.StringWidth(sortIndicator))
-		header += strings.Repeat(" ", padding) + sortIndicator
+		rightIndicators := m.sortLine()
+		if namespaceIndicator := m.namespaceTopLine(); namespaceIndicator != "" {
+			rightIndicators = namespaceIndicator + "   " + rightIndicators
+		}
+		leftWidth := max(0, m.width-ansi.StringWidth(rightIndicators)-1)
+		header = ansi.Truncate(header, leftWidth, "…")
+		padding := max(1, m.width-ansi.StringWidth(header)-ansi.StringWidth(rightIndicators))
+		header += strings.Repeat(" ", padding) + rightIndicators
 		lines = append(lines, header, "")
 		if m.profileLoaded && m.profileErr != nil && !m.selectingTenant {
 			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
@@ -660,6 +915,8 @@ func (m *browser) View() tea.View {
 	lines = append(lines, footer)
 	if m.selectingTenant && m.width >= 60 && m.height >= 16 {
 		lines = m.tenantModal(lines)
+	} else if m.selectingNamespace && m.width >= 60 && m.height >= 16 {
+		lines = m.namespaceModal(lines)
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], max(0, m.width), "")
@@ -690,10 +947,17 @@ func (m *browser) appPaneLines(height int) []string {
 		if strings.HasPrefix(m.mode, "MOCK") {
 			label = "No apps in this mock profile."
 		}
+		if m.namespaceScoped {
+			label = fmt.Sprintf("No apps in namespace %q.", safeText(m.namespaceScope.name))
+		}
 		lines = append(lines, label)
 	}
 	if !m.loading && m.err == nil && len(m.apps) > 0 && len(m.visibleAppIndices()) == 0 {
-		lines = append(lines, "No apps match this filter.")
+		if m.namespaceScoped && m.filterQuery == "" {
+			lines = append(lines, fmt.Sprintf("No apps in namespace %q.", safeText(m.namespaceScope.name)))
+		} else {
+			lines = append(lines, "No apps match this filter.")
+		}
 	}
 	room := max(0, height-len(lines))
 	return append(lines, m.appTreeForWidth(room, max(1, (m.width-3)/2))...)
@@ -707,7 +971,7 @@ func (m *browser) summaryPaneLines() []string {
 	if m.detailLoading {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
 	}
-	if m.namespaceSelected || len(m.apps) == 0 || m.selected < 0 || m.selected >= len(m.apps) {
+	if m.namespaceSelected || !m.selectedAppVisible() {
 		return []string{paint(heading, output.ColorAccent, true), paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
 	}
 	a := m.apps[m.selected]
@@ -951,10 +1215,12 @@ func (m *browser) splitPanes(left, right []string, height int) []string {
 }
 
 func (m *browser) footerLine() string {
-	items := [][2]string{{"↑↓", "move"}, {"←→/h/l", "panes"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
+	items := [][2]string{{"↑↓", "move"}, {"n", "scope"}, {"/", "filter"}, {"q", "quit"}}
+	if m.width >= 72 {
+		items = [][2]string{{"↑↓", "move"}, {"←→/h/l", "tree/panes"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
+	}
 	if m.width >= 100 {
-		items = [][2]string{{"↑↓", "move"}, {"←→/h/l", "panes"}, {"↵", "open/toggle"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"}}
-		items = append(items[:5], append([][2]string{{"t", "tenant"}}, items[5:]...)...)
+		items = [][2]string{{"↑↓", "move"}, {"←→/h/l", "tree/panes"}, {"↵", "open/toggle"}, {"n", "scope"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"t", "tenant"}, {"?", "help"}, {"q", "quit"}}
 	}
 	if m.help {
 		items = [][2]string{{"Esc", "close help"}, {"q", "quit"}}
@@ -964,6 +1230,9 @@ func (m *browser) footerLine() string {
 	}
 	if m.sorting {
 		items = [][2]string{{"↑↓", "field"}, {"←→", "order"}, {"Enter", "apply"}, {"Esc", "close"}}
+	}
+	if m.selectingNamespace {
+		items = [][2]string{{"type", "filter"}, {"↑↓", "move"}, {"Enter", "scope"}, {"Esc", "close"}}
 	}
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
@@ -982,6 +1251,17 @@ func (m *browser) sortLine() string {
 		direction = "↓"
 	}
 	return paint("⇅", output.ColorMuted, false) + " " + paint(appSortNames[choice], output.ColorBranch, true) + " " + paint(direction, output.ColorNumber, true)
+}
+
+func (m *browser) namespaceTopLine() string {
+	if m.selectingNamespace && strings.TrimSpace(m.namespaceQuery) != "" {
+		return paint("⎈ NS", output.ColorMuted, true) + " " + paint("/ "+safeText(m.namespaceQuery), output.ColorBranch, true)
+	}
+	if m.namespaceScoped {
+		name := ansi.Truncate(safeText(m.namespaceBreadcrumb(m.namespaceScope)), 28, "…")
+		return paint("⎈ NS", output.ColorMuted, true) + " " + paint(name, output.ColorBranch, true)
+	}
+	return paint("⎈ NS", output.ColorMuted, true) + " " + paint("All", output.ColorBranch, true)
 }
 
 func (m *browser) filterLine() string {
@@ -1030,6 +1310,9 @@ func (m *browser) visibleAppIndices() []int {
 	appQuery = strings.TrimSpace(appQuery)
 	indices := make([]int, 0, len(m.apps))
 	for i, app := range m.apps {
+		if m.namespaceScoped && (app.Namespace.ID != m.namespaceScope.id || app.Namespace.Name != m.namespaceScope.name) {
+			continue
+		}
 		if scoped {
 			if fuzzyMatch(app.Namespace.Name, namespaceQuery) && fuzzyMatch(app.Name, appQuery) {
 				indices = append(indices, i)
@@ -1039,6 +1322,18 @@ func (m *browser) visibleAppIndices() []int {
 		}
 	}
 	return indices
+}
+
+func (m *browser) selectedAppVisible() bool {
+	if m.selected < 0 || m.selected >= len(m.apps) {
+		return false
+	}
+	for _, index := range m.visibleAppIndices() {
+		if index == m.selected {
+			return true
+		}
+	}
+	return false
 }
 
 func fuzzyMatch(value, query string) bool {
@@ -1069,9 +1364,15 @@ func (m *browser) breadcrumb() string {
 		parts = append(parts, tenant)
 	}
 	parts = append(parts, "Apps")
-	if !m.namespaceSelected && len(m.apps) > 0 && m.selected >= 0 && m.selected < len(m.apps) {
+	if m.namespaceScoped {
+		parts = append(parts, safeText(m.namespaceBreadcrumb(m.namespaceScope)))
+	}
+	if !m.namespaceSelected && m.selectedAppVisible() {
 		app := m.apps[m.selected]
-		parts = append(parts, safeText(app.Namespace.Name), safeText(app.Name))
+		if !m.namespaceScoped {
+			parts = append(parts, safeText(m.namespaceBreadcrumb(namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name})))
+		}
+		parts = append(parts, safeText(app.Name))
 	}
 	separator := paint(" / ", output.ColorMuted, false)
 	crumbs := make([]string, 0, len(parts))
@@ -1087,6 +1388,28 @@ func (m *browser) breadcrumb() string {
 		return m.liveGlyph() + " " + path
 	}
 	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK · OFFLINE", output.ColorMuted, false) + "  " + path
+}
+
+func (m *browser) namespaceBreadcrumb(key namespaceKey) string {
+	name := key.name
+	duplicates := make([]client.Namespace, 0, 2)
+	for _, namespace := range m.namespaces {
+		if namespace.Name == key.name {
+			duplicates = append(duplicates, namespace)
+		}
+	}
+	if len(duplicates) < 2 {
+		return name
+	}
+	for _, namespace := range duplicates {
+		if namespace.ID == key.id {
+			if namespace.Cluster.Name != "" {
+				return fmt.Sprintf("%s · %s · ID %d", name, namespace.Cluster.Name, namespace.ID)
+			}
+			return fmt.Sprintf("%s · ID %d", name, namespace.ID)
+		}
+	}
+	return name
 }
 
 func fallbackText(value string) string {
@@ -1125,6 +1448,102 @@ func (m *browser) spinnerGlyph() string {
 
 func (m *browser) loadingMessage(label string) string {
 	return paint(m.spinnerGlyph(), output.ColorBranch, true) + " " + paint(label, output.ColorKey, false)
+}
+
+func (m *browser) namespaceModal(background []string) []string {
+	panelWidth := min(72, m.width-4)
+	innerWidth := panelWidth - 6
+	choices := m.namespaceChoices()
+	content := []string{
+		paint("⎈  NAMESPACE SCOPE", output.ColorAccent, true),
+		"Filter by namespace, cluster, or ID: " + paint(m.namespaceQuery+"▏", output.ColorBranch, true),
+		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
+	}
+	if m.namespacesLoading {
+		content = append(content, m.loadingMessage("Loading namespace inventory…"))
+	}
+	if m.namespaceFallback {
+		message := "Inventory unavailable · showing namespaces with apps"
+		if strings.HasPrefix(m.mode, "MOCK") {
+			message = "Using mock app namespaces · empty projects need explicit fixture inventory"
+		}
+		content = append(content, paint(message, output.ColorNumber, false))
+	}
+	capacity := max(1, min(10, m.height-12))
+	first := max(0, min(m.namespaceCursor-capacity+1, len(choices)-capacity))
+	last := min(len(choices), first+capacity)
+	for i := first; i < last; i++ {
+		content = append(content, m.namespaceChoiceRow(choices[i], i, innerWidth))
+	}
+	if len(choices) == 0 {
+		content = append(content, paint("No namespaces match this filter.", output.ColorMuted, false))
+	}
+	if first > 0 || last < len(choices) {
+		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(choices)), output.ColorMuted, false))
+	}
+	content = append(content, "", "↑/↓ move  ·  Enter select", "Type to filter  ·  Esc close")
+	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
+	panelLines := strings.Split(panel, "\n")
+	if len(background) < m.height {
+		background = append(background, make([]string, m.height-len(background))...)
+	}
+	startY := max(0, (m.height-len(panelLines))/2)
+	startX := max(0, (m.width-panelWidth)/2)
+	for i, line := range panelLines {
+		y := startY + i
+		if y >= len(background) {
+			break
+		}
+		if width := ansi.StringWidth(line); width < panelWidth {
+			line += strings.Repeat(" ", panelWidth-width)
+		}
+		base := ansi.Truncate(background[y], m.width, "")
+		base += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(base)))
+		background[y] = ansi.Cut(base, 0, startX) + line + ansi.Cut(base, startX+panelWidth, m.width)
+	}
+	return background[:m.height]
+}
+
+func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) string {
+	marker := " "
+	if index == m.namespaceCursor {
+		marker = "›"
+	}
+	name := "All namespaces"
+	meta := fmt.Sprintf("%d apps", len(m.apps))
+	if choice.scoped {
+		name = choice.key.name
+		for _, namespace := range m.namespaces {
+			if namespace.ID == choice.key.id && namespace.Name == choice.key.name {
+				name = namespace.Name
+				if namespace.Cluster.Name != "" {
+					name += " · " + namespace.Cluster.Name
+				}
+				name += fmt.Sprintf(" · ID %d", namespace.ID)
+				break
+			}
+		}
+		count := m.namespaceAppCount(choice.key)
+		meta = fmt.Sprintf("%d apps", count)
+		if count == 0 {
+			meta += " · empty"
+		}
+	}
+	check := " "
+	if choice.scoped == m.namespaceScoped && (!choice.scoped || choice.key == m.namespaceScope) {
+		check = paint("✓", output.ColorSuccess, true)
+	}
+	metaWidth := min(20, max(8, width/3))
+	nameWidth := max(8, width-metaWidth-8)
+	name = ansi.Truncate(safeText(name), nameWidth, "…")
+	meta = ansi.Truncate(meta, metaWidth, "…")
+	plain := fmt.Sprintf(" %s %s%s%s%s", marker, name, strings.Repeat(" ", max(1, width-ansi.StringWidth(name)-ansi.StringWidth(meta)-6)), meta, check)
+	plain = ansi.Truncate(plain, width, "")
+	plain += strings.Repeat(" ", max(0, width-ansi.StringWidth(plain)))
+	if index == m.namespaceCursor {
+		return tenantSelectedStyle().Width(width).Render(plain)
+	}
+	return " " + paint(marker, output.ColorBranch, true) + " " + paint(name, output.ColorKey, false) + strings.Repeat(" ", max(1, width-ansi.StringWidth(name)-ansi.StringWidth(meta)-6)) + paint(meta, output.ColorMuted, false) + "  " + check
 }
 
 func (m *browser) tenantModal(background []string) []string {
