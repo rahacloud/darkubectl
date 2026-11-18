@@ -896,15 +896,9 @@ func (m *browser) View() tea.View {
 			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
 		}
 		bodyHeight := max(1, m.height-len(lines)-footerHeight-1)
-		if m.help {
-			lines = append(lines, "Navigation", "↑/↓ or j/k  move through the app tree", "←/h  collapse namespace / return from Summary",
-				"→/l  expand namespace / open selected app Summary", "Enter  toggle namespace or focus app Summary",
-				"/  filter    s  sort    t  tenant    r  refresh", "?  close help    q  quit")
-		} else {
-			left := m.appPaneLines(bodyHeight)
-			right := m.summaryPaneLines()
-			lines = append(lines, m.splitPanes(left, right, bodyHeight)...)
-		}
+		left := m.appPaneLines(bodyHeight)
+		right := m.summaryPaneLines()
+		lines = append(lines, m.splitPanes(left, right, bodyHeight)...)
 	}
 	if len(lines) > m.height-footerHeight {
 		lines = lines[:max(0, m.height-footerHeight)]
@@ -917,6 +911,8 @@ func (m *browser) View() tea.View {
 		lines = m.tenantModal(lines)
 	} else if m.selectingNamespace && m.width >= 60 && m.height >= 16 {
 		lines = m.namespaceModal(lines)
+	} else if m.help && m.width >= 60 && m.height >= 16 {
+		lines = m.helpModal(lines)
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], max(0, m.width), "")
@@ -1482,6 +1478,54 @@ func (m *browser) namespaceModal(background []string) []string {
 		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(choices)), output.ColorMuted, false))
 	}
 	content = append(content, "", "↑/↓ move  ·  Enter select", "Type to filter  ·  Esc close")
+	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
+	panelLines := strings.Split(panel, "\n")
+	if len(background) < m.height {
+		background = append(background, make([]string, m.height-len(background))...)
+	}
+	startY := max(0, (m.height-len(panelLines))/2)
+	startX := max(0, (m.width-panelWidth)/2)
+	for i, line := range panelLines {
+		y := startY + i
+		if y >= len(background) {
+			break
+		}
+		if width := ansi.StringWidth(line); width < panelWidth {
+			line += strings.Repeat(" ", panelWidth-width)
+		}
+		base := ansi.Truncate(background[y], m.width, "")
+		base += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(base)))
+		background[y] = ansi.Cut(base, 0, startX) + line + ansi.Cut(base, startX+panelWidth, m.width)
+	}
+	return background[:m.height]
+}
+
+func (m *browser) helpModal(background []string) []string {
+	panelWidth := min(72, m.width-4)
+	innerWidth := panelWidth - 6
+	row := func(leftKey, leftLabel, rightKey, rightLabel string) string {
+		left := paint(leftKey, output.ColorBranch, true) + " " + paint(leftLabel, output.ColorMuted, false)
+		right := paint(rightKey, output.ColorBranch, true) + " " + paint(rightLabel, output.ColorMuted, false)
+		columnWidth := (innerWidth - 3) / 2
+		left = ansi.Truncate(left, columnWidth, "…")
+		left += strings.Repeat(" ", max(1, columnWidth-ansi.StringWidth(left)))
+		return left + "   " + ansi.Truncate(right, columnWidth, "…")
+	}
+	content := []string{
+		paint("⌘  QUICK HELP", output.ColorAccent, true),
+		paint("Navigate the app tree and preview details", output.ColorMuted, false),
+		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
+		paint("NAVIGATION", output.ColorKey, true),
+		row("↑/↓  j/k", "move", "→/l", "open summary / expand"),
+		row("←/h", "return / collapse", "Enter", "open / toggle group"),
+		"",
+		paint("BROWSE", output.ColorKey, true),
+		row("n", "namespace scope", "/", "fuzzy app filter"),
+		row("s", "sort", "r", "refresh"),
+		row("t", "switch tenant", "q", "quit"),
+		"",
+		paint("? / Esc", output.ColorBranch, true) + " " + paint("close help", output.ColorMuted, false),
+	}
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	if len(background) < m.height {
