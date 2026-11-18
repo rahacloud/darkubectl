@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/tui"
@@ -72,6 +73,42 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 			c := client.New(baseURL, auth, tenant)
 			defer func() { _ = c.Close() }()
 			return c.ListApps(requestCtx)
+		},
+		GetApp: func(requestCtx context.Context, tenant, id string) (*client.App, error) {
+			c := client.New(baseURL, auth, tenant)
+			defer func() { _ = c.Close() }()
+			return c.GetAppTyped(requestCtx, id)
+		},
+		Usage: func(requestCtx context.Context, tenant, id string) (*tui.AppUsage, error) {
+			c := client.New(baseURL, auth, tenant)
+			defer func() { _ = c.Close() }()
+			end := time.Now()
+			usage := &tui.AppUsage{}
+			for _, metric := range []struct {
+				typeName string
+				dest     **float64
+			}{{client.InsightCPU, &usage.CPUCores}, {client.InsightRAM, &usage.RAMBytes}, {client.InsightDisk, &usage.DiskBytes}} {
+				series, err := insightWithRetry(requestCtx, c, client.InsightQuery{
+					AppID: id, Type: metric.typeName, Pod: client.AllPods,
+					Start: end.Add(-5 * time.Minute), End: end, Step: time.Minute,
+				})
+				if err != nil {
+					continue
+				}
+				var total float64
+				found := false
+				for _, pod := range series {
+					if sample, ok := pod.Latest(); ok {
+						total += sample.Value
+						found = true
+					}
+				}
+				if found {
+					value := total
+					*metric.dest = &value
+				}
+			}
+			return usage, nil
 		},
 	})
 }

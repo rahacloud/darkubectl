@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"image/color"
+	"math"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -28,6 +30,32 @@ type profileResult struct {
 	err     error
 }
 
+type appDetailResult struct {
+	tenant string
+	id     string
+	app    *client.App
+	usage  *AppUsage
+	err    error
+}
+
+// AppUsage is an optional latest resource snapshot, in CPU cores and bytes.
+type AppUsage struct {
+	CPUCores  *float64
+	RAMBytes  *float64
+	DiskBytes *float64
+}
+
+type appSort int
+
+const (
+	sortName appSort = iota
+	sortNamespace
+	sortState
+	sortUpdated
+)
+
+var appSortNames = [...]string{"Name", "Namespace", "State", "Last updated"}
+
 type spinnerMsg struct{}
 
 type tenantOption struct {
@@ -42,6 +70,8 @@ type BrowserOptions struct {
 	LocalTenants []string
 	Profile      func(context.Context) (*client.Profile, error)
 	ListApps     func(context.Context, string) ([]client.App, error)
+	GetApp       func(context.Context, string, string) (*client.App, error)
+	Usage        func(context.Context, string, string) (*AppUsage, error)
 }
 
 type namespaceKey struct {
@@ -60,6 +90,8 @@ type browser struct {
 	tenant            string
 	mode              string
 	listApps          func(string) ([]client.App, error)
+	getApp            func(string, string) (*client.App, error)
+	usage             func(string, string) (*AppUsage, error)
 	profile           func(context.Context) (*client.Profile, error)
 	ctx               context.Context
 	localTenants      []string
@@ -81,6 +113,15 @@ type browser struct {
 	filterSelection   string
 	collapsed         map[namespaceKey]bool
 	detail            bool
+	detailLoading     bool
+	detailErr         error
+	detailApp         *client.App
+	detailUsage       *AppUsage
+	usageAppID        string
+	sorting           bool
+	sortChoice        int
+	sortBy            appSort
+	sortDescending    bool
 	help              bool
 	spinnerFrame      int
 	width             int
@@ -94,6 +135,12 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
 		localTenants: append([]string(nil), options.LocalTenants...),
 		listApps:     func(tenant string) ([]client.App, error) { return options.ListApps(ctx, tenant) }}
+	if options.GetApp != nil {
+		m.getApp = func(tenant, id string) (*client.App, error) { return options.GetApp(ctx, tenant, id) }
+	}
+	if options.Usage != nil {
+		m.usage = func(tenant, id string) (*AppUsage, error) { return options.Usage(ctx, tenant, id) }
+	}
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }
@@ -197,18 +244,7 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selectedID = m.apps[m.selected].ID
 			}
 			m.apps = msg.apps
-			sort.Slice(m.apps, func(i, j int) bool {
-				if m.apps[i].Namespace.Name != m.apps[j].Namespace.Name {
-					return m.apps[i].Namespace.Name < m.apps[j].Namespace.Name
-				}
-				if m.apps[i].Namespace.ID != m.apps[j].Namespace.ID {
-					return m.apps[i].Namespace.ID < m.apps[j].Namespace.ID
-				}
-				if m.apps[i].Name != m.apps[j].Name {
-					return m.apps[i].Name < m.apps[j].Name
-				}
-				return m.apps[i].ID < m.apps[j].ID
-			})
+			m.sortApps()
 			m.selected = min(m.selected, max(0, len(m.apps)-1))
 			for i := range m.apps {
 				if m.apps[i].ID == selectedID && selectedID != "" {
@@ -217,8 +253,12 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.ensureFilterSelection()
-			if m.detail && (len(m.apps) == 0 || m.apps[m.selected].ID != selectedID) {
-				m.detail = false
+			if len(m.apps) == 0 {
+				m.detailApp = nil
+			} else {
+				m.detailApp = &m.apps[m.selected]
+				m.detailLoading = false
+				m.detailErr = nil
 			}
 		}
 	case profileResult:
@@ -254,6 +294,19 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectingTenant = true
 			m.tenantCursor = min(m.tenantCursor, max(0, len(m.tenants)-1))
 		}
+	case appDetailResult:
+		if msg.tenant != m.tenant || len(m.apps) == 0 || m.apps[m.selected].ID != msg.id {
+			return m, nil
+		}
+		m.detailLoading = false
+		m.detailErr = msg.err
+		if msg.err == nil && msg.app != nil {
+			m.detailApp = msg.app
+		}
+		if msg.err == nil && msg.usage != nil {
+			m.detailUsage = msg.usage
+			m.usageAppID = msg.id
+		}
 	case tea.KeyPressMsg:
 		if m.filterEditing {
 			switch msg.String() {
@@ -265,15 +318,16 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.visibleAppIndices()) > 0 {
 					m.namespaceSelected = false
 					m.detail = true
+					return m, m.loadSelectedSummary()
 				}
 				return m, nil
 			case "up", "down":
 				m.filterEditing = false
 				m.filterBeforeEdit = m.filterQuery
 				if msg.String() == "up" {
-					m.moveTree(-1)
+					return m, m.moveTree(-1)
 				} else {
-					m.moveTree(1)
+					return m, m.moveTree(1)
 				}
 				return m, nil
 			case "esc":
@@ -309,14 +363,14 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "t":
-			if !m.help && !m.detail {
+			if !m.help {
 				m.selectingTenant = !m.selectingTenant
 				m.tenantCursor = 0
 			}
 		case "?":
 			m.help = !m.help
 		case "/":
-			if !m.help && !m.detail && !m.selectingTenant {
+			if !m.help && !m.selectingTenant {
 				m.filterEditing = true
 				m.filterBeforeEdit = m.filterQuery
 				m.namespaceSelected = false
@@ -325,8 +379,32 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.filterSelection = m.apps[m.selected].ID
 				}
 			}
+		case "s":
+			if !m.help && !m.selectingTenant {
+				m.sorting = true
+				m.sortChoice = int(m.sortBy)
+			}
+		case "left", "h":
+			if m.sorting {
+				m.sortDescending = false
+			} else if !m.help && !m.selectingTenant && !m.detail && len(m.apps) > 0 {
+				m.setCollapsed(true)
+			} else if !m.help && !m.selectingTenant && m.detail {
+				m.detail = false
+			}
+		case "right", "l":
+			if m.sorting {
+				m.sortDescending = true
+			} else if !m.help && !m.selectingTenant && !m.detail && m.namespaceSelected && len(m.apps) > 0 {
+				m.setCollapsed(false)
+			} else if !m.help && !m.selectingTenant && !m.detail && !m.namespaceSelected && len(m.apps) > 0 {
+				m.detail = true
+				return m, m.loadSelectedSummary()
+			}
 		case keyEscape:
-			if m.selectingTenant && m.tenant != "" {
+			if m.sorting {
+				m.sorting = false
+			} else if m.selectingTenant && m.tenant != "" {
 				m.selectingTenant = false
 			} else if m.help {
 				m.help = false
@@ -339,27 +417,39 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "up", "k":
-			if m.selectingTenant {
+			if m.sorting {
+				m.sortChoice = (m.sortChoice + len(appSortNames) - 1) % len(appSortNames)
+			} else if m.selectingTenant {
 				m.tenantCursor = max(0, m.tenantCursor-1)
 			} else if !m.help && !m.detail {
-				m.moveTree(-1)
+				return m, m.moveTree(-1)
+			} else if !m.help && m.detail {
+				return m, m.moveTree(-1)
 			}
 		case "down", "j":
-			if m.selectingTenant {
+			if m.sorting {
+				m.sortChoice = (m.sortChoice + 1) % len(appSortNames)
+			} else if m.selectingTenant {
 				m.tenantCursor = min(max(0, len(m.tenants)-1), m.tenantCursor+1)
 			} else if !m.help && !m.detail {
-				m.moveTree(1)
+				return m, m.moveTree(1)
+			} else if !m.help && m.detail {
+				return m, m.moveTree(1)
 			}
 		case "home", "g":
-			if !m.help && !m.detail {
-				m.selectTree(0)
+			if !m.help {
+				return m, m.selectTree(0)
 			}
 		case "end", "G":
-			if !m.help && !m.detail {
-				m.selectTree(len(m.treeNodes()) - 1)
+			if !m.help {
+				return m, m.selectTree(len(m.treeNodes()) - 1)
 			}
 		case "enter":
-			if m.selectingTenant {
+			if m.sorting {
+				m.sortBy = appSort(m.sortChoice)
+				m.sorting = false
+				m.sortApps()
+			} else if m.selectingTenant {
 				if len(m.tenants) > 0 {
 					return m, m.chooseTenant(m.tenants[m.tenantCursor].name)
 				}
@@ -370,18 +460,12 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.namespaceSelected = false
 						m.detail = true
+						return m, m.loadSelectedSummary()
 					}
 				} else {
 					m.detail = true
+					return m, m.loadSelectedSummary()
 				}
-			}
-		case "left", "h":
-			if !m.help && !m.detail && m.filterQuery == "" && len(m.visibleAppIndices()) > 0 {
-				m.setCollapsed(true)
-			}
-		case "right", "l":
-			if !m.help && !m.detail && m.filterQuery == "" && len(m.visibleAppIndices()) > 0 {
-				m.setCollapsed(false)
 			}
 		case "r":
 			if m.selectingTenant {
@@ -390,12 +474,103 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.profileErr = nil
 				return m, m.loadProfile()
 			}
+			if m.detail && !m.detailLoading {
+				return m, m.loadSelectedSummary()
+			}
 			if !m.help && !m.loading {
 				return m, m.load()
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m *browser) sortApps() {
+	selectedID := ""
+	if m.selected >= 0 && m.selected < len(m.apps) {
+		selectedID = m.apps[m.selected].ID
+	}
+	sort.SliceStable(m.apps, func(i, j int) bool {
+		a, b := m.apps[i], m.apps[j]
+		var less bool
+		switch m.sortBy {
+		case sortNamespace:
+			less = strings.ToLower(a.Namespace.Name) < strings.ToLower(b.Namespace.Name)
+		case sortState:
+			less = strings.ToLower(appState(a)) < strings.ToLower(appState(b))
+		case sortUpdated:
+			ta, ea := time.Parse(time.RFC3339, a.UpdatedAt)
+			tb, eb := time.Parse(time.RFC3339, b.UpdatedAt)
+			if ea != nil || eb != nil {
+				if ea != eb {
+					return ea == nil
+				}
+				less = false
+			} else {
+				less = ta.Before(tb)
+			}
+		default:
+			less = strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		}
+		if m.sortDescending {
+			less = !less
+		}
+		if a.ID == b.ID {
+			return false
+		}
+		if valueEqualForSort(a, b, m.sortBy) {
+			return strings.ToLower(a.ID) < strings.ToLower(b.ID)
+		}
+		return less
+	})
+	m.selected = min(m.selected, max(0, len(m.apps)-1))
+	for i := range m.apps {
+		if selectedID != "" && m.apps[i].ID == selectedID {
+			m.selected = i
+			break
+		}
+	}
+	m.ensureFilterSelection()
+}
+
+func valueEqualForSort(a, b client.App, by appSort) bool {
+	switch by {
+	case sortNamespace:
+		return strings.EqualFold(a.Namespace.Name, b.Namespace.Name)
+	case sortState:
+		return strings.EqualFold(appState(a), appState(b))
+	case sortUpdated:
+		return a.UpdatedAt == b.UpdatedAt
+	default:
+		return strings.EqualFold(a.Name, b.Name)
+	}
+}
+
+func (m *browser) loadSelectedSummary() tea.Cmd {
+	if len(m.apps) == 0 || m.selected < 0 || m.selected >= len(m.apps) {
+		return nil
+	}
+	selected := m.apps[m.selected]
+	if m.detailApp == nil || m.detailApp.ID != selected.ID {
+		m.detailApp = &selected
+	}
+	m.detailErr = nil
+	m.detailUsage = nil
+	m.usageAppID = ""
+	if m.getApp == nil {
+		m.detailLoading = false
+		return nil
+	}
+	m.detailLoading = true
+	tenant, id := m.tenant, m.apps[m.selected].ID
+	return func() tea.Msg {
+		app, err := m.getApp(tenant, id)
+		var usage *AppUsage
+		if err == nil && m.usage != nil {
+			usage, _ = m.usage(tenant, id)
+		}
+		return appDetailResult{tenant: tenant, id: id, app: app, usage: usage, err: err}
+	}
 }
 
 func appendTenant(tenants []tenantOption, option tenantOption) []tenantOption {
@@ -442,60 +617,47 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.filterEditing = false
 	m.collapsed = nil
 	m.detail = false
+	m.detailApp = nil
+	m.detailErr = nil
+	m.detailLoading = false
 	return m.load()
 }
 
 func (m *browser) View() tea.View {
 	var lines []string
+	footer := m.footerLine()
 	if m.width < 60 || m.height < 16 {
-		lines = []string{"Resize terminal to at least 60 x 16", "q quit"}
+		lines = []string{"Resize terminal to at least 60 x 16"}
 	} else {
 		header := m.breadcrumb()
 		if m.filterQuery != "" || m.filterEditing {
 			header += "   " + m.filterLine()
 		}
+		sortIndicator := m.sortLine()
+		padding := max(1, m.width-ansi.StringWidth(header)-ansi.StringWidth(sortIndicator))
+		header += strings.Repeat(" ", padding) + sortIndicator
 		lines = append(lines, header, "")
 		if m.profileLoaded && m.profileErr != nil && !m.selectingTenant {
 			lines = append(lines, "Account profile unavailable; tenant apps remain available. Press t to choose a local-config tenant.")
 		}
-		switch {
-		case m.help:
-			lines = append(lines, "Navigation", "Up/Down or k/j: select    Enter: toggle namespace or open app",
-				"/ filter  ·  namespace/app narrows fuzzy matches", "Left/Right or h/l: collapse/expand    Esc: back", "Home/End or g/G: first/last    r: refresh    q: quit",
-				"", "Press ? or Esc to close help")
-		case m.detail && len(m.apps) > 0:
-			a := m.apps[m.selected]
-			lines = append(lines, safeText(a.Name), "Namespace: "+safeText(a.Namespace.Name), "ID: "+safeText(a.ID),
-				"State: "+safeText(appState(a)), fmt.Sprintf("Desired replicas: %d", a.Replicas),
-				"Type: "+safeText(a.CreationMethod), "Image: "+safeText(a.Image()), "Domain: "+safeText(a.CustomDomainAddress))
-		default:
-			if m.err != nil {
-				if len(m.apps) == 0 {
-					lines = append(lines, "Could not load apps: "+safeText(m.err.Error())+"  (r to retry)")
-				} else {
-					lines = append(lines, "Refresh failed; displayed apps may be stale: "+safeText(m.err.Error()))
-				}
-			}
-			if !m.loading && m.err == nil && len(m.apps) == 0 {
-				emptyLabel := "No apps in this tenant."
-				if strings.HasPrefix(m.mode, "MOCK") {
-					emptyLabel = "No apps in this mock profile."
-				}
-				lines = append(lines, emptyLabel)
-			}
-			if !m.loading && m.err == nil && len(m.apps) > 0 && len(m.visibleAppIndices()) == 0 {
-				lines = append(lines, "No apps match this filter.  Press Esc to clear it.")
-			}
-			lines = append(lines, m.appTree(max(0, m.height-len(lines)-footerHeight-1))...)
+		bodyHeight := max(1, m.height-len(lines)-footerHeight-1)
+		if m.help {
+			lines = append(lines, "Navigation", "↑/↓ or j/k  move through the app tree", "←/h  collapse namespace / return from Summary",
+				"→/l  expand namespace / open selected app Summary", "Enter  toggle namespace or focus app Summary",
+				"/  filter    s  sort    t  tenant    r  refresh", "?  close help    q  quit")
+		} else {
+			left := m.appPaneLines(bodyHeight)
+			right := m.summaryPaneLines()
+			lines = append(lines, m.splitPanes(left, right, bodyHeight)...)
 		}
-		footer := "j/k move  Enter open/toggle  h/l collapse/expand  / filter  t tenants  r refresh  ? help  q quit"
-		if m.filterEditing {
-			footer = "type to filter  ↑/↓ navigate  Enter open  Esc cancel  Ctrl+U clear"
-		} else if m.filterQuery != "" {
-			footer = "j/k move  Enter open  / edit filter  Esc clear filter  t tenants  r refresh  q quit"
-		}
-		lines = append(lines, "", footer)
 	}
+	if len(lines) > m.height-footerHeight {
+		lines = lines[:max(0, m.height-footerHeight)]
+	}
+	for len(lines) < max(0, m.height-footerHeight) {
+		lines = append(lines, "")
+	}
+	lines = append(lines, footer)
 	if m.selectingTenant && m.width >= 60 && m.height >= 16 {
 		lines = m.tenantModal(lines)
 	}
@@ -505,6 +667,321 @@ func (m *browser) View() tea.View {
 	v := tea.NewView(strings.Join(lines, "\n"))
 	v.AltScreen = true
 	return v
+}
+
+func (m *browser) appPaneLines(height int) []string {
+	heading := "  APPS"
+	if !m.detail {
+		heading = "▸ APPS"
+	}
+	if m.loading {
+		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
+	}
+	lines := []string{paint(heading, output.ColorAccent, true)}
+	if m.err != nil {
+		if len(m.apps) == 0 {
+			lines = append(lines, "Could not load apps: "+safeText(m.err.Error()))
+		} else {
+			lines = append(lines, paint("Refresh failed; apps may be stale: "+safeText(m.err.Error()), output.ColorNumber, false))
+		}
+	}
+	if !m.loading && m.err == nil && len(m.apps) == 0 {
+		label := "No apps in this tenant."
+		if strings.HasPrefix(m.mode, "MOCK") {
+			label = "No apps in this mock profile."
+		}
+		lines = append(lines, label)
+	}
+	if !m.loading && m.err == nil && len(m.apps) > 0 && len(m.visibleAppIndices()) == 0 {
+		lines = append(lines, "No apps match this filter.")
+	}
+	room := max(0, height-len(lines))
+	return append(lines, m.appTreeForWidth(room, max(1, (m.width-3)/2))...)
+}
+
+func (m *browser) summaryPaneLines() []string {
+	heading := "  SUMMARY"
+	if m.detail {
+		heading = "▸ SUMMARY"
+	}
+	if m.detailLoading {
+		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
+	}
+	if m.namespaceSelected || len(m.apps) == 0 || m.selected < 0 || m.selected >= len(m.apps) {
+		return []string{paint(heading, output.ColorAccent, true), paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
+	}
+	a := m.apps[m.selected]
+	if m.detailApp != nil && m.detailApp.ID == a.ID {
+		a = *m.detailApp
+	}
+	stateGlyph, stateColor := stateStyle(appState(a))
+	headingLine := paint(heading, output.ColorAccent, true) + paint(" · ", output.ColorBorder, false) + paint(safeText(a.Name), output.ColorKey, true)
+	lines := []string{headingLine}
+	if m.detailErr != nil {
+		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailErr.Error()), output.ColorNumber, false))
+	}
+	lines = append(lines, "",
+		summaryField("Tenant", displayValue(m.tenant)),
+		summaryField("Namespace", displayValue(a.Namespace.Name)),
+		summaryField("Cluster", displayValue(a.Namespace.Cluster.Name)),
+		summaryField("State", paint(stateGlyph+" "+safeText(appState(a)), stateColor, true)),
+		summaryField("Description", displayValue(a.State.Description)),
+		summaryField("Replicas", fmt.Sprintf("%d", a.Replicas)))
+	plan := planName(a.Plan)
+	if plan == "-" {
+		lines = append(lines, summaryLabel("Plan"))
+	} else {
+		lines = append(lines, summaryField("Plan", plan))
+	}
+	usage := m.detailUsage
+	if m.usageAppID != a.ID {
+		usage = nil
+	}
+	cpuTotal := "-"
+	ramTotal := "-"
+	if a.Plan != nil {
+		if a.Plan.Detail.CPURequest > 0 {
+			cpuTotal = fmt.Sprintf("%dm", a.Plan.Detail.CPURequest)
+		}
+		if a.Plan.Detail.RAMLimit > 0 {
+			ramTotal = fmt.Sprintf("%dM", a.Plan.Detail.RAMLimit)
+		}
+	}
+	if cpuTotal == "-" {
+		cpuTotal = displayValue(a.CPURequest)
+	}
+	if ramTotal == "-" {
+		ramTotal = displayValue(a.RAMLimit)
+	}
+	lines = append(lines,
+		planResourceField("", "CPU", usageRatio(usageValue(usage, func(u *AppUsage) *float64 { return u.CPUCores }), cpuTotal, formatCores)),
+		planResourceField("", "RAM", usageRatio(usageValue(usage, func(u *AppUsage) *float64 { return u.RAMBytes }), ramTotal, formatBytes)))
+	if (a.Disk != nil && a.Disk.SizeInGi > 0) || (usage != nil && usage.DiskBytes != nil) {
+		diskTotal := "-"
+		if a.Disk != nil && a.Disk.SizeInGi > 0 {
+			diskTotal = fmt.Sprintf("%d GiB", a.Disk.SizeInGi)
+		}
+		lines = append(lines, planResourceField("", "Disk", usageRatio(usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), diskTotal, formatBytes)))
+	}
+	lines = append(lines, summaryField("Created via", creationMethodLabel(a.CreationMethod)), summaryField("Image", displayValue(a.Image())))
+	domains := appDomains(a)
+	if len(domains) == 0 {
+		lines = append(lines, summaryField("Domains", "-"))
+	} else {
+		for i, host := range domains {
+			label := ""
+			if i == 0 {
+				label = "Domains"
+			}
+			lines = append(lines, summaryLabel(label)+domainLink(host))
+		}
+	}
+	lines = append(lines, summaryField("Updated", formatLocalTime(a.UpdatedAt)), summaryField("ID", displayValue(a.ID)))
+	return lines
+}
+
+func appDomains(app client.App) []string {
+	domains := make([]string, 0, len(app.ExternalHosts)+1)
+	seen := make(map[string]struct{}, len(app.ExternalHosts)+1)
+	for _, domain := range append([]string{app.CustomDomainAddress}, app.ExternalHosts...) {
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			continue
+		}
+		key := strings.ToLower(domain)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		domains = append(domains, domain)
+	}
+	return domains
+}
+
+func summaryLabel(label string) string {
+	return paint(fmt.Sprintf("%-12s", label), output.ColorMuted, true)
+}
+
+func summaryField(label, value string) string {
+	return summaryLabel(label) + paint(value, output.ColorBranch, false)
+}
+
+func planResourceField(icon, label, value string) string {
+	return summaryLabel("") + paint(icon+" "+label+" ", output.ColorMuted, true) + paint(value, output.ColorBranch, false)
+}
+
+func displayValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return safeText(value)
+}
+
+func planName(plan *client.Plan) string {
+	if plan == nil {
+		return "-"
+	}
+	if plan.Name != "" {
+		return safeText(plan.Name)
+	}
+	if plan.CodeName != "" {
+		return safeText(plan.CodeName)
+	}
+	return "-"
+}
+
+func usageValue(usage *AppUsage, selectValue func(*AppUsage) *float64) *float64 {
+	if usage == nil {
+		return nil
+	}
+	return selectValue(usage)
+}
+
+func usageRatio(used *float64, total string, format func(float64) string) string {
+	if used == nil {
+		return displayValue(total)
+	}
+	usedText := format(*used)
+	if strings.TrimSpace(total) == "" || total == "-" {
+		return usedText
+	}
+	return usedText + " / " + displayValue(total)
+}
+
+func formatCores(cores float64) string {
+	return fmt.Sprintf("%dm", int(math.Round(cores*1000)))
+}
+
+func formatBytes(bytes float64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	value := bytes
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%.0f %s", value, units[unit])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unit])
+}
+
+func domainLink(host string) string {
+	host = strings.TrimSpace(safeText(host))
+	if host == "" {
+		return "-"
+	}
+	target := host
+	if !strings.Contains(target, "://") {
+		target = "https://" + target
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return paint(host, output.ColorKey, false)
+	}
+	style := lipgloss.NewStyle().Underline(true).Hyperlink(target)
+	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
+		style = style.Foreground(output.ColorBranch)
+	}
+	return style.Render(host)
+}
+
+func creationMethodLabel(method string) string {
+	method = strings.TrimSpace(method)
+	switch strings.ToLower(method) {
+	case "git_repo_url":
+		return " Git"
+	case "docker_image":
+		return " Docker"
+	case "":
+		return "◇ Unknown"
+	}
+	short := strings.ReplaceAll(method, "_", " ")
+	short = strings.ReplaceAll(short, "-", " ")
+	short = strings.TrimSuffix(short, "new")
+	short = strings.TrimSpace(short)
+	if short == "" {
+		short = method
+	}
+	words := strings.Fields(short)
+	for i, word := range words {
+		if strings.EqualFold(word, "postgresql") {
+			words[i] = "PostgreSQL"
+		} else {
+			runes := []rune(strings.ToLower(word))
+			if len(runes) > 0 {
+				runes[0] = unicode.ToUpper(runes[0])
+			}
+			words[i] = string(runes)
+		}
+	}
+	return "◆ " + safeText(strings.Join(words, " "))
+}
+
+func formatLocalTime(value string) string {
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	if err != nil {
+		return fallbackText(value)
+	}
+	return parsed.Local().Format("Jan 2, 2006 · 3:04 PM MST")
+}
+
+func (m *browser) splitPanes(left, right []string, height int) []string {
+	leftWidth := max(1, (m.width-3)/2)
+	rightWidth := max(1, m.width-3-leftWidth)
+	lines := make([]string, height)
+	for i := 0; i < height; i++ {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		l = ansi.Truncate(l, leftWidth, "…")
+		r = ansi.Truncate(r, rightWidth, "…")
+		l += strings.Repeat(" ", max(0, leftWidth-ansi.StringWidth(l)))
+		divider := paint("│", output.ColorBorder, false)
+		if m.detail {
+			divider = paint("┃", output.ColorBranch, true)
+		}
+		lines[i] = l + " " + divider + " " + r
+	}
+	return lines
+}
+
+func (m *browser) footerLine() string {
+	items := [][2]string{{"↑↓", "move"}, {"←→/h/l", "panes"}, {"/", "filter"}, {"s", "sort"}, {"?", "help"}, {"q", "quit"}}
+	if m.width >= 100 {
+		items = [][2]string{{"↑↓", "move"}, {"←→/h/l", "panes"}, {"↵", "open/toggle"}, {"/", "filter"}, {"s", "sort"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"}}
+		items = append(items[:5], append([][2]string{{"t", "tenant"}}, items[5:]...)...)
+	}
+	if m.help {
+		items = [][2]string{{"Esc", "close help"}, {"q", "quit"}}
+	}
+	if m.filterEditing {
+		items = [][2]string{{"type", "filter"}, {"↑↓", "move"}, {"Enter", "open"}, {"Esc", "cancel"}, {"Ctrl+U", "clear"}}
+	}
+	if m.sorting {
+		items = [][2]string{{"↑↓", "field"}, {"←→", "order"}, {"Enter", "apply"}, {"Esc", "close"}}
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, paint(item[0], output.ColorBranch, true)+" "+paint(item[1], output.ColorMuted, false))
+	}
+	return strings.Join(parts, paint(" · ", output.ColorBorder, false))
+}
+
+func (m *browser) sortLine() string {
+	choice := int(m.sortBy)
+	if m.sorting && m.sortChoice >= 0 && m.sortChoice < len(appSortNames) {
+		choice = m.sortChoice
+	}
+	direction := "↑"
+	if m.sortDescending {
+		direction = "↓"
+	}
+	return paint("⇅", output.ColorMuted, false) + " " + paint(appSortNames[choice], output.ColorBranch, true) + " " + paint(direction, output.ColorNumber, true)
 }
 
 func (m *browser) filterLine() string {
@@ -592,7 +1069,7 @@ func (m *browser) breadcrumb() string {
 		parts = append(parts, tenant)
 	}
 	parts = append(parts, "Apps")
-	if m.detail && len(m.apps) > 0 && m.selected >= 0 && m.selected < len(m.apps) {
+	if !m.namespaceSelected && len(m.apps) > 0 && m.selected >= 0 && m.selected < len(m.apps) {
 		app := m.apps[m.selected]
 		parts = append(parts, safeText(app.Namespace.Name), safeText(app.Name))
 	}
@@ -610,6 +1087,13 @@ func (m *browser) breadcrumb() string {
 		return m.liveGlyph() + " " + path
 	}
 	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK · OFFLINE", output.ColorMuted, false) + "  " + path
+}
+
+func fallbackText(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "Unknown"
+	}
+	return safeText(value)
 }
 
 func (m *browser) busy() bool {
@@ -757,37 +1241,45 @@ func tenantSelectedStyle() lipgloss.Style {
 }
 
 func (m *browser) treeNodes() []treeNode {
-	var rows []treeNode
 	visible := m.visibleAppIndices()
 	namespaceIDs := make(map[string]map[int]bool)
-	namespaceCounts := make(map[namespaceKey]int, len(visible))
+	type namespaceGroup struct {
+		key  namespaceKey
+		apps []int
+	}
+	groupsByKey := make(map[namespaceKey]int)
+	groups := make([]namespaceGroup, 0)
 	for _, appIndex := range visible {
 		app := m.apps[appIndex]
 		key := namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}
-		namespaceCounts[key]++
+		groupIndex, exists := groupsByKey[key]
+		if !exists {
+			groupIndex = len(groups)
+			groupsByKey[key] = groupIndex
+			groups = append(groups, namespaceGroup{key: key})
+		}
+		groups[groupIndex].apps = append(groups[groupIndex].apps, appIndex)
 		if namespaceIDs[app.Namespace.Name] == nil {
 			namespaceIDs[app.Namespace.Name] = make(map[int]bool)
 		}
 		namespaceIDs[app.Namespace.Name][app.Namespace.ID] = true
 	}
-	for position, appIndex := range visible {
-		app := m.apps[appIndex]
-		key := namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}
-		if position == 0 {
-			rows = append(rows, treeNode{app: -1, key: key, heading: namespaceHeading(app, namespaceIDs, namespaceCounts[key])})
-		} else {
-			previous := m.apps[visible[position-1]]
-			if app.Namespace.ID != previous.Namespace.ID || app.Namespace.Name != previous.Namespace.Name {
-				rows = append(rows, treeNode{app: -1, key: key, heading: namespaceHeading(app, namespaceIDs, namespaceCounts[key])})
-			}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].key.name != groups[j].key.name {
+			return strings.ToLower(groups[i].key.name) < strings.ToLower(groups[j].key.name)
 		}
-		if m.filterQuery != "" || !m.collapsed[key] {
-			last := position+1 == len(visible)
-			if !last {
-				next := m.apps[visible[position+1]]
-				last = app.Namespace.ID != next.Namespace.ID || app.Namespace.Name != next.Namespace.Name
-			}
-			rows = append(rows, treeNode{app: appIndex, key: key, heading: rows[len(rows)-1].heading, last: last})
+		return groups[i].key.id < groups[j].key.id
+	})
+	var rows []treeNode
+	for _, group := range groups {
+		app := m.apps[group.apps[0]]
+		heading := namespaceHeading(app, namespaceIDs, len(group.apps))
+		rows = append(rows, treeNode{app: -1, key: group.key, heading: heading})
+		if m.filterQuery == "" && m.collapsed[group.key] {
+			continue
+		}
+		for i, appIndex := range group.apps {
+			rows = append(rows, treeNode{app: appIndex, key: group.key, heading: heading, last: i == len(group.apps)-1})
 		}
 	}
 	return rows
@@ -822,31 +1314,39 @@ func (m *browser) treeSelection(rows []treeNode) int {
 	return 0
 }
 
-func (m *browser) selectTree(index int) {
+func (m *browser) selectTree(index int) tea.Cmd {
 	rows := m.treeNodes()
 	if len(rows) == 0 {
-		return
+		return nil
 	}
 	node := rows[max(0, min(index, len(rows)-1))]
 	m.namespaceSelected = node.app < 0
 	if node.app >= 0 {
 		m.selected = node.app
-		return
+		m.detailApp = &m.apps[m.selected]
+		m.detailLoading = false
+		m.detailErr = nil
+		return nil
 	}
 	for _, i := range m.visibleAppIndices() {
 		app := m.apps[i]
 		if (namespaceKey{id: app.Namespace.ID, name: app.Namespace.Name}) == node.key {
 			m.selected = i
-			return
+			m.detailApp = &m.apps[m.selected]
+			m.detailLoading = false
+			m.detailErr = nil
+			return nil
 		}
 	}
+	return nil
 }
 
-func (m *browser) moveTree(delta int) {
+func (m *browser) moveTree(delta int) tea.Cmd {
 	rows := m.treeNodes()
 	if len(rows) > 0 {
-		m.selectTree(m.treeSelection(rows) + delta)
+		return m.selectTree(m.treeSelection(rows) + delta)
 	}
+	return nil
 }
 
 func (m *browser) setCollapsed(collapsed bool) {
@@ -858,6 +1358,8 @@ func (m *browser) setCollapsed(collapsed bool) {
 	m.collapsed[key] = collapsed
 	if collapsed {
 		m.namespaceSelected = true
+	} else {
+		m.namespaceSelected = false
 	}
 }
 
@@ -869,6 +1371,10 @@ func (m *browser) toggleNamespace() {
 
 // appTree keeps namespace headings visible even when a group spans the viewport.
 func (m *browser) appTree(height int) []string {
+	return m.appTreeForWidth(height, m.width)
+}
+
+func (m *browser) appTreeForWidth(height, width int) []string {
 	rows := m.treeNodes()
 	if len(rows) == 0 || height < 2 {
 		return nil
@@ -881,7 +1387,7 @@ func (m *browser) appTree(height int) []string {
 	}
 	const minNameWidth = 8
 	const reservedWidth = 30
-	nameWidth = min(nameWidth, max(minNameWidth, m.width-reservedWidth))
+	nameWidth = min(nameWidth, max(minNameWidth, width-reservedWidth))
 	start := max(0, selectedRow-height+1)
 	var result []string
 	if rows[start].app >= 0 {
@@ -912,8 +1418,8 @@ func (m *browser) appTree(height int) []string {
 			line = "  " + paint(branch, output.ColorBorder, false) + name + padding + "  " + paint(glyph+" "+state, stateColor, false)
 		}
 		if i == selectedRow {
-			plain := ansi.Truncate(ansi.Strip(line), m.width, "")
-			plain += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(plain)))
+			plain := ansi.Truncate(ansi.Strip(line), width, "")
+			plain += strings.Repeat(" ", max(0, width-ansi.StringWidth(plain)))
 			line = lipgloss.NewStyle().Reverse(true).Render(plain)
 		}
 		result = append(result, line)

@@ -94,6 +94,8 @@ type App struct {
 	IsHPAEnabled        bool      `json:"is_hpa_enabled"`
 	RAMLimit            string    `json:"ram_limit"`
 	CPURequest          string    `json:"cpu_request"`
+	Disk                *Disk     `json:"disk"`
+	ExternalHosts       []string  `json:"external_hosts"`
 	CustomDomainAddress string    `json:"custom_domain_address"`
 	EnableSSL           bool      `json:"enable_SSL"`
 	ImageRepo           string    `json:"image_repo"`

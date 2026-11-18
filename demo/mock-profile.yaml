@@ -18,7 +18,13 @@ tenants:
         creation_method: docker_image
         image_repo: registry.example.test/demo/api
         image_tag: v1.8.2
+        ram_limit: 1000M
+        cpu_request: 500m
+        disk_size_in_gi: 10
         custom_domain_address: api.demo.example.test
+        external_hosts:
+          - api.public.demo.example.test
+          - api-alt.public.demo.example.test
       - id: app-worker-prod
         name: worker
         namespace:

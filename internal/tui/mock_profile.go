@@ -53,6 +53,10 @@ type mockProfileApp struct {
 	ImageRepo           string               `yaml:"image_repo"`
 	ImageTag            string               `yaml:"image_tag"`
 	CustomDomainAddress string               `yaml:"custom_domain_address"`
+	ExternalHosts       []string             `yaml:"external_hosts"`
+	RAMLimit            string               `yaml:"ram_limit"`
+	CPURequest          string               `yaml:"cpu_request"`
+	DiskSizeInGi        int                  `yaml:"disk_size_in_gi"`
 }
 
 type mockProfileNamespace struct {
@@ -164,6 +168,9 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 		if app.Replicas < 0 {
 			return nil, fmt.Errorf("mock profile app %q has negative replicas", app.ID)
 		}
+		if app.DiskSizeInGi < 0 {
+			return nil, fmt.Errorf("mock profile app %q has negative disk size", app.ID)
+		}
 		if _, exists := seenIDs[app.ID]; exists {
 			return nil, fmt.Errorf("mock profile has duplicate app id %q", app.ID)
 		}
@@ -188,8 +195,19 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 			CreationMethod:      app.CreationMethod,
 			ImageRepo:           app.ImageRepo,
 			ImageTag:            app.ImageTag,
+			RAMLimit:            app.RAMLimit,
+			CPURequest:          app.CPURequest,
+			ExternalHosts:       append([]string(nil), app.ExternalHosts...),
 			CustomDomainAddress: app.CustomDomainAddress,
+			Disk:                mockDisk(app.DiskSizeInGi),
 		})
 	}
 	return apps, nil
+}
+
+func mockDisk(size int) *client.Disk {
+	if size <= 0 {
+		return nil
+	}
+	return &client.Disk{SizeInGi: size}
 }
