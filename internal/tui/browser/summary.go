@@ -19,8 +19,8 @@ func (m *browser) summaryPaneLines() []string {
 	if m.activeAppView == appViewUsage {
 		return m.usagePaneLines()
 	}
-	if m.activeAppView == appViewPods {
-		return m.podsPaneLines()
+	if m.activeAppView == appViewScaling {
+		return m.scalingPaneLines()
 	}
 	heading := m.appViewTabs()
 	if m.namespaceSelected || !m.selectedAppVisible() {
@@ -31,7 +31,7 @@ func (m *browser) summaryPaneLines() []string {
 		a = *m.detailApp
 	}
 	stateGlyph, stateColor := stateStyle(appState(a))
-	lines := []string{heading, paint("· "+safeText(a.Name), output.ColorKey, true)}
+	lines := []string{heading, sectionHeading("Identity"), summaryField("Name", displayValue(a.Name))}
 	if m.detailState.err != nil {
 		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailState.err.Error()), output.ColorNumber, false))
 		if m.detailState.status == requestStale {
@@ -40,92 +40,49 @@ func (m *browser) summaryPaneLines() []string {
 	} else if m.detailState.status == requestUnavailable {
 		lines = append(lines, paint("App detail is unavailable; showing the list snapshot.", output.ColorMuted, false))
 	}
-	if m.usageState.err != nil {
-		lines = append(lines, paint("Resource usage unavailable: "+safeText(m.usageState.err.Error()), output.ColorMuted, false))
-		if m.usageState.status == requestStale {
-			lines = append(lines, staleRequestTime("Usage", m.usageState))
-		}
-	} else if m.usageState.status == requestUnavailable {
-		lines = append(lines, paint("Usage unavailable · showing configured totals", output.ColorMuted, false))
-	}
 	replicas := "-"
 	if a.ReplicasPresent {
 		replicas = fmt.Sprintf("%d", a.Replicas)
 	}
-	lines = append(lines, "",
+	lines = append(lines,
 		summaryField("Tenant", displayValue(m.tenant)),
 		summaryField("Namespace", displayValue(a.Namespace.Name)),
 		summaryField("Cluster", displayValue(a.Namespace.Cluster.Name)),
+		summaryField("ID", displayValue(a.ID)),
+		"", sectionHeading("Status"),
 		summaryField("State", paint(stateGlyph+" "+safeText(appState(a)), stateColor, true)),
 		summaryField("Description", displayValue(a.State.Description)),
-		summaryField("Replicas", replicas))
-	plan := planName(a.Plan)
-	if plan == "-" {
-		lines = append(lines, summaryLabel("Plan"))
-	} else {
-		lines = append(lines, summaryField("Plan", plan))
-	}
-	usage := m.detailUsage
-	if m.usageAppID != a.ID {
-		usage = nil
-	}
-	cpuTotal := "-"
-	ramTotal := "-"
-	if a.Plan != nil {
-		if a.Plan.Detail.CPURequest > 0 {
-			cpuTotal = fmt.Sprintf("%dm", a.Plan.Detail.CPURequest)
+		summaryField("Replicas", replicas),
+		"", sectionHeading("Resources"))
+	lines = append(lines,
+		resourceField("", "CPU", resourceLimit(a, "cpu")),
+		resourceField("", "RAM", resourceLimit(a, "ram")),
+		resourceField("", "Disk", resourceLimit(a, "disk")),
+		"", sectionHeading("Networking"))
+	serviceType, internalAddress, externalIP := "-", "-", "-"
+	servicePort := "-"
+	if a.Service != nil {
+		serviceType = displayValue(a.Service.Type)
+		if strings.TrimSpace(a.Service.InternalAddress) != "" {
+			internalAddress = internalAddressDisplay(a.Service.InternalAddress, a.Service.Ports)
 		}
-		if a.Plan.Detail.RAMLimit > 0 {
-			ramTotal = fmt.Sprintf("%dM", a.Plan.Detail.RAMLimit)
+		externalIP = displayValue(a.Service.ExternalIP)
+		if port, ok := primaryServicePort(a.Service.Ports); ok {
+			portNumber := port.ServicePort
+			if portNumber == 0 {
+				portNumber = port.ContainerPort
+			}
+			if portNumber > 0 {
+				servicePort = fmt.Sprintf("%d", portNumber)
+			}
 		}
-	}
-	if cpuTotal == "-" {
-		cpuTotal = displayValue(a.CPURequest)
-	}
-	if ramTotal == "-" {
-		ramTotal = displayValue(a.RAMLimit)
 	}
 	lines = append(lines,
-		planResourceField("", "CPU", resourceUsageText(usageValue(usage, func(u *AppUsage) *float64 { return u.CPUCores }), cpuTotal, formatCores, usage != nil && usage.Failed.CPU)),
-		planResourceField("", "RAM", resourceUsageText(usageValue(usage, func(u *AppUsage) *float64 { return u.RAMBytes }), ramTotal, formatBytes, usage != nil && usage.Failed.RAM)))
-	if (a.Disk != nil && a.Disk.SizeInGi > 0) || (usage != nil && (usage.DiskBytes != nil || usage.Failed.Disk)) {
-		diskTotal := "-"
-		if a.Disk != nil && a.Disk.SizeInGi > 0 {
-			diskTotal = fmt.Sprintf("%d GiB", a.Disk.SizeInGi)
-		}
-		lines = append(lines, planResourceField("", "Disk", resourceUsageText(usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), diskTotal, formatBytes, usage != nil && usage.Failed.Disk)))
-	}
-	if a.Service != nil {
-		if value := displayValue(a.Service.Type); value != "-" {
-			lines = append(lines, summaryField("Service", value))
-		}
-		if port, ok := primaryServicePort(a.Service.Ports); ok {
-			servicePort := port.ServicePort
-			if servicePort == 0 {
-				servicePort = port.ContainerPort
-			}
-			if servicePort > 0 {
-				lines = append(lines, summaryField("Port Service", fmt.Sprintf("%d", servicePort)))
-			}
-		}
-		if value := strings.TrimSpace(a.Service.InternalAddress); value != "" {
-			lines = append(lines, summaryField("Internal Address", internalAddressDisplay(value, a.Service.Ports)))
-		}
-		lines = append(lines, summaryField("External IP", displayValue(a.Service.ExternalIP)))
-	} else {
-		lines = append(lines, summaryField("External IP", "-"))
-	}
+		summaryField("Service", serviceType),
+		summaryField("Port Service", servicePort),
+		summaryField("Internal Address", internalAddress),
+		summaryField("External IP", externalIP))
 	lines = append(lines, summaryField("Outbound IP", m.egressIPForApp(a)))
-	if probe := readinessProbeDisplay(a); probe != "" {
-		lines = append(lines, summaryField("Readiness Probe", probe))
-	}
-	if command := appCommandDisplay(a); command != "" {
-		lines = append(lines, summaryField("Command", command))
-	}
-	if len(a.Inputs) > 0 {
-		lines = append(lines, summaryField("Inputs", strings.Join(a.Inputs, ", ")))
-	}
-	lines = append(lines, summaryField("Created via", creationMethodLabel(a.CreationMethod)), summaryField("Image", displayValue(a.Image())))
 	domains := appDomains(a)
 	if len(domains) == 0 {
 		lines = append(lines, summaryField("Domains", "-"))
@@ -138,7 +95,17 @@ func (m *browser) summaryPaneLines() []string {
 			lines = append(lines, summaryLabel(label)+domainLink(host))
 		}
 	}
-	lines = append(lines, summaryField("Updated", formatLocalTime(a.UpdatedAt)), summaryField("ID", displayValue(a.ID)))
+	lines = append(lines,
+		"", sectionHeading("Runtime"),
+		summaryField("Readiness Probe", displayValue(readinessProbeDisplay(a))),
+		summaryField("Command", displayValue(appCommandDisplay(a))),
+		summaryField("Inputs", displayValue(strings.Join(a.Inputs, ", "))),
+		"", sectionHeading("Deployment"),
+		summaryField("Image", displayValue(a.Image())),
+		summaryField("Created via", creationMethodLabel(a.CreationMethod)),
+		summaryField("Updated", formatLocalTime(a.UpdatedAt)))
+	lines = append(lines, "", sectionHeading("Pods"))
+	lines = m.appendPodsStatus(lines)
 	return lines
 }
 
@@ -247,6 +214,10 @@ func summaryLabel(label string) string {
 	return paint(fmt.Sprintf("%-16s ", label), output.ColorMuted, true)
 }
 
+func sectionHeading(label string) string {
+	return paint(label, output.ColorAccent, true)
+}
+
 func staleRequestTime(label string, state requestState) string {
 	if state.lastSuccessAt.IsZero() {
 		return paint(label+" has no successful snapshot yet.", output.ColorMuted, false)
@@ -259,8 +230,8 @@ func summaryField(label, value string) string {
 	return summaryLabel(label) + paint(value, output.ColorBranch, false)
 }
 
-func planResourceField(icon, label, value string) string {
-	return summaryLabel("") + paint(icon+" "+label+" ", output.ColorMuted, true) + paint(value, output.ColorBranch, false)
+func resourceField(icon, label, value string) string {
+	return summaryLabel(icon+" "+label) + paint(value, output.ColorBranch, false)
 }
 
 func displayValue(value string) string {
@@ -268,19 +239,6 @@ func displayValue(value string) string {
 		return "-"
 	}
 	return safeText(value)
-}
-
-func planName(plan *client.Plan) string {
-	if plan == nil {
-		return "-"
-	}
-	if plan.Name != "" {
-		return safeText(plan.Name)
-	}
-	if plan.CodeName != "" {
-		return safeText(plan.CodeName)
-	}
-	return "-"
 }
 
 func formatCores(cores float64) string {
@@ -329,7 +287,7 @@ func creationMethodLabel(method string) string {
 	case "docker_image":
 		return " Docker"
 	case "":
-		return "◇ Unknown"
+		return "-"
 	}
 	short := strings.ReplaceAll(method, "_", " ")
 	short = strings.ReplaceAll(short, "-", " ")
@@ -354,7 +312,11 @@ func creationMethodLabel(method string) string {
 }
 
 func formatLocalTime(value string) string {
-	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return fallbackText(value)
 	}
@@ -368,5 +330,5 @@ func appState(a client.App) string {
 	if a.State.StateType != "" {
 		return a.State.StateType
 	}
-	return "Unknown"
+	return "-"
 }

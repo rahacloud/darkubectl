@@ -32,15 +32,18 @@ func TestSummaryUsesConfiguredResourceTotalsWithoutFakeUsage(t *testing.T) {
 	}
 	m := &browser{tenant: "demo", detail: true, width: 120, height: 30, apps: []client.App{app}}
 	got := ansi.Strip(strings.Join(m.summaryPaneLines(), "\n"))
-	if !strings.Contains(got, "CPU 500m") || !strings.Contains(got, "RAM 1000M") || strings.Contains(got, "0m / 500m") {
+	if !strings.Contains(got, " CPU") || !strings.Contains(got, "500m") || !strings.Contains(got, " RAM") || !strings.Contains(got, "1000M") || strings.Contains(got, "0m / 500m") {
 		t.Fatalf("summary fabricated usage or lost configured totals: %s", got)
+	}
+	if strings.Contains(got, "Plan") {
+		t.Fatalf("resource group should not include the plan row: %s", got)
 	}
 	used := 0.125
 	m.detailUsage = &AppUsage{CPUCores: &used}
 	m.usageAppID = app.ID
 	got = ansi.Strip(strings.Join(m.summaryPaneLines(), "\n"))
-	if !strings.Contains(got, "125m / 500m") || !strings.Contains(got, "RAM 1000M") {
-		t.Fatalf("partial metrics should affect only sampled resources: %s", got)
+	if !strings.Contains(got, "500m") || strings.Contains(got, "125m") || !strings.Contains(got, "1000M") {
+		t.Fatalf("Summary should show configured totals without current samples: %s", got)
 	}
 }
 

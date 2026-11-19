@@ -74,8 +74,8 @@ func TestSummaryAndUsageViewNavigation(t *testing.T) {
 		t.Fatal("] should switch to Usage without changing app focus")
 	}
 	m.Update(tea.KeyPressMsg{Code: ']', Text: "]"})
-	if m.activeAppView != appViewPods {
-		t.Fatal("] should switch to Pods")
+	if m.activeAppView != appViewScaling {
+		t.Fatal("] should switch to Scaling")
 	}
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
 	if m.activeAppView != appViewUsage {
@@ -86,11 +86,11 @@ func TestSummaryAndUsageViewNavigation(t *testing.T) {
 		t.Fatal("[ should wrap backward to Summary")
 	}
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
-	if m.activeAppView != appViewPods {
-		t.Fatal("[ should wrap backward to Pods")
+	if m.activeAppView != appViewScaling {
+		t.Fatal("[ should wrap backward to Scaling")
 	}
 	m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
-	if m.detail || m.activeAppView != appViewPods {
+	if m.detail || m.activeAppView != appViewScaling {
 		t.Fatal("h should return focus to Apps while preserving the selected app view")
 	}
 }

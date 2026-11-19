@@ -41,7 +41,7 @@ func (m *browser) View() tea.View {
 		bodyHeight := max(1, m.height-len(lines)-browserFooterHeight-1)
 		left := m.appPaneLines(bodyHeight)
 		right := m.summaryPaneLines()
-		if m.activeAppView == appViewUsage || m.activeAppView == appViewPods {
+		if m.activeAppView == appViewUsage {
 			right = m.usageViewport(right, bodyHeight)
 		}
 		context := m.contextPaneLines(bodyHeight)
@@ -123,8 +123,8 @@ func (m *browser) appViewTabs() string {
 		label := "SUMMARY"
 		if m.activeAppView == appViewUsage {
 			label = "USAGE"
-		} else if m.activeAppView == appViewPods {
-			label = "PODS"
+		} else if m.activeAppView == appViewScaling {
+			label = "SCALING"
 		}
 		return paint(focus+"[4] "+label, output.ColorAccent, true)
 	}
@@ -134,7 +134,7 @@ func (m *browser) appViewTabs() string {
 		}
 		return paint(label, output.ColorMuted, false)
 	}
-	heading := paint(focus+"[4] ", output.ColorAccent, true) + selectedStyle("Summary", m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + selectedStyle("Usage", m.activeAppView == appViewUsage) + paint("  ", output.ColorBorder, false) + selectedStyle("Pods", m.activeAppView == appViewPods)
+	heading := paint(focus+"[4] ", output.ColorAccent, true) + selectedStyle("Summary", m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + selectedStyle("Usage", m.activeAppView == appViewUsage) + paint("  ", output.ColorBorder, false) + selectedStyle("Scaling", m.activeAppView == appViewScaling)
 	if m.detailState.active() || m.usageState.active() || m.podsState.active() {
 		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
 	}
@@ -150,6 +150,9 @@ func (m *browser) paneWidths() (int, int, int) {
 
 func (m *browser) splitPanes(context, apps, summary []string, height int) []string {
 	appsWidth, summaryWidth, contextWidth := m.paneWidths()
+	if m.detail && (m.activeAppView == appViewSummary || m.activeAppView == appViewScaling) {
+		summary = m.summaryViewport(summary, height)
+	}
 	lines := make([]string, height)
 	for i := 0; i < height; i++ {
 		appLine, summaryLine, contextLine := "", "", ""
@@ -179,6 +182,24 @@ func (m *browser) splitPanes(context, apps, summary []string, height int) []stri
 		lines[i] = contextLine + " " + dividerOne + " " + appLine + " " + dividerTwo + " " + summaryLine
 	}
 	return lines
+}
+
+func (m *browser) summaryViewport(lines []string, height int) []string {
+	if len(lines) <= height || height <= 0 {
+		m.summaryScroll = 0
+		return lines
+	}
+	stickyLines := 3
+	if m.activeAppView == appViewScaling {
+		stickyLines = 2
+	}
+	sticky := min(stickyLines, min(len(lines), height))
+	bodyHeight := max(0, height-sticky)
+	maxScroll := max(0, len(lines)-sticky-bodyHeight)
+	m.summaryScroll = min(m.summaryScroll, maxScroll)
+	end := min(len(lines), sticky+m.summaryScroll+bodyHeight)
+	out := append([]string(nil), lines[:sticky]...)
+	return append(out, lines[sticky+m.summaryScroll:end]...)
 }
 
 func (m *browser) footerLine() string {
@@ -246,7 +267,7 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 			hints = []keyHint{
 				{"↑↓/jk", "move"}, {"←→/hl", "tree / summary"},
 				{"1-4", "focus pane"}, {"Tab / Shift+Tab", "cycle panes"}, {"↵", "open / toggle"},
-				{"Home/End", "first / last"}, {"g/G", "first / last"}, {"PgUp/Dn", "move by page"},
+				{"Home/End", "first / last"}, {"g/G", "first / last"}, {"PgUp/Dn", "scroll details / move by page"},
 				{"Esc", "back / clear"}, {"n", "namespace scope"}, {"/", "fuzzy filter"}, {"s", "sort"},
 				{"1", "Tenant · arrows switch now"},
 			}
@@ -255,13 +276,13 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 			}
 		} else if m.width < 72 {
 			if m.detail && m.selectedAppActive() {
-				hints = []keyHint{{"[/]", "views"}, {"r", "refresh"}, {"Esc", "Apps"}, {"?", "help"}, {"q", "quit"}}
+				hints = []keyHint{{"PgUp/Dn", "scroll"}, {"[/]", "views"}, {"r", "refresh"}, {"Esc", "Apps"}, {"?", "help"}, {"q", "quit"}}
 			} else {
 				hints = []keyHint{{"↑↓/jk", "move"}, {"n", "scope"}, {"/", "filter"}, {"?", "help"}, {"q", "quit"}}
 			}
 		} else if m.width < 100 {
 			if m.detail && m.selectedAppActive() {
-				hints = []keyHint{{"↑↓/jk", "apps"}, {"[/]", "views"}, {"r", "refresh"}, {"Esc", "back"}, {"?", "help"}, {"q", "quit"}}
+				hints = []keyHint{{"↑↓/jk", "apps"}, {"PgUp/Dn", "scroll"}, {"[/]", "views"}, {"r", "refresh"}, {"Esc", "back"}, {"?", "help"}, {"q", "quit"}}
 			} else {
 				hints = []keyHint{
 					{"↑↓/jk", "move"}, {"1-4", "panes"}, {"←→/hl", "tree"},
@@ -284,8 +305,8 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 	}
 	if m.detail && m.selectedAppActive() && (forHelp || !m.help && !m.actionBusy && !m.actionMenu && m.confirmAction == appActionNone && !m.filterEditing && !m.selectingNamespace && !m.selectingTenant) {
 		hints = appendUniqueKeyHints(hints, keyHint{"[/]", "previous / next app view"})
-		if m.activeAppView == appViewUsage || m.activeAppView == appViewPods {
-			hints = append(hints, keyHint{"PgUp/Dn", "scroll"})
+		if m.activeAppView == appViewUsage || m.activeAppView == appViewSummary || m.activeAppView == appViewScaling {
+			hints = appendUniqueKeyHints(hints, keyHint{"PgUp/Dn", "scroll"})
 		}
 	}
 	return hints

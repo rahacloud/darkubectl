@@ -7,16 +7,7 @@ import (
 	"github.com/rahacloud/darkubectl/internal/output"
 )
 
-func (m *browser) podsPaneLines() []string {
-	lines := []string{m.appViewTabs()}
-	if m.namespaceSelected || !m.selectedAppVisible() {
-		return append(lines, paint("No app selected. Move to an app to view its pods.", output.ColorMuted, false))
-	}
-	a := m.apps[m.selected]
-	if m.detailApp != nil && m.detailApp.ID == a.ID {
-		a = *m.detailApp
-	}
-	lines = append(lines, paint("· "+safeText(a.Name), output.ColorKey, true), "")
+func (m *browser) appendPodsStatus(lines []string) []string {
 	switch m.podsState.status {
 	case requestLoading:
 		return append(lines, m.loadingMessage("Loading pod snapshot…"))

@@ -80,6 +80,7 @@ func (m *browser) invalidateAppReads() {
 	m.historyPod = ""
 	m.historyPodChosen = false
 	m.usageScroll = 0
+	m.summaryScroll = 0
 	m.detailUsage = nil
 	m.usageAppID = ""
 }

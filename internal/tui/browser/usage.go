@@ -16,7 +16,7 @@ func (m *browser) usagePaneLines() []string {
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
 		a = *m.detailApp
 	}
-	lines = append(lines, paint("· "+safeText(a.Name), output.ColorKey, true), "")
+	lines = append(lines, "")
 	switch m.usageState.status {
 	case requestLoading:
 		lines = append(lines, paint("Loading current resource usage…", output.ColorMuted, false))
@@ -81,11 +81,7 @@ func usageField(label string, value *float64, limit string, format func(float64)
 		return paint(icon+" "+label+" ", output.ColorMuted, true) + paint(shown, output.ColorBranch, false)
 	}
 	if value == nil && !failed {
-		shown := "No current sample"
-		if limit != "-" {
-			shown += " / " + limit
-		}
-		return field(shown)
+		return field("-")
 	}
 	return field(resourceUsageText(value, limit, format, failed))
 }

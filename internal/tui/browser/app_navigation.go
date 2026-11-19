@@ -10,9 +10,7 @@ func (m *browser) switchAppView(delta int) tea.Cmd {
 	}
 	m.activeAppView = appView((int(m.activeAppView) + delta + 3) % 3)
 	m.usageScroll = 0
-	if m.activeAppView == appViewPods && m.podsState.status == requestIdle {
-		return m.loadSelectedPods()
-	}
+	m.summaryScroll = 0
 	if m.activeAppView == appViewUsage && m.usageState.status == requestIdle {
 		return tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
 	}

@@ -180,7 +180,11 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.selectTree(len(m.treeNodes()) - 1)
 		}
 	case "pgup":
-		if m.detail && (m.activeAppView == appViewUsage || m.activeAppView == appViewPods) && m.selectedAppActive() {
+		if m.detail && (m.activeAppView == appViewSummary || m.activeAppView == appViewScaling) && m.selectedAppActive() {
+			m.summaryScroll = max(0, m.summaryScroll-max(1, m.height-8))
+			return m, nil
+		}
+		if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 			m.usageScroll = max(0, m.usageScroll-max(1, m.height-8))
 			return m, nil
 		}
@@ -188,7 +192,11 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.moveTree(-max(1, m.height-8))
 		}
 	case "pgdown":
-		if m.detail && (m.activeAppView == appViewUsage || m.activeAppView == appViewPods) && m.selectedAppActive() {
+		if m.detail && (m.activeAppView == appViewSummary || m.activeAppView == appViewScaling) && m.selectedAppActive() {
+			m.summaryScroll += max(1, m.height-8)
+			return m, nil
+		}
+		if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 			m.usageScroll += max(1, m.height-8)
 			return m, nil
 		}
@@ -225,9 +233,6 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.detail {
 			if m.activeAppView == appViewUsage {
 				return m, tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
-			}
-			if m.activeAppView == appViewPods {
-				return m, m.loadSelectedPods()
 			}
 			return m, tea.Batch(m.loadSelectedSummary(), m.loadEgressRoutes(true))
 		}

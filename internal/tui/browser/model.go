@@ -14,7 +14,7 @@ type appView uint8
 const (
 	appViewSummary appView = iota
 	appViewUsage
-	appViewPods
+	appViewScaling
 )
 
 type appSort int
@@ -157,6 +157,7 @@ type browser struct {
 	historyPod          string
 	historyPodChosen    bool
 	usageScroll         int
+	summaryScroll       int
 	sorting             bool
 	sortChoice          int
 	sortBy              appSort

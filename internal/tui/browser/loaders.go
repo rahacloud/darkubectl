@@ -120,8 +120,8 @@ func (m *browser) loadSelectedSummary() tea.Cmd {
 			})
 		}
 	}
-	if usageCmd := m.loadSelectedUsage(); usageCmd != nil {
-		cmds = append(cmds, usageCmd)
+	if podsCmd := m.loadSelectedPods(); podsCmd != nil {
+		cmds = append(cmds, podsCmd)
 	}
 	if egressCmd := m.loadEgressRoutes(false); egressCmd != nil {
 		cmds = append(cmds, egressCmd)

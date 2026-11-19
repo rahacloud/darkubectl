@@ -133,10 +133,19 @@ type AppService struct {
 	ExternalIP      string          `json:"externalIP"`
 }
 
-// AppCustomConfig exposes only the container probe fields used in the Summary.
-// Other chart configuration is intentionally omitted from this safe read model.
+// AppCustomConfig exposes the chart configuration needed by the TUI and
+// selected app detail commands. Other chart configuration is omitted.
 type AppCustomConfig struct {
 	Container *AppContainerConfig `json:"container"`
+	HPA       *AppHPAConfig       `json:"hpa"`
+}
+
+// AppHPAConfig is the autoscaling configuration under custom_config.hpa.
+type AppHPAConfig struct {
+	Enabled                        bool `json:"enabled"`
+	MinReplicas                    int  `json:"minReplicas"`
+	MaxReplicas                    int  `json:"maxReplicas"`
+	TargetCPUUtilizationPercentage int  `json:"targetCPUUtilizationPercentage"`
 }
 
 type AppContainerConfig struct {
