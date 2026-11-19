@@ -3,7 +3,6 @@ package client_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,16 +44,19 @@ func TestAppReplicaPresenceFromJSON(t *testing.T) {
 func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 	t.Parallel()
 	data := []byte(`{
+        "disk":{"size_in_Gi":10},"external_hosts":["example.test"],
 		"svc":{"type":"LoadBalancer",
         "ports":{"http":{"containerPort":8080,"servicePort":80,"nodePort":30421,"protocol":"TCP"}},
         "internalAddress":"api.prod.svc","externalIP":"192.0.2.42"},
 		"readiness_probe_path":"/healthz","command":"/app/server","args":"--port 8080",
-		"custom_config":{"container":{"readinessProbe":{"httpGet":{"path":"/ready","port":8080}}}},
-		"inputs":[{"name":"PUBLIC_BASE_URL","value":"private-value"}]
+		"custom_config":{"container":{"readinessProbe":{"httpGet":{"path":"/ready","port":8080}}}}
 	}`)
 	var app client.App
 	if err := json.Unmarshal(data, &app); err != nil {
 		t.Fatal(err)
+	}
+	if app.Disk == nil || app.Disk.SizeInGi != 10 || !reflect.DeepEqual(app.ExternalHosts, []string{"example.test"}) {
+		t.Fatalf("disk or external hosts missing: %+v", app)
 	}
 	if app.Service == nil ||
 		app.Service.Type != "LoadBalancer" ||
@@ -71,9 +73,7 @@ func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 		app.CustomConfig.Container.ReadinessProbe.HTTPGet.Path != "/ready" {
 		t.Fatalf("runtime settings projection is incomplete: %+v", app)
 	}
-	if !reflect.DeepEqual(app.Inputs, []string{"PUBLIC_BASE_URL"}) || strings.Contains(fmt.Sprint(app), "private-value") {
-		t.Fatalf("inputs should retain names only, got %+v", app.Inputs)
-	}
+
 	jsonOutput, err := json.Marshal(app)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 			"custom_config",
 			"inputs",
 			"readiness_probe_path",
-			"ReplicasPresent"} {
+			"ReplicasPresent", "disk", "external_hosts", "externalhosts", "defaultoutgoingip"} {
 			if strings.Contains(string(output), omitted) {
 				t.Errorf("new TUI field %q leaked into structured CLI output: %s", omitted, output)
 			}
@@ -151,7 +151,6 @@ func TestAppDetailOptionalFieldsAndProbeShapes(t *testing.T) {
 		{"missing", `{}`, checkMissingAppDetails},
 		{"null", `{"svc":null,
 "custom_config":null,
-"inputs":null,
 "command":null,
 "args":null,
 "readiness_probe_path":null}`, checkNullAppDetails},
@@ -161,12 +160,8 @@ func TestAppDetailOptionalFieldsAndProbeShapes(t *testing.T) {
 "targetCPUUtilizationPercentage":75},
 "container":{"readinessProbe":{"exec":{"command":["check",
 "ready"]},
-"periodSeconds":10}}},
-"inputs":{"Z":1,
-"A":2}}`, checkExecAutoscaling},
-		{"tcp and input objects", `{"custom_config":{"container":{"readinessProbe":{"tcpSocket":{"port":27017}}}},
-"inputs":[{"key":"B"},
-{"id":"A"}]}`, checkTCPInputs},
+"periodSeconds":10}}}}`, checkExecAutoscaling},
+		{"tcp probe", `{"custom_config":{"container":{"readinessProbe":{"tcpSocket":{"port":27017}}}}}`, checkTCPInputs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -181,14 +176,14 @@ func TestAppDetailOptionalFieldsAndProbeShapes(t *testing.T) {
 
 func checkMissingAppDetails(t *testing.T, app client.App) {
 	t.Helper()
-	if app.Service != nil || app.CustomConfig != nil || app.Inputs != nil {
+	if app.Service != nil || app.CustomConfig != nil {
 		t.Fatalf("unexpected values: %+v", app)
 	}
 }
 
 func checkNullAppDetails(t *testing.T, app client.App) {
 	t.Helper()
-	if app.Service != nil || app.CustomConfig != nil || app.Inputs != nil || app.Command != "" {
+	if app.Service != nil || app.CustomConfig != nil || app.Command != "" {
 		t.Fatalf("unexpected values: %+v", app)
 	}
 }
@@ -205,10 +200,7 @@ func checkExecAutoscaling(t *testing.T, app client.App) {
 		app.CustomConfig.Container.ReadinessProbe == nil ||
 		!reflect.DeepEqual(app.CustomConfig.Container.ReadinessProbe.Exec.Command,
 			[]string{"check",
-				"ready"}) ||
-		!reflect.DeepEqual(app.Inputs,
-			[]string{"A",
-				"Z"}) {
+				"ready"}) {
 		t.Fatalf("app = %+v", app)
 	}
 }
@@ -219,10 +211,34 @@ func checkTCPInputs(t *testing.T, app client.App) {
 		app.CustomConfig.Container == nil ||
 		app.CustomConfig.Container.ReadinessProbe == nil ||
 		app.CustomConfig.Container.ReadinessProbe.TCPSocket == nil ||
-		string(app.CustomConfig.Container.ReadinessProbe.TCPSocket.Port) != "27017" ||
-		!reflect.DeepEqual(app.Inputs,
-			[]string{"A",
-				"B"}) {
+		string(app.CustomConfig.Container.ReadinessProbe.TCPSocket.Port) != "27017" {
 		t.Fatalf("app = %+v", app)
+	}
+}
+
+func TestOptionalDetailsDoNotBreakList(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"custom_config":{"hpa":{"minReplicas":"1"}}}`,
+		`{"custom_config":[]}`,
+		`{"svc":{"ports":[]}}`,
+		`{"command":[],"args":{},"readiness_probe_path":42}`,
+	}
+	for _, value := range cases {
+		var app client.App
+		if err := json.Unmarshal([]byte(value), &app); err != nil {
+			t.Fatalf("%s: %v", value, err)
+		}
+		if app.Service != nil || app.CustomConfig != nil || app.Command != "" || app.Args != "" || app.ReadinessProbePath != "" {
+			t.Fatalf("unexpected partial projection: %+v", app)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"count":2,"next":null,"results":[{"id":"bad","svc":{"ports":[]}},{"id":"good","svc":{"internalAddress":"ok"}}]}`)
+	}))
+	defer server.Close()
+	apps, err := client.New(server.URL, client.APIKey("test"), "org").ListApps(context.Background())
+	if err != nil || len(apps) != 2 || apps[0].Service != nil || apps[1].Service == nil || apps[1].Service.InternalAddress != "ok" {
+		t.Fatalf("apps=%+v err=%v", apps, err)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
 )
 
 // page is the standard Django REST Framework pagination envelope.
@@ -98,8 +97,8 @@ type App struct {
 	IsHPAEnabled        bool     `json:"is_hpa_enabled"`
 	RAMLimit            string   `json:"ram_limit"`
 	CPURequest          string   `json:"cpu_request"`
-	Disk                *Disk    `json:"disk"`
-	ExternalHosts       []string `json:"external_hosts"`
+	Disk                *Disk    `json:"-" yaml:"-"`
+	ExternalHosts       []string `json:"-" yaml:"-"`
 	CustomDomainAddress string   `json:"custom_domain_address"`
 	EnableSSL           bool     `json:"enable_SSL"`
 	ReadinessProbePath  string   `json:"-"                     yaml:"-"`
@@ -120,7 +119,6 @@ type App struct {
 	CreationMethod string           `json:"creation_method"`
 	Service        *AppService      `json:"-"               yaml:"-"`
 	CustomConfig   *AppCustomConfig `json:"-"               yaml:"-"`
-	Inputs         []string         `json:"-"               yaml:"-"`
 }
 
 // AppService contains the platform-provided addresses for an app's service.
@@ -186,7 +184,11 @@ type AppTCPSocket struct {
 // a known value and remains available through Replicas as before.
 func (a *App) UnmarshalJSON(data []byte) error {
 	type appAlias App
-	var decoded appAlias
+	var decoded struct {
+		appAlias
+		Disk          *Disk    `json:"disk"`
+		ExternalHosts []string `json:"external_hosts"`
+	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
@@ -195,64 +197,28 @@ func (a *App) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	raw, exists := fields["replicas"]
-	*a = App(decoded)
+	*a = App(decoded.appAlias)
+	a.Disk = decoded.Disk
+	a.ExternalHosts = decoded.ExternalHosts
 	a.ReplicasPresent = exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
-	a.Inputs = inputNames(fields["inputs"])
-	for name, target := range map[string]any{
-		"svc":                  &a.Service,
-		"custom_config":        &a.CustomConfig,
-		"readiness_probe_path": &a.ReadinessProbePath,
-		"command":              &a.Command,
-		"args":                 &a.Args,
-	} {
+	decodeOptional := func(name string, target any) {
 		value, present := fields[name]
 		if present && len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			if err := json.Unmarshal(value, target); err != nil {
-				return fmt.Errorf("app.%s: %w", name, err)
-			}
+			_ = json.Unmarshal(value, target)
 		}
 	}
+	var service AppService
+	if value := fields["svc"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &service) == nil {
+		a.Service = &service
+	}
+	var config AppCustomConfig
+	if value := fields["custom_config"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &config) == nil {
+		a.CustomConfig = &config
+	}
+	decodeOptional("readiness_probe_path", &a.ReadinessProbePath)
+	decodeOptional("command", &a.Command)
+	decodeOptional("args", &a.Args)
 	return nil
-}
-
-func inputNames(raw json.RawMessage) []string {
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil
-	}
-	var names []string
-	var values []json.RawMessage
-	if json.Unmarshal(raw, &values) == nil {
-		for _, value := range values {
-			var name string
-			if json.Unmarshal(value, &name) == nil {
-				continue
-			}
-			names = appendInputName(names, value)
-		}
-	} else {
-		var object map[string]json.RawMessage
-		if json.Unmarshal(raw, &object) == nil {
-			for name := range object {
-				names = append(names, name)
-			}
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
-func appendInputName(names []string, raw json.RawMessage) []string {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(raw, &object) != nil {
-		return names
-	}
-	for _, key := range []string{fieldName, "key", "id"} {
-		var name string
-		if json.Unmarshal(object[key], &name) == nil && name != "" {
-			return append(names, name)
-		}
-	}
-	return names
 }
 
 // plainCreationMethods are the methods that produce an ordinary workload: an
