@@ -45,6 +45,15 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleUsageHistoryResult(msg)
 	case podsResult:
 		return m.handlePodsResult(msg)
+	case logsResult:
+		return m.handleLogsResult(msg)
+	case logsPollMsg:
+		if msg.appID == m.selectedDetailTarget() && msg.pod == m.logPod &&
+			msg.container == m.logContainer && msg.previous == m.logPrevious && m.logFollowing {
+			return m, m.loadSelectedLogs()
+		}
+	case logCopyResult:
+		return m.handleLogsCopied(msg)
 	case egressRoutesResult:
 		return m.handleEgressRoutesResult(msg)
 	case namespacesResult:
@@ -52,7 +61,12 @@ func (m *browser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appActionResult:
 		return m, m.applyActionResult(msg)
 	case tea.MouseClickMsg:
-		return m, m.handleActionMouse(msg)
+		if m.actionMenu || m.confirmAction != appActionNone {
+			return m, m.handleActionMouse(msg)
+		}
+		return m, m.handleBrowserMouse(msg)
+	case tea.MouseWheelMsg:
+		return m, m.handleBrowserWheel(msg)
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	}

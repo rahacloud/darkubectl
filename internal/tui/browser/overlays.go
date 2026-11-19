@@ -67,7 +67,7 @@ func (m *browser) namespaceModal(background []string) []string {
 }
 
 func (m *browser) helpModal(background []string) []string {
-	panelWidth := min(72, m.width-4)
+	panelWidth := min(helpModalMaxWidth, m.width-browserModalMargin)
 	innerWidth := panelWidth - 6
 	row := func(leftKey, leftLabel, rightKey, rightLabel string) string {
 		left := paint(leftKey, output.ColorBranch, true) + " " + paint(leftLabel, output.ColorMuted, false)
@@ -80,18 +80,27 @@ func (m *browser) helpModal(background []string) []string {
 	content := []string{
 		paint("⌘  QUICK HELP", output.ColorAccent, true),
 		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
-		paint("AVAILABLE CONTROLS", output.ColorKey, true),
 	}
-	hints := m.keyHints(true)
-	for i := 0; i < len(hints); i += 2 {
-		left := hints[i]
-		if i+1 == len(hints) {
-			content = append(content, row(left.key, left.action, "", ""))
+	groups := m.helpHintGroups(m.keyHints(true))
+	for groupIndex, group := range groups {
+		if len(group.hints) == 0 {
 			continue
 		}
-		right := hints[i+1]
-		content = append(content, row(left.key, left.action, right.key, right.action))
+		if groupIndex > 0 {
+			content = append(content, "")
+		}
+		content = append(content, paint(strings.ToUpper(group.title), output.ColorKey, true))
+		for i := 0; i < len(group.hints); i += 2 {
+			left := group.hints[i]
+			if i+1 == len(group.hints) {
+				content = append(content, row(left.key, left.action, "", ""))
+				continue
+			}
+			right := group.hints[i+1]
+			content = append(content, row(left.key, left.action, right.key, right.action))
+		}
 	}
+	content = append(content, "", paint("Select text: Shift+drag · Copy: terminal copy shortcut", output.ColorMuted, false))
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	if len(background) < m.height {
@@ -112,6 +121,49 @@ func (m *browser) helpModal(background []string) []string {
 		background[y] = ansi.Cut(base, 0, startX) + line + ansi.Cut(base, startX+panelWidth, m.width)
 	}
 	return background[:m.height]
+}
+
+type helpHintGroup struct {
+	title string
+	hints []keyHint
+}
+
+func (m *browser) helpHintGroups(hints []keyHint) []helpHintGroup {
+	groups := []helpHintGroup{{title: "Navigation"}, {title: "App views"}}
+	viewTitle := "Current view"
+	switch m.activeAppView {
+	case appViewSummary:
+		viewTitle = "Summary view"
+	case appViewUsage:
+		viewTitle = "Usage view"
+	case appViewScaling:
+		viewTitle = "Scaling view"
+	case appViewLogs:
+		viewTitle = "Logs view"
+	}
+	groups = append(groups, helpHintGroup{title: viewTitle}, helpHintGroup{title: "Actions"})
+	for _, hint := range hints {
+		switch {
+		case hint.action == "previous / next app view":
+			groups[1].hints = append(groups[1].hints, hint)
+		case m.detail && m.selectedAppActive() && (m.activeAppView == appViewLogs && isLogsHelpHint(hint) || m.activeAppView != appViewLogs && hint.action == "scroll details / move by page"):
+			groups[2].hints = append(groups[2].hints, hint)
+		case hint.action == "quit" || hint.action == "close help" || hint.action == "help":
+			groups[3].hints = append(groups[3].hints, hint)
+		default:
+			groups[0].hints = append(groups[0].hints, hint)
+		}
+	}
+	return groups
+}
+
+func isLogsHelpHint(hint keyHint) bool {
+	switch hint.key {
+	case "t", "v/V", "f", "p", "z", "m", "n/N", "w", "End/G":
+		return true
+	default:
+		return hint.action == "search" || hint.action == "scroll logs" || hint.action == "refresh" || hint.action == "target"
+	}
 }
 
 func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) string {

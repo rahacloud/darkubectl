@@ -159,3 +159,39 @@ func TestSelectionChangeCancelsOldSummaryAndRejectsLateResult(t *testing.T) {
 		t.Fatalf("late summary replaced the selected app: %+v", m.detailApp)
 	}
 }
+
+func TestNamespaceChangeInvalidatesSelectedAppViews(t *testing.T) {
+	t.Parallel()
+	m := &browser{
+		tenant:        "acme",
+		detail:        true,
+		activeAppView: appViewLogs,
+		apps: []client.App{
+			{ID: "alpha", Name: "alpha", Namespace: client.Namespace{ID: 1, Name: "ns-a"}},
+			{ID: "beta", Name: "beta", Namespace: client.Namespace{ID: 2, Name: "ns-b"}},
+		},
+		selected:     0,
+		logPod:       "alpha-pod",
+		logContainer: "main",
+		logEntries:   []client.LogEntry{{Text: "alpha log"}},
+		detailUsage:  &AppUsage{},
+		usageAppID:   "alpha",
+	}
+	m.detailApp = &m.apps[m.selected]
+	initialGeneration := m.selectionGeneration
+
+	m.chooseNamespace(namespaceChoice{scoped: true, key: namespaceKey{id: 2, name: "ns-b"}})
+
+	if m.selectionGeneration != initialGeneration+1 {
+		t.Fatalf("namespace change should advance the selection generation: got %d, want %d", m.selectionGeneration, initialGeneration+1)
+	}
+	if m.activeAppView != appViewSummary || len(m.logEntries) != 0 || m.logPod != "" || m.logContainer != "" {
+		t.Fatalf("namespace change retained the previous app's log view: view=%v pod=%q container=%q entries=%v", m.activeAppView, m.logPod, m.logContainer, m.logEntries)
+	}
+	if m.detailUsage != nil || m.usageAppID != "" || m.history != nil || len(m.podList) != 0 {
+		t.Fatalf("namespace change retained previous app detail data: usage=%+v usageAppID=%q history=%+v pods=%v", m.detailUsage, m.usageAppID, m.history, m.podList)
+	}
+	if m.selectedDetailTarget() != "beta" {
+		t.Fatalf("namespace change should select the scoped app, got %q", m.selectedDetailTarget())
+	}
+}

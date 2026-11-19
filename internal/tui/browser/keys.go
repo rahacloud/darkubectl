@@ -12,6 +12,13 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.actionMenu {
 		return m, m.handleActionMenuKey(msg)
 	}
+	if m.logTargetPicker {
+		return m, m.handleLogTargetKey(msg)
+	}
+	if m.logSearchEditing {
+		m.handleLogSearchKey(msg)
+		return m, nil
+	}
 	if m.confirmAction != appActionNone {
 		return m, m.handleActionConfirmationKey(msg)
 	}
@@ -58,6 +65,10 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "]":
 		return m, m.switchAppView(1)
 	case "w":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logWrap = !m.logWrap
+			return m, nil
+		}
 		if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 			m.historyRange = (m.historyRange + 1) % len(usageRanges)
 			m.cancelRequest(requestKey{kind: requestUsageHistory})
@@ -65,11 +76,40 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.history = nil
 			return m, m.loadUsageHistory()
 		}
+	case "+":
+		if m.detail && m.activeAppView == appViewLogs {
+			return m, m.adjustLogTail(logTailStep)
+		}
+	case "-":
+		if m.detail && m.activeAppView == appViewLogs {
+			return m, m.adjustLogTail(-logTailStep)
+		}
+	case "c":
+		if m.detail && m.activeAppView == appViewLogs {
+			if len(m.logEntries) == 0 {
+				m.logCopyStatus = "No logs to copy"
+				return m, nil
+			}
+			m.logCopyStatus = "Copying logs…"
+			return m, m.copyLogs()
+		}
 	case "p":
+		if m.detail && m.activeAppView == appViewLogs && m.logPod != "" {
+			return m, m.toggleLogPrevious()
+		}
 		if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 			m.nextHistoryPod()
 		}
+	case "z":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logUTC = !m.logUTC
+			return m, nil
+		}
 	case "m":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logMaximized = !m.logMaximized
+			return m, nil
+		}
 		if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 			app := m.apps[m.selected]
 			if m.detailApp != nil && m.detailApp.ID == app.ID {
@@ -80,13 +120,61 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.historyMetric = (m.historyMetric + 1) % len(metrics)
 			}
 		}
+	case "v":
+		if m.detail && m.activeAppView == appViewLogs {
+			return m, m.cycleLogPod(1)
+		}
+	case "V":
+		if m.detail && m.activeAppView == appViewLogs {
+			return m, m.cycleLogPod(-1)
+		}
+	case "t":
+		if m.detail && m.activeAppView == appViewLogs {
+			if len(m.podList) == 0 {
+				return m, m.loadSelectedPods()
+			}
+			m.logTargetPicker, m.logPickerColumn, m.logPodCursor, m.logContainerCursor = true, 0, 0, 0
+			for i, pod := range m.podList {
+				if pod.Name == m.logPod {
+					m.logPodCursor = i
+					break
+				}
+			}
+			return m, nil
+		}
+	case "f":
+		if m.detail && m.activeAppView == appViewLogs && m.logPod != "" && !m.logPrevious {
+			m.logFollowing = !m.logFollowing
+			m.logFollowPausedByUser = !m.logFollowing
+			if m.logFollowing {
+				return m, m.loadSelectedLogs()
+			}
+			m.cancelRequest(requestKey{kind: requestLogs})
+			m.logPollInFlight = false
+			m.logState.reset()
+			return m, nil
+		}
+	case "N":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.moveLogMatch(-1)
+			return m, nil
+		}
 	case "n", ":":
+		if m.detail && m.activeAppView == appViewLogs && m.logSearch != "" {
+			m.moveLogMatch(1)
+			return m, nil
+		}
 		if !m.help && !m.selectingTenant {
 			return m, m.openNamespacePicker()
 		}
 	case "?":
 		m.help = !m.help
 	case "/":
+		if m.detail && m.activeAppView == appViewLogs && m.logPod != "" {
+			m.logSearchBefore = m.logSearch
+			m.logSearchEditing = true
+			return m, nil
+		}
 		if !m.help && !m.selectingTenant {
 			previousTarget := m.selectedDetailTarget()
 			m.filterEditing = true
@@ -144,42 +232,67 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "up", "k":
-		if m.sorting {
+		switch {
+		case m.detail && m.activeAppView == appViewLogs:
+			m.logScroll++
+			m.logNewEntries = 0
+		case m.sorting:
 			m.sortChoice = (m.sortChoice + len(appSortNames) - 1) % len(appSortNames)
-		} else if m.selectingTenant {
+		case m.selectingTenant:
 			return m, m.moveTenantSelection(-1)
-		} else if m.contextFocused && m.contextRow == 0 {
+		case m.contextFocused && m.contextRow == 0:
 			return m, m.moveTenantSelection(-1)
-		} else if m.contextFocused {
+		case m.contextFocused:
 			m.contextRow = max(0, m.contextRow-1)
-		} else if !m.help && !m.detail {
+		case !m.help && !m.detail:
 			return m, m.moveTree(-1)
-		} else if !m.help && m.detail {
+		case !m.help && m.detail:
 			return m, m.moveTree(-1)
 		}
 	case "down", "j":
-		if m.sorting {
+		switch {
+		case m.detail && m.activeAppView == appViewLogs:
+			m.logScroll = max(0, m.logScroll-1)
+			if m.logScroll == 0 {
+				m.logNewEntries = 0
+			}
+		case m.sorting:
 			m.sortChoice = (m.sortChoice + 1) % len(appSortNames)
-		} else if m.selectingTenant {
+		case m.selectingTenant:
 			return m, m.moveTenantSelection(1)
-		} else if m.contextFocused && m.contextRow == 0 {
+		case m.contextFocused && m.contextRow == 0:
 			return m, m.moveTenantSelection(1)
-		} else if m.contextFocused {
+		case m.contextFocused:
 			m.contextRow = min(1, m.contextRow+1)
-		} else if !m.help && !m.detail {
+		case !m.help && !m.detail:
 			return m, m.moveTree(1)
-		} else if !m.help && m.detail {
+		case !m.help && m.detail:
 			return m, m.moveTree(1)
 		}
 	case "home", "g":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logScroll = len(m.logEntries)
+			m.logNewEntries = 0
+			return m, nil
+		}
 		if !m.help && !m.contextFocused && !m.selectingTenant {
 			return m, m.selectTree(0)
 		}
 	case "end", "G":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logScroll = 0
+			m.logNewEntries = 0
+			return m, nil
+		}
 		if !m.help && !m.contextFocused && !m.selectingTenant {
 			return m, m.selectTree(len(m.treeNodes()) - 1)
 		}
 	case "pgup":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logScroll += max(1, m.height-appViewPageHeightPadding)
+			m.logNewEntries = 0
+			return m, nil
+		}
 		if m.detail && (m.activeAppView == appViewSummary || m.activeAppView == appViewScaling) && m.selectedAppActive() {
 			m.summaryScroll = max(0, m.summaryScroll-max(1, m.height-8))
 			return m, nil
@@ -192,6 +305,13 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.moveTree(-max(1, m.height-8))
 		}
 	case "pgdown":
+		if m.detail && m.activeAppView == appViewLogs {
+			m.logScroll = max(0, m.logScroll-max(1, m.height-appViewPageHeightPadding))
+			if m.logScroll == 0 {
+				m.logNewEntries = 0
+			}
+			return m, nil
+		}
 		if m.detail && (m.activeAppView == appViewSummary || m.activeAppView == appViewScaling) && m.selectedAppActive() {
 			m.summaryScroll += max(1, m.height-8)
 			return m, nil
@@ -231,6 +351,9 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.loadProfile()
 		}
 		if m.detail {
+			if m.activeAppView == appViewLogs {
+				return m, m.loadSelectedLogs()
+			}
 			if m.activeAppView == appViewUsage {
 				return m, tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
 			}

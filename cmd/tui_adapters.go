@@ -76,6 +76,15 @@ func newTUIBrowserOptions(ctx context.Context, cmd *cli.Command, cfg *config.Con
 			})
 			return pods, tuiAuthError(err)
 		},
+		AppLogs: func(requestCtx context.Context, tenant, id string, opts client.LogOptions) ([]client.LogEntry, error) {
+			c, err := newClient(requestCtx, tenant)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = c.Close() }()
+			entries, _, err := c.AppLogs(requestCtx, id, opts)
+			return entries, tuiAuthError(err)
+		},
 		EgressRoutes: func(requestCtx context.Context, tenant string) (map[string]client.ClusterEgress, error) {
 			c, err := newClient(requestCtx, tenant)
 			if err != nil {

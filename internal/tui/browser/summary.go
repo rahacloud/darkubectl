@@ -22,16 +22,18 @@ func (m *browser) summaryPaneLines() []string {
 	if m.activeAppView == appViewScaling {
 		return m.scalingPaneLines()
 	}
-	heading := m.appViewTabs()
+	if m.activeAppView == appViewLogs {
+		return m.logsPaneLines()
+	}
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return []string{heading, paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
+		return []string{paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
 		a = *m.detailApp
 	}
 	stateGlyph, stateColor := stateStyle(appState(a))
-	lines := []string{heading, sectionHeading("Identity"), summaryField("Name", displayValue(a.Name))}
+	lines := []string{sectionHeading("Identity"), summaryField("Name", displayValue(a.Name))}
 	if m.detailState.err != nil {
 		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailState.err.Error()), output.ColorNumber, false))
 		if m.detailState.status == requestStale {

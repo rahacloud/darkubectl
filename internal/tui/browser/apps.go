@@ -126,9 +126,7 @@ func (m *browser) selectTree(index int) tea.Cmd {
 	node := rows[max(0, min(index, len(rows)-1))]
 	m.namespaceSelected = node.app < 0
 	if node.app >= 0 {
-		m.selected = node.app
-		m.detailApp = &m.apps[m.selected]
-		return m.syncDetailTarget(previousTarget)
+		return m.selectAppIndex(node.app, false, previousTarget)
 	}
 	for _, i := range m.visibleAppIndices() {
 		app := m.apps[i]
@@ -137,6 +135,23 @@ func (m *browser) selectTree(index int) tea.Cmd {
 			m.detailApp = &m.apps[m.selected]
 			return m.syncDetailTarget(previousTarget)
 		}
+	}
+	return nil
+}
+
+func (m *browser) selectAppIndex(index int, loadIfUnchanged bool, previousTarget string) tea.Cmd {
+	if index < 0 || index >= len(m.apps) {
+		return nil
+	}
+	m.selected = index
+	m.namespaceSelected = false
+	selected := m.apps[index]
+	m.detailApp = &selected
+	if previousTarget != m.selectedDetailTarget() {
+		return m.syncDetailTarget(previousTarget)
+	}
+	if loadIfUnchanged && m.detail {
+		return m.loadSelectedSummary()
 	}
 	return nil
 }

@@ -39,13 +39,19 @@ func (m *browser) View() tea.View {
 			}
 		}
 		bodyHeight := max(1, m.height-len(lines)-browserFooterHeight-1)
-		left := m.appPaneLines(bodyHeight)
+		paneHeight := max(1, bodyHeight-2)
+		left := m.appPaneLines(paneHeight)
 		right := m.summaryPaneLines()
 		if m.activeAppView == appViewUsage {
-			right = m.usageViewport(right, bodyHeight)
+			right = m.usageViewport(right, paneHeight)
+		} else if m.activeAppView == appViewLogs {
+			right = m.logsViewport(right, paneHeight)
 		}
-		context := m.contextPaneLines(bodyHeight)
-		lines = append(lines, m.splitPanes(context, left, right, bodyHeight)...)
+		if m.detail && m.activeAppView == appViewLogs && m.logMaximized {
+			lines = append(lines, renderPane(right, max(1, m.width-2), bodyHeight-2, m.appViewBorderTitle(m.width-2), true)...)
+		} else {
+			lines = append(lines, m.splitPanes(left, right, bodyHeight)...)
+		}
 	}
 	if len(lines) > m.height-browserFooterHeight {
 		lines = lines[:max(0, m.height-browserFooterHeight)]
@@ -60,11 +66,14 @@ func (m *browser) View() tea.View {
 		lines = m.renderActionConfirmation(lines)
 	} else if m.selectingNamespace && m.width >= 60 && m.height >= 20 {
 		lines = m.namespaceModal(lines)
+	} else if m.logTargetPicker && m.width >= 60 && m.height >= 20 {
+		lines = m.logTargetModal(lines)
 	} else if m.help && m.width >= 60 && m.height >= 20 {
 		lines = m.helpModal(lines)
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], max(0, m.width), "")
+		lines[i] += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(lines[i])))
 	}
 	v := tea.NewView(strings.Join(lines, "\n"))
 	v.AltScreen = true
@@ -73,14 +82,7 @@ func (m *browser) View() tea.View {
 }
 
 func (m *browser) appPaneLines(height int) []string {
-	heading := "  [3] APPS"
-	if !m.detail {
-		heading = "▸ [3] APPS"
-	}
-	if m.appsState.active() {
-		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
-	}
-	lines := []string{paint(heading, output.ColorAccent, true)}
+	lines := []string{}
 	if m.appsState.err != nil {
 		if len(m.apps) == 0 {
 			lines = append(lines, "Could not load apps: "+safeText(m.appsState.err.Error()))
@@ -114,73 +116,87 @@ func (m *browser) appPaneLines(height int) []string {
 	return append(lines, m.appTreeForWidth(room, appWidth)...)
 }
 
-func (m *browser) appViewTabs() string {
-	focus := "  "
-	if m.detail {
-		focus = "▸ "
-	}
-	if !m.selectedAppActive() {
-		label := "SUMMARY"
-		if m.activeAppView == appViewUsage {
-			label = "USAGE"
-		} else if m.activeAppView == appViewScaling {
-			label = "SCALING"
+func (m *browser) appViewBorderTitle(width int) string {
+	labels := appViewTabLabels(width)
+	parts := make([]string, len(labels))
+	for i, label := range labels {
+		if appView(i) == m.activeAppView {
+			parts[i] = paint("["+label+"]", output.ColorBranch, true)
+		} else {
+			parts[i] = paint(label, output.ColorBranch, false)
 		}
-		return paint(focus+"[4] "+label, output.ColorAccent, true)
 	}
-	selectedStyle := func(label string, selected bool) string {
-		if selected {
-			return paint("["+label+"]", output.ColorSuccess, true)
-		}
-		return paint(label, output.ColorMuted, false)
+	return paint("[4] ", output.ColorAccent, true) + strings.Join(parts, " ")
+}
+
+func appViewTabLabels(width int) []string {
+	labels := []string{"Summary", "Usage", "Scaling", "Logs"}
+	if width < 35 {
+		labels = []string{"Sum", "Use", "Scale", "Logs"}
 	}
-	heading := paint(focus+"[4] ", output.ColorAccent, true) + selectedStyle("Summary", m.activeAppView == appViewSummary) + paint("  ", output.ColorBorder, false) + selectedStyle("Usage", m.activeAppView == appViewUsage) + paint("  ", output.ColorBorder, false) + selectedStyle("Scaling", m.activeAppView == appViewScaling)
-	if m.detailState.active() || m.usageState.active() || m.podsState.active() {
-		heading += " " + paint(m.spinnerGlyph(), output.ColorBranch, true)
+	if width < 27 {
+		labels = []string{"S", "U", "Sc", "L"}
 	}
-	return heading
+	return labels
 }
 
 func (m *browser) paneWidths() (int, int, int) {
 	contextWidth := min(28, max(18, m.width/5))
-	available := max(3, m.width-contextWidth-6)
+	available := max(3, m.width-contextWidth-8)
 	appsWidth := available / 2
 	return appsWidth, available - appsWidth, contextWidth
 }
 
-func (m *browser) splitPanes(context, apps, summary []string, height int) []string {
+func (m *browser) splitPanes(apps, summary []string, height int) []string {
 	appsWidth, summaryWidth, contextWidth := m.paneWidths()
 	if m.detail && (m.activeAppView == appViewSummary || m.activeAppView == appViewScaling) {
-		summary = m.summaryViewport(summary, height)
+		summary = m.summaryViewport(summary, max(1, height-2))
 	}
+	contextSeparator := 1
+	tenantHeight := max(4, (height-contextSeparator)/2)
+	pagesHeight := max(4, height-contextSeparator-tenantHeight)
+	tenant := renderPane(m.tenantPaneLines(max(1, tenantHeight-2)), contextWidth, tenantHeight-2, "[1] TENANTS", m.contextFocused && m.contextRow == 0)
+	pages := renderPane(m.pagesPaneLines(max(1, pagesHeight-2)), contextWidth, pagesHeight-2, "[2] PAGES", m.contextFocused && m.contextRow == 1)
+	contextPane := append(tenant, strings.Repeat(" ", contextWidth+2))
+	contextPane = append(contextPane, pages...)
+	appTitle := "[3] APPS"
+	if m.appsState.active() {
+		appTitle += " " + m.spinnerGlyph()
+	}
+	appsPane := renderPane(apps, appsWidth, height-2, appTitle, !m.contextFocused && !m.detail)
+	viewPane := renderPane(summary, summaryWidth, height-2, m.appViewBorderTitle(summaryWidth), m.detail)
 	lines := make([]string, height)
-	for i := 0; i < height; i++ {
-		appLine, summaryLine, contextLine := "", "", ""
-		if i < len(apps) {
-			appLine = apps[i]
-		}
-		if i < len(summary) {
-			summaryLine = summary[i]
-		}
-		if i < len(context) {
-			contextLine = context[i]
-		}
-		contextLine = ansi.Truncate(contextLine, contextWidth, "…")
-		appLine = ansi.Truncate(appLine, appsWidth, "…")
-		summaryLine = ansi.Truncate(summaryLine, summaryWidth, "…")
-		contextLine += strings.Repeat(" ", max(0, contextWidth-ansi.StringWidth(contextLine)))
-		appLine += strings.Repeat(" ", max(0, appsWidth-ansi.StringWidth(appLine)))
-		summaryLine += strings.Repeat(" ", max(0, summaryWidth-ansi.StringWidth(summaryLine)))
-		dividerOne := paint("│", output.ColorBorder, false)
-		if m.contextFocused {
-			dividerOne = paint("┃", output.ColorBranch, true)
-		}
-		dividerTwo := paint("│", output.ColorBorder, false)
-		if m.detail {
-			dividerTwo = paint("┃", output.ColorBranch, true)
-		}
-		lines[i] = contextLine + " " + dividerOne + " " + appLine + " " + dividerTwo + " " + summaryLine
+	for i := range lines {
+		left, center, right := contextPane[i], appsPane[i], viewPane[i]
+		lines[i] = left + " " + center + " " + right
 	}
+	return lines
+}
+
+func renderPane(content []string, width, height int, title string, focused bool) []string {
+	borderColor := output.ColorBorder
+	if focused {
+		borderColor = output.ColorBranch
+	}
+	innerWidth := max(1, width)
+	title = ansi.Truncate(title, max(1, innerWidth-3), "…")
+	titleText := title
+	if ansi.Strip(titleText) == titleText {
+		titleText = paint(titleText, borderColor, focused)
+	}
+	top := paint("╭─ ", borderColor, focused) + titleText + paint(" "+strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(title)-3))+"╮", borderColor, focused)
+	lines := make([]string, 0, height+2)
+	lines = append(lines, paint(top, borderColor, focused))
+	for row := 0; row < height; row++ {
+		line := ""
+		if row < len(content) {
+			line = content[row]
+		}
+		line = ansi.Truncate(line, innerWidth, "…")
+		line += strings.Repeat(" ", max(0, innerWidth-ansi.StringWidth(line)))
+		lines = append(lines, paint("│", borderColor, focused)+line+paint("│", borderColor, focused))
+	}
+	lines = append(lines, paint("╰"+strings.Repeat("─", innerWidth)+"╯", borderColor, focused))
 	return lines
 }
 
@@ -257,6 +273,10 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 		hints = []keyHint{{"type", "filter"}, {"↑↓", "move"}, {"↵", "open"}, {"Esc", "cancel"}, {"Ctrl+U", "clear"}}
 	case m.selectingNamespace:
 		hints = []keyHint{{"type", "filter"}, {"↑↓", "move"}, {"↵", "scope"}, {"Esc", "close"}, {"Ctrl+U", "clear"}}
+	case m.logTargetPicker:
+		hints = []keyHint{{"↑↓", "choose"}, {"←→", "column"}, {"↵", "select"}, {"Esc", "cancel"}}
+	case m.logSearchEditing:
+		hints = []keyHint{{"type", "search"}, {"↵", "find"}, {"Esc", "cancel"}, {"Ctrl+U", "clear"}}
 	case m.selectingTenant:
 		hints = []keyHint{{"↑↓/jk", "switch tenant"}, {"r", "retry profile"}, {"Tab/ShiftTab", "cycle"}, {"1-4", "panes"}, {"?", "help"}, {"q", "quit"}}
 	case m.contextFocused:
@@ -305,8 +325,23 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 	}
 	if m.detail && m.selectedAppActive() && (forHelp || !m.help && !m.actionBusy && !m.actionMenu && m.confirmAction == appActionNone && !m.filterEditing && !m.selectingNamespace && !m.selectingTenant) {
 		hints = appendUniqueKeyHints(hints, keyHint{"[/]", "previous / next app view"})
-		if m.activeAppView == appViewUsage || m.activeAppView == appViewSummary || m.activeAppView == appViewScaling {
+		switch m.activeAppView {
+		case appViewLogs:
+			hints = appendUniqueKeyHints(hints,
+				keyHint{"t", "target"}, keyHint{"v/V", "next / previous pod"}, keyHint{"f", "follow"},
+				keyHint{"p", "current / previous"}, keyHint{"z", "local / UTC"}, keyHint{"w", "wrap"},
+				keyHint{"-/+", "tail size"}, keyHint{"c", "copy retained logs"}, keyHint{"m", "maximize / restore"},
+				keyHint{"/", "search"}, keyHint{"n/N", "next / previous match"}, keyHint{"r", "refresh"},
+				keyHint{"↑↓/PgUp/Dn", "scroll logs"}, keyHint{"End/G", "latest"})
+		case appViewUsage, appViewSummary, appViewScaling:
 			hints = appendUniqueKeyHints(hints, keyHint{"PgUp/Dn", "scroll"})
+		}
+		if forHelp {
+			for i := range hints {
+				if hints[i].key == "PgUp/Dn" {
+					hints[i].action = "scroll details / move by page"
+				}
+			}
 		}
 	}
 	return hints

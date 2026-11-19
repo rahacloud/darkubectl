@@ -8,6 +8,26 @@ import (
 	"testing"
 )
 
+func TestPaneBordersStayAlignedBetweenTenantAndPages(t *testing.T) {
+	for _, width := range []int{60, 80, 120, 200} {
+		m := &browser{width: width, height: 30}
+		appsWidth, _, contextWidth := m.paneWidths()
+		lines := m.splitPanes(nil, nil, 24)
+		separator := (24 - 1) / 2
+		for _, row := range []int{separator - 1, separator, separator + 1} {
+			plain := ansi.Strip(lines[row])
+			if got := ansi.StringWidth(plain); got != width {
+				t.Errorf("width %d row %d: rendered width %d", width, row, got)
+			}
+			for _, column := range []int{contextWidth + 3, contextWidth + 3 + appsWidth + 3} {
+				if got := ansi.Cut(plain, column, column+1); !strings.ContainsAny(got, "│╭╰") {
+					t.Errorf("width %d row %d column %d: missing pane border, got %q", width, row, column, got)
+				}
+			}
+		}
+	}
+}
+
 func TestFooterShowsOnlyQuitAndHelpWhileHelpModalListsShortcuts(t *testing.T) {
 	t.Parallel()
 	m := &browser{width: 120, height: 24}

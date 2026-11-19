@@ -71,11 +71,13 @@ func (m *browser) invalidateAppReads() {
 	m.cancelRequest(requestKey{kind: requestUsage})
 	m.cancelRequest(requestKey{kind: requestUsageHistory})
 	m.cancelRequest(requestKey{kind: requestPods})
+	m.cancelRequest(requestKey{kind: requestLogs})
 	m.detailState.reset()
 	m.usageState.reset()
 	m.historyState.reset()
 	m.podsState.reset()
 	m.podList = nil
+	m.clearLogs()
 	m.history = nil
 	m.historyPod = ""
 	m.historyPodChosen = false

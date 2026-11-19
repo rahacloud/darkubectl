@@ -7,9 +7,9 @@ import (
 )
 
 func (m *browser) scalingPaneLines() []string {
-	lines := []string{m.appViewTabs()}
+	lines := []string{}
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return append(lines, paint("No app selected. Move to an app to view its scaling settings.", output.ColorMuted, false))
+		return []string{paint("No app selected. Move to an app to view its scaling settings.", output.ColorMuted, false)}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {

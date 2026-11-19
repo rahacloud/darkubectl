@@ -41,7 +41,7 @@ func (m *browser) handleNamespaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.namespaceQuery = ""
 	case "enter":
 		if len(choices) > 0 {
-			m.chooseNamespace(choices[m.namespaceCursor])
+			return m, m.chooseNamespace(choices[m.namespaceCursor])
 		}
 	case "up":
 		m.namespaceCursor = max(0, m.namespaceCursor-1)
@@ -91,7 +91,8 @@ func (m *browser) namespaceAppCount(key namespaceKey) int {
 	return count
 }
 
-func (m *browser) chooseNamespace(choice namespaceChoice) {
+func (m *browser) chooseNamespace(choice namespaceChoice) tea.Cmd {
+	previousTarget := m.selectedDetailTarget()
 	m.namespaceScoped = choice.scoped
 	m.namespaceScope = choice.key
 	m.selectingNamespace = false
@@ -101,6 +102,7 @@ func (m *browser) chooseNamespace(choice namespaceChoice) {
 	m.namespaceSelected = false
 	m.detail = false
 	m.ensureFilterSelection()
+	return m.syncDetailTarget(previousTarget)
 }
 
 func (m *browser) syncNamespaceCursor() {

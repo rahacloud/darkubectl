@@ -47,6 +47,24 @@ type podsResult struct {
 	err  error
 }
 
+type logsResult struct {
+	meta      requestMeta
+	entries   []client.LogEntry
+	err       error
+	previous  bool
+	pod       string
+	container string
+}
+type logsPollMsg struct {
+	appID, pod, container string
+	previous              bool
+}
+
+type logCopyResult struct {
+	count int
+	err   error
+}
+
 type appAction uint8
 
 const (

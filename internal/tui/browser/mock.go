@@ -39,6 +39,8 @@ func newMockBrowser(profile MockProfile) *browser {
 	m := &browser{
 		tenant:  profile.Tenant,
 		mode:    "MOCK PROFILE · OFFLINE",
+		logWrap: true,
+		logTail: logDefaultTailSize,
 		tenants: options,
 		listApps: func(_ context.Context, tenant string) ([]client.App, error) {
 			apps, ok := appsByTenant[tenant]

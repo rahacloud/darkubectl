@@ -56,7 +56,7 @@ func TestHelpOverlayConsumesNavigationUntilClosed(t *testing.T) {
 	}
 }
 
-func TestSummaryAndUsageViewNavigation(t *testing.T) {
+func TestSummaryUsageScalingAndLogsViewNavigation(t *testing.T) {
 	t.Parallel()
 	m := &browser{width: 80, height: 24}
 	applyAppsResult(m, []client.App{{
@@ -84,6 +84,10 @@ func TestSummaryAndUsageViewNavigation(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
 	if m.activeAppView != appViewSummary {
 		t.Fatal("[ should wrap backward to Summary")
+	}
+	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
+	if m.activeAppView != appViewLogs {
+		t.Fatal("[ should wrap backward to Logs")
 	}
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
 	if m.activeAppView != appViewScaling {

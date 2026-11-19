@@ -38,6 +38,7 @@ type BrowserOptions struct {
 	Usage        func(context.Context, string, string) (*AppUsage, error)
 	UsageHistory func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
 	Pods         func(context.Context, string, string) ([]appstate.Pod, error)
+	AppLogs      func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
 	EgressRoutes func(context.Context, string) (map[string]client.ClusterEgress, error)
 	Namespaces   func(context.Context, string) ([]client.Namespace, error)
 	RestartApp   func(context.Context, string, string) error
@@ -50,7 +51,7 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	defer cancel()
 	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
 		allowWrites: options.AllowWrites, localTenants: append([]string(nil), options.LocalTenants...),
-		listApps: options.ListApps}
+		listApps: options.ListApps, logWrap: true, logTail: logDefaultTailSize}
 	if options.GetApp != nil {
 		m.getApp = options.GetApp
 	}
@@ -59,6 +60,7 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	}
 	m.usageHistory = options.UsageHistory
 	m.fetchPods = options.Pods
+	m.appLogs = options.AppLogs
 	m.egressRoutes = options.EgressRoutes
 	if options.Namespaces != nil {
 		m.listNamespaces = options.Namespaces

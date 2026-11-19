@@ -221,6 +221,9 @@ func (m *browser) handlePodsResult(msg podsResult) (tea.Model, tea.Cmd) {
 	sort.Slice(msg.pods, func(i, j int) bool { return msg.pods[i].Name < msg.pods[j].Name })
 	m.podList = msg.pods
 	m.podsState.succeed(len(m.podList) == 0, m.requestTime())
+	if m.activeAppView == appViewLogs && m.logPod == "" {
+		return m, m.prepareLogTarget()
+	}
 	return m, nil
 }
 

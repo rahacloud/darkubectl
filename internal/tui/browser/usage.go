@@ -8,15 +8,14 @@ import (
 )
 
 func (m *browser) usagePaneLines() []string {
-	lines := []string{m.appViewTabs()}
+	lines := []string{}
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return append(lines, paint("No app selected. Move to an app to view its resource usage.", output.ColorMuted, false))
+		return []string{paint("No app selected. Move to an app to view its resource usage.", output.ColorMuted, false)}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
 		a = *m.detailApp
 	}
-	lines = append(lines, "")
 	switch m.usageState.status {
 	case requestLoading:
 		lines = append(lines, paint("Loading current resource usage…", output.ColorMuted, false))
