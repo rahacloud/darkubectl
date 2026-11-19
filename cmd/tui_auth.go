@@ -29,9 +29,6 @@ type tuiCredential struct {
 }
 
 func newTUICredential(ctx context.Context, cmd *cli.Command, cfg *config.Config) (*tuiCredential, error) {
-	if token := resolveToken(cmd, cfg); token != "" {
-		return &tuiCredential{static: client.APIKey(token)}, nil
-	}
 	c := &tuiCredential{baseURL: resolveBaseURL(cmd, cfg), now: time.Now}
 	if explicit := os.Getenv("DARKUBE_ACCESS_TOKEN"); explicit != "" {
 		c.access = explicit
@@ -45,11 +42,21 @@ func newTUICredential(ctx context.Context, cmd *cli.Command, cfg *config.Config)
 			defer func() { _ = a.Close() }()
 			return a.Refresh(ctx, refresh)
 		}
-	} else {
+	}
+	if token := resolveToken(cmd, cfg); token != "" {
+		c.static = client.APIKey(token)
+		// API keys authenticate REST calls, but the pod websocket requires a
+		// Console JWT. Keep both credentials when the user configured both.
+		if c.access == "" && c.refresh == "" {
+			return c, nil
+		}
+	} else if c.access == "" && c.refresh == "" {
 		return nil, errNoCredentials
 	}
-	if _, err := c.current(ctx); err != nil {
-		return nil, err
+	if c.static == "" {
+		if _, err := c.current(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
@@ -60,6 +67,14 @@ func (c *tuiCredential) current(ctx context.Context) (client.Auth, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	token, err := c.currentAccessTokenLocked(ctx)
+	if err != nil {
+		return "", err
+	}
+	return client.BearerToken(token), nil
+}
+
+func (c *tuiCredential) currentAccessTokenLocked(ctx context.Context) (string, error) {
 	if c.access != "" {
 		if expiry, ok := jwtExpiry(c.access); ok && !expiry.After(c.now().Add(tuiRefreshBeforeExpiry)) {
 			if c.refresh == "" {
@@ -75,16 +90,20 @@ func (c *tuiCredential) current(ctx context.Context) (client.Auth, error) {
 		}
 		c.access = access
 	}
-	return client.BearerToken(c.access), nil
+	return c.access, nil
 }
 
 func (c *tuiCredential) consoleAccessToken(ctx context.Context) (string, error) {
-	auth, err := c.current(ctx)
+	if c.static != "" && c.access == "" && c.refresh == "" {
+		return "", errors.New("pod data requires a Console JWT; API-key authentication cannot open the pod stream")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	token, err := c.currentAccessTokenLocked(ctx)
 	if err != nil {
 		return "", err
 	}
-	token, ok := strings.CutPrefix(string(auth), "Bearer ")
-	if !ok || token == "" {
+	if token == "" {
 		return "", errors.New("pod data requires a Console JWT; API-key authentication cannot open the pod stream")
 	}
 	return token, nil
