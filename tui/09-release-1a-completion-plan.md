@@ -4,17 +4,17 @@
 
 Complete the read-only interactive shell so a user can launch the TUI, choose a tenant, find the right app, inspect its Summary, refresh safely, and recover from loading or request failures. Preserve the existing mock profile as the repeatable offline path.
 
-Release 1A remains a read-only shell for data access. The already implemented Restart and Delete lifecycle actions remain gated by `--allow-writes`, use their confirmation UI, and are covered here by a regression/security audit. Do not add Stop, deployment, autoscaling, disk, domain, Env, Terminal, Pods, Logs, Builds, global pages, or additional mutations in this completion plan; those belong to later releases. No credentials or secret values may enter model state, logs, errors, or rendered output.
+Release 1A remains a read-only shell for data access. The already implemented Restart and Delete lifecycle actions remain gated by `--allow-writes`, use their confirmation UI, and are covered here by a regression/security audit. The current browser also includes a read-only pod snapshot in Summary and a read-only Scaling view for replica/HPA settings. Scaling writes, disk, domain, Env, Terminal, Logs, Builds, global pages, and additional mutations remain later-release work. No credentials or secret values may enter model state, logs, errors, or rendered output.
 
 ## Starting point
 
-The progress report records the launch path, tenant and namespace selection, Apps tree, fuzzy filtering, sorting, Summary, mock profile, contextual Restart/Delete, help modal, C1 keyboard/style audit, C2 request lifecycle, and C3 Summary semantics as implemented. Reconcile this document with the current source before starting each slice: the progress report can lag recent commits.
+The progress report records the launch path, tenant and namespace selection, Apps tree, fuzzy filtering, sorting, Summary with pod snapshots and scrolling, the read-only Scaling view, mock profile, contextual Restart/Delete, help modal, C1 keyboard/style audit, C2 request lifecycle, and C3 Summary semantics as implemented. Reconcile this document with the current source before starting each slice: the progress report can lag recent commits.
 
 ## Work sequence
 
 ### 1A-C1 · Audit the 1A contract and close keyboard gaps
 
-**Status: Complete.** The responsive footer and help modal now share a state-aware hint registry; app-tree paging, modal key isolation, printable filter input, action scoping, and visual consistency are covered by focused model tests. `[` / `]` remains explicitly planned until a second app-specific view exists.
+**Status: Complete.** The responsive footer and help modal now share a state-aware hint registry; app-tree paging, modal key isolation, printable filter input, action scoping, and visual consistency are covered by focused model tests. `[` / `]` cycles Summary, Usage, and Scaling without changing app selection.
 
 - Compare the key handling in `internal/tui` with the input contract in [02 Shell and context](02-shell-and-context.md), including global keys, each pane, inline filter, picker, sort UI, help modal, and action confirmations.
 - Audit the visual system across those same states: selected and focused rows, active panes, headings, borders, status glyphs/colors, filter/sort indicators, empty/loading/error copy, modal spacing, and footer hints. Make selection/highlight behavior consistent while keeping keyboard focus distinct from the currently selected app where those differ.

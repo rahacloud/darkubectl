@@ -2,7 +2,7 @@
 
 ## App actions · Phase 2
 
-The contextual `a` menu is for app lifecycle actions: Restart and Delete. Stop is not shown because Darkubectl has no distinct app-stop command. View navigation and configuration stay inside the relevant app views: autoscaling and disk growth in Usage, image changes and deployment in Builds, and host changes in Domains. Logs, build output, Env and Terminal are views, not action-menu entries.
+The contextual `a` menu is for app lifecycle actions: Restart and Delete. Stop is not shown because Darkubectl has no distinct app-stop command. Scaling currently shows replica and autoscaler settings read-only; scaling mutations need a dedicated confirmed flow. Resource usage and history stay in Usage, image changes and deployment in Builds, and host changes in Domains. Logs, build output, Env and Terminal are views, not action-menu entries.
 
 Live actions require explicit session-level write opt-in with `darkubectl tui --allow-writes`. Server authorization still determines whether an operation is permitted. Read-only app views remain available without write opt-in. Restart always opens a Yes/No confirmation. Delete requires typing the exact app name and then activating a separate Delete app button by mouse click or Tab/Enter; Cancel is focused first. Before either write, re-read the app by UUID and verify its name and ID still match the reviewed target. Mock mode offers the same menu and confirmation UI, simulates restart, and removes a deleted app only from the current in-memory preview; it never calls the API or changes the fixture file.
 

@@ -28,7 +28,7 @@
 - With no org, show tenant choices in the sidebar after Profile. If Profile fails, offer configured local slugs. If neither source yields a choice, show setup guidance using `darkubectl whoami`, `--org` and `darkubectl login`, with retry and quit. A successful empty Profile and a failed Profile have distinct messages. Missing credentials reuse the existing setup error and exit without entering the alternate screen.
 - Tenant changes apply only to this run. On selection, immediately change the scope label and invalidate prior data, cursors, filters, app details, logs, requests and overlays. Reset namespace to All. If the new tenant denies access, keep that tenant displayed with retry and context selection.
 - `n` opens a fuzzy namespace picker with All plus project rows keyed by namespace ID, cluster and name. Load the full inventory lazily through `ListNamespaces`; if unavailable (such as with API-key credentials), derive namespaces from the already-loaded app snapshot and mark that empty projects are omitted. Show empty namespaces. Mock profiles can provide an explicit `namespaces` inventory to preview empty projects offline. Choosing a namespace scopes the tree and clears the app filter. Keep Apps and the selected app Summary in the two main panes, with the navigation rail on the left. On a namespace row, Left/`h` collapses and Right/`l` expands it. On an app row, Right/`l` opens Summary; Left/`h` collapses its namespace. From Summary, Left/`h` returns to Apps. From the navigation rail, Right/`l` moves to Apps. `Tab`/`Shift+Tab` cycles focus across all panes.
-- The left navigation rail has two equal-height panes: Tenant above Pages. Tenant always shows the available tenant list; `1` focuses it, and Up/Down or `k`/`j` changes the active tenant immediately without Enter. If the list exceeds the pane height, moving the cursor scrolls the visible rows. `1`, `2`, `3` and `4` focus Tenant, Pages, Apps and the selected-item detail workspace respectively. Apps is the only enabled page; Activity, Tickets, Resources, Registry, Billing and Account are listed as disabled until implemented. Summary, Usage, Pods, Logs, Builds, Env, Terminal, Domains and History are app-specific views available from a selected app, not global pages.
+- The left navigation rail has two equal-height panes: Tenant above Pages. Tenant always shows the available tenant list; `1` focuses it, and Up/Down or `k`/`j` changes the active tenant immediately without Enter. If the list exceeds the pane height, moving the cursor scrolls the visible rows. `1`, `2`, `3` and `4` focus Tenant, Pages, Apps and the selected-item detail workspace respectively. Apps is the only enabled page; Activity, Tickets, Resources, Registry, Billing and Account are listed as disabled until implemented. Summary, Usage, Scaling, Logs, Builds, Env, Terminal, Domains and History are app-specific views available from a selected app, not global pages. Summary includes pod status; Scaling shows replica and autoscaler configuration.
 
 ## Input contract
 
@@ -37,13 +37,13 @@
 | Apps browser · Up/Down or `k/j` | Move through the app tree and update the adjacent summary |
 | Pane focus · `1`, `2`, `3`, `4` | Focus Tenant, Pages, Apps or the selected-item detail workspace. `Tab`/`Shift+Tab` cycles focus through the four panes. |
 | Apps and Summary panes · Left/Right or `h/l` | On a namespace, Left/`h` collapses and Right/`l` expands. On an app, Right/`l` or Enter focuses Summary; Left/`h` collapses the namespace. From Summary, Left/`h` returns to Apps. From the navigation rail, Right/`l` moves to Apps. |
-| App-specific views · `[` / `]` | In the focused app detail pane, wrap between Summary and Usage without changing the selected app. |
+| App-specific views · `[` / `]` | In the focused app detail pane, wrap between Summary, Usage and Scaling without changing the selected app. |
 | Usage · `m`, `w` | Cycle CPU Usage, CPU Throttle, RAM Usage, Network Receive and Network Send (and Disk Usage when configured); cycle the history range through 1 hour, 6 hours and 24 hours. |
 | Usage · `p`, PageUp/PageDown | Show all pod series or focus one pod; scroll through the chart and pod legend. |
 | Tenant pane · `1`, Up/Down or `k/j` | Focus the always-visible tenant list; moving the highlight switches the session immediately. No Enter or `t` shortcut is needed. |
 | Browse · `n` | Open the searchable namespace picker. Type to filter, use Up/Down to move, then Enter to choose All or a namespace. |
 | Multi-control screen · Tab / Shift+Tab | Cycle focus among panes. Move focus to the nearest surviving control on resize. |
-| List or viewport · Home/End or `g/G` | First/last row or top/bottom. Viewport also supports PageUp/PageDown. |
+| List or viewport · Home/End or `g/G` | First/last row or top/bottom. Summary and Scaling support PageUp/PageDown scrolling. |
 | Apps tree · PageUp/PageDown | Move the app selection by approximately one visible page. |
 | List · `/`, Enter, Esc | Open an inline filter after the breadcrumb. Matches update as you type using case-insensitive fuzzy subsequence matching. `appname` searches app names across all namespaces; `namespace/appname` scopes both sides, allowing spaces around `/`. Up/Down leaves text entry and moves through the filtered tree; Enter focuses Summary for the selected app. Esc while editing restores the previous query, and Esc from the list clears a query. Ctrl+U clears while editing. |
 | Browse · `a`, `r`, `?`, `q` | Open lifecycle actions for the selected item, refresh the active view, show help or quit. Hide unavailable actions from the menu. |
@@ -52,7 +52,7 @@
 | Modal or text input | Innermost component handles keys first. Printable shortcuts, including `q`, are literal in text fields. Esc closes the namespace picker before changing view. Ctrl+C exits consistently and restores the terminal. |
 | Drilldown · Enter, Esc | Open the focused row or control. Esc returns to the parent after overlays and filters have been handled. |
 
-`a` opens the selected app's lifecycle menu. App-specific configuration stays in the related view. Summary and Usage are the available app views; `[` / `]` switches between them while the detail pane is focused.
+`a` opens the selected app's lifecycle menu. App-specific configuration stays in the related view. Summary, Usage and Scaling are the available app views; `[` / `]` switches between them while the detail pane is focused.
 
 ## Layout and data states
 
