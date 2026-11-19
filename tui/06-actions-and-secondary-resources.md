@@ -2,14 +2,15 @@
 
 ## App actions · Phase 2
 
-The contextual `a` menu is for app lifecycle actions: Restart and Delete. Stop is not shown because Darkubectl has no distinct app-stop command. Scaling currently shows replica and autoscaler settings read-only; scaling mutations need a dedicated confirmed flow. Resource usage and history stay in Usage, image changes and deployment in Builds, and host changes in Domains. Logs, build output, Env and Terminal are views, not action-menu entries.
+The contextual `a` menu contains app lifecycle actions and Terminal. Stop is not shown because Darkubectl has no distinct app-stop command. Resources combines plan, CPU/RAM sizing, replica and autoscaler settings with current usage and history. Write mode stages supported resource changes for diff review and confirmation. Billing endpoints expose tenant wallets and invoices, without app-level attribution. Image changes and deployment stay in Builds, and host changes stay in Domains. Logs and Env are detail views; Terminal opens from the action menu so the remote session can take over the user's terminal.
 
 Live actions require explicit session-level write opt-in with `darkubectl tui --allow-writes`. Server authorization still determines whether an operation is permitted. Read-only app views remain available without write opt-in. Restart always opens a Yes/No confirmation. Delete requires typing the exact app name and then activating a separate Delete app button by mouse click or Tab/Enter; Cancel is focused first. Before either write, re-read the app by UUID and verify its name and ID still match the reviewed target. Mock mode offers the same menu and confirmation UI, simulates restart, and removes a deleted app only from the current in-memory preview; it never calls the API or changes the fixture file.
 
 ```text
 + Actions / team-a / prod / billing-api ---------------------------+
-| > Restart app                                                    |
-|   Delete app                                                     |
+| > >_ Terminal                                                    |
+|   ↻ Restart                                                      |
+|   ✖ Delete                                                       |
 +------------------------------------------------------------------+
 
 + ↻ Restart --------------------------------------------------------+
@@ -41,22 +42,24 @@ Live actions require explicit session-level write opt-in with `darkubectl tui --
 
 Build start, retry and stop remain inside the app's Builds view. Namespace removal and destructive registry or storage operations require their own implementation brief. Any destructive flow needs an exact target review, typed confirmation for irreversible actions, and explicit handling of known platform behavior, such as Helm releases surviving app deletion. No core release shortcut invokes these flows.
 
-## Resources, Registry and Tickets · Phase 3
+## DB, Registry and Tickets · Phase 3
 
 ```text
-+ Resources / team-a -----------------------------------------------+
-| Find resource:                    Namespaces   Certificates       |
-| > Disks                          Databases    Storage             |
-|   Marketplace services           Members      Billing             |
-|   Orphaned workloads                                              |
-| Enter browse   Esc back                                           |
++ DB / team-a ------------------------------------------------------+
+| NAME          ENGINE       STATUS    DETAIL       NODES   SIZE     |
+| > prod-pg      PostgreSQL 16 ready   healthy      3       2c/4G/80G|
+|   analytics   ClickHouse  24.8      provisioning 1       4c/8G/100G|
+| Enter details   r refresh   Esc back                               |
 +-------------------------------------------------------------------+
 
 + Registry / team-a / team-images ----------------------------------+
-| Registries / team-images / billing-api                            |
-| > release-52    sha256:78b...                                     |
-|   release-51    sha256:221...                                     |
-| Enter tag details  Esc images                                     |
+| ▾ hamdocker / billing-api                                        |
+| >   release-53, latest                                            |
+|     release-51                                                    |
+|         sha256:af013… (untagged)                                  |
+| Digest     sha256:af0132e…  ·  Size  83 MiB                      |
+| Tags       release-53, latest                                     |
+| Enter load/detail   d delete image/digest   t remove one tag       |
 +-------------------------------------------------------------------+
 
 + Tickets / team-a -------------------------------------------------+
@@ -66,7 +69,7 @@ Build start, retry and stop remain inside the app's Builds view. Namespace remov
 +-------------------------------------------------------------------+
 ```
 
-- Resources starts with Namespace and certificate inventory. Add remaining types in vertical slices using existing `get` commands as data contracts. Keep marketplace services tied to the app model. Treat billing and member data as separately authorized. Orphan reconciliation is opt-in and requires local `kubectl` plus an explicit Kubernetes context verified against the Darkube scope.
-- Registry starts with registry → image → tag and read-only detail, including GC rules where exposed. Reuse existing listing and pagination paths. Registry passwords and credential output remain CLI-only. Any future prune or delete must preview exact scope and distinguish preview from execution.
+- DB lists tenant managed databases through the existing `get databases` contract. Show engine/version, status/detail, node count and per-node CPU, RAM and disk. Structured output includes the returned database, namespace and cluster IDs plus managed status. Connection endpoints and credentials are not part of the current CLI response and must not be fabricated. Open details only for fields returned by the API. This page is read-only.
+- Registry is grouped as registry → image → manifest. Each manifest row displays all tags that point to it, so aliases such as `release-53` and `latest` appear together and cannot be mistaken for separate images. Untagged manifests show a shortened digest in the explorer; details show the full digest, size, push time, tags, and reference. Load registries and image names on page entry, then load manifests on demand when an image is opened. `d` deletes the selected image or manifest after a target review and typing `delete`; `t` opens the manifest's tag list and removes only the selected tag after confirmation. Image deletion removes every manifest and tag; manifest deletion removes that manifest and its tags; tag deletion preserves the manifest. Credentials remain CLI-only. Registry creation is unavailable until a supported API operation is found. Retention and prune remain CLI workflows.
 - Tickets starts with tenant ticket list and read-only conversation. Load detail on demand, sanitize rich text, and leave attachments in the CLI. Create/reply/close/rate are separate designs with draft handling and confirmation appropriate to each external effect.
-- The app-scoped Terminal view is planned for a later release and requires verified Console auth plus an exact app/pod/container. Reuse the existing terminal operation and Bubble Tea's supported terminal suspend/resume flow. Pause requests that follow the selection, restore the screen after failure or completion and refresh the chosen app. Arbitrary local command execution, copying files, tunnels and credential-revealing commands remain CLI workflows.
+- Terminal is available from the app action menu and requires Console auth plus an exact app/pod/container. Reuse the existing terminal operation and Bubble Tea's terminal suspend/resume flow. Print the app, pod and container with Ctrl+D/Ctrl+C/Ctrl+L guidance to stdout before attaching. Restore the screen after failure or completion. Arbitrary local command execution, copying files, tunnels and credential-revealing commands remain CLI workflows. In mock mode, the same picker and target banner work offline; shell commands are disabled.

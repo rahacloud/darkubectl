@@ -35,6 +35,8 @@
 
 ## Activity
 
+See [13 Activity page plan](13-activity-page-plan.md) for the detailed proposed layout, glyphs, colors, interactions and implementation steps.
+
 - Alerts uses `Client.Alerts` with active org; defaults to firing using `Alert.IsFiring`. Offer All/Firing/Resolved, using the platform status text for rows. Show severity, name, affected target text and start/end when available. Enter opens bounded details. Label raw target strings as reported data.
 - Notifications uses the account-level client and `Notifications(ctx, 50)`. Provide All/Unread. Identify rows by slug. Convert HTML descriptions to plain text and sanitize before rendering. Keep links inert. Opening an item performs no mark-read request. A change of tenant must not relabel these items as belonging to that tenant.
 - Provide **Open app** for an alert only if the pinned API/CLI supplies a verified app reference or a fixture-backed parser for an expected action-link format yields an exact app UUID present in the current tenant. Check origin/path before parsing any link and never navigate the URL itself. Do not match based on a display name. If an exact target is outside the active namespace, prompt before changing namespace scope. Ship alert details without a link until the reference format is verified.

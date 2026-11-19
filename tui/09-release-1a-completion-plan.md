@@ -4,7 +4,7 @@
 
 Complete the read-only interactive shell so a user can launch the TUI, choose a tenant, find the right app, inspect its Summary, refresh safely, and recover from loading or request failures. Preserve the existing mock profile as the repeatable offline path.
 
-Release 1A remains a read-only shell for data access. The already implemented Restart and Delete lifecycle actions remain gated by `--allow-writes`, use their confirmation UI, and are covered here by a regression/security audit. The current browser also includes a read-only pod snapshot in Summary and a read-only Scaling view for replica/HPA settings. Scaling writes, disk, domain, Env, Terminal, Logs, Builds, global pages, and additional mutations remain later-release work. No credentials or secret values may enter model state, logs, errors, or rendered output.
+Release 1A remains a read-only shell for its original data views. Restart, Delete and Env writes require `--allow-writes` and explicit confirmation. Env and Terminal are implemented as app experiences: plain values are visible, secrets are hidden initially and can be revealed or copied when selected, and Terminal is opened from the app action menu. Scaling writes, disk, domain, Builds, global pages, and additional mutations remain later-release work. Credentials and secret values must not enter logs or errors.
 
 ## Starting point
 
