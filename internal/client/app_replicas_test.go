@@ -74,6 +74,11 @@ func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 		t.Fatalf("runtime settings projection is incomplete: %+v", app)
 	}
 
+	assertAppStructuredOutputCompatibility(t, app)
+}
+
+func assertAppStructuredOutputCompatibility(t *testing.T, app client.App) {
+	t.Helper()
 	jsonOutput, err := json.Marshal(app)
 	if err != nil {
 		t.Fatal(err)
@@ -233,8 +238,10 @@ func TestOptionalDetailsDoNotBreakList(t *testing.T) {
 			t.Fatalf("unexpected partial projection: %+v", app)
 		}
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"count":2,"next":null,"results":[{"id":"bad","svc":{"ports":[]}},{"id":"good","svc":{"internalAddress":"ok"}}]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"count":2,"next":null,"results":[`+
+			`{"id":"bad","svc":{"ports":[]}},`+
+			`{"id":"good","svc":{"internalAddress":"ok"}}]}`)
 	}))
 	defer server.Close()
 	apps, err := client.New(server.URL, client.APIKey("test"), "org").ListApps(context.Background())

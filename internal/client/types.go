@@ -97,8 +97,8 @@ type App struct {
 	IsHPAEnabled        bool     `json:"is_hpa_enabled"`
 	RAMLimit            string   `json:"ram_limit"`
 	CPURequest          string   `json:"cpu_request"`
-	Disk                *Disk    `json:"-" yaml:"-"`
-	ExternalHosts       []string `json:"-" yaml:"-"`
+	Disk                *Disk    `json:"-"                     yaml:"-"`
+	ExternalHosts       []string `json:"-"                     yaml:"-"`
 	CustomDomainAddress string   `json:"custom_domain_address"`
 	EnableSSL           bool     `json:"enable_SSL"`
 	ReadinessProbePath  string   `json:"-"                     yaml:"-"`
@@ -186,6 +186,7 @@ func (a *App) UnmarshalJSON(data []byte) error {
 	type appAlias App
 	var decoded struct {
 		appAlias
+
 		Disk          *Disk    `json:"disk"`
 		ExternalHosts []string `json:"external_hosts"`
 	}
@@ -208,11 +209,15 @@ func (a *App) UnmarshalJSON(data []byte) error {
 		}
 	}
 	var service AppService
-	if value := fields["svc"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &service) == nil {
+	if value := fields["svc"]; len(value) > 0 &&
+		!bytes.Equal(bytes.TrimSpace(value), []byte("null")) &&
+		json.Unmarshal(value, &service) == nil {
 		a.Service = &service
 	}
 	var config AppCustomConfig
-	if value := fields["custom_config"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &config) == nil {
+	if value := fields["custom_config"]; len(value) > 0 &&
+		!bytes.Equal(bytes.TrimSpace(value), []byte("null")) &&
+		json.Unmarshal(value, &config) == nil {
 		a.CustomConfig = &config
 	}
 	decodeOptional("readiness_probe_path", &a.ReadinessProbePath)
