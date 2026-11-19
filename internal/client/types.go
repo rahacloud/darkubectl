@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -83,23 +84,30 @@ func (p Plan) IsCreatable() bool {
 // Only the commonly used fields are typed; `darkubectl describe`/`-o json` read
 // the raw object so no data is lost to this partial view.
 type App struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	Namespace           Namespace `json:"namespace"`
-	State               State     `json:"state"`
-	Plan                *Plan     `json:"plan"`
-	Replicas            int       `json:"replicas"`
-	IsEnabled           bool      `json:"is_enabled"`
-	IsDeployable        bool      `json:"is_deployable"`
-	IsHPAEnabled        bool      `json:"is_hpa_enabled"`
-	RAMLimit            string    `json:"ram_limit"`
-	CPURequest          string    `json:"cpu_request"`
-	CustomDomainAddress string    `json:"custom_domain_address"`
-	EnableSSL           bool      `json:"enable_SSL"`
-	ImageRepo           string    `json:"image_repo"`
-	ImageTag            string    `json:"image_tag"`
-	CreationTime        string    `json:"creation_time"`
-	UpdatedAt           string    `json:"updated_at"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Namespace Namespace `json:"namespace"`
+	State     State     `json:"state"`
+	Plan      *Plan     `json:"plan"`
+	Replicas  int       `json:"replicas"`
+	// ReplicasPresent distinguishes an explicit zero from an omitted/null API value.
+	ReplicasPresent     bool     `json:"-"                     yaml:"-"`
+	IsEnabled           bool     `json:"is_enabled"`
+	IsDeployable        bool     `json:"is_deployable"`
+	IsHPAEnabled        bool     `json:"is_hpa_enabled"`
+	RAMLimit            string   `json:"ram_limit"`
+	CPURequest          string   `json:"cpu_request"`
+	Disk                *Disk    `json:"-"                     yaml:"-"`
+	ExternalHosts       []string `json:"-"                     yaml:"-"`
+	CustomDomainAddress string   `json:"custom_domain_address"`
+	EnableSSL           bool     `json:"enable_SSL"`
+	ReadinessProbePath  string   `json:"-"                     yaml:"-"`
+	Command             string   `json:"-"                     yaml:"-"`
+	Args                string   `json:"-"                     yaml:"-"`
+	ImageRepo           string   `json:"image_repo"`
+	ImageTag            string   `json:"image_tag"`
+	CreationTime        string   `json:"creation_time"`
+	UpdatedAt           string   `json:"updated_at"`
 
 	// CreationMethod is how the app came to exist, and it is the field that
 	// separates a plain workload from a managed service. There is no separate
@@ -108,7 +116,114 @@ type App struct {
 	// "postgresqlnew", "grafana", "prometheus" and so on. Without surfacing it
 	// there is no way to tell the two apart, which is why `get apps -o wide`
 	// prints it and `--type` filters on it.
-	CreationMethod string `json:"creation_method"`
+	CreationMethod string           `json:"creation_method"`
+	Service        *AppService      `json:"-"               yaml:"-"`
+	CustomConfig   *AppCustomConfig `json:"-"               yaml:"-"`
+}
+
+// AppService contains the platform-provided addresses for an app's service.
+// The API uses camel-cased keys inside the otherwise snake-cased app payload.
+type AppService struct {
+	Type            string          `json:"type"`
+	Ports           map[string]Port `json:"ports"`
+	InternalAddress string          `json:"internalAddress"`
+	ExternalAddress string          `json:"externalAddress"`
+	ExternalIP      string          `json:"externalIP"`
+}
+
+// AppCustomConfig exposes the chart configuration needed by the TUI and
+// selected app detail commands. Other chart configuration is omitted.
+type AppCustomConfig struct {
+	Container *AppContainerConfig `json:"container"`
+	HPA       *AppHPAConfig       `json:"hpa"`
+}
+
+// AppHPAConfig is the autoscaling configuration under custom_config.hpa.
+type AppHPAConfig struct {
+	Enabled                        bool `json:"enabled"`
+	MinReplicas                    int  `json:"minReplicas"`
+	MaxReplicas                    int  `json:"maxReplicas"`
+	TargetCPUUtilizationPercentage int  `json:"targetCPUUtilizationPercentage"`
+}
+
+// AppContainerConfig contains container settings.
+type AppContainerConfig struct {
+	ReadinessProbe *AppProbe `json:"readinessProbe"`
+}
+
+// AppProbe describes a readiness probe.
+type AppProbe struct {
+	HTTPGet             *AppHTTPGet    `json:"httpGet"`
+	Exec                *AppExecAction `json:"exec"`
+	TCPSocket           *AppTCPSocket  `json:"tcpSocket"`
+	InitialDelaySeconds int            `json:"initialDelaySeconds"`
+	PeriodSeconds       int            `json:"periodSeconds"`
+	TimeoutSeconds      int            `json:"timeoutSeconds"`
+	SuccessThreshold    int            `json:"successThreshold"`
+	FailureThreshold    int            `json:"failureThreshold"`
+}
+
+// AppHTTPGet describes an HTTP probe.
+type AppHTTPGet struct {
+	Path string          `json:"path"`
+	Port json.RawMessage `json:"port"`
+}
+
+// AppExecAction describes an exec probe.
+type AppExecAction struct {
+	Command []string `json:"command"`
+}
+
+// AppTCPSocket describes a TCP probe.
+type AppTCPSocket struct {
+	Port json.RawMessage `json:"port"`
+}
+
+// UnmarshalJSON preserves whether desired replicas were supplied by the API.
+// JSON null and an omitted field are both treated as unknown; explicit zero is
+// a known value and remains available through Replicas as before.
+func (a *App) UnmarshalJSON(data []byte) error {
+	type appAlias App
+	var decoded struct {
+		appAlias
+
+		Disk          *Disk    `json:"disk"`
+		ExternalHosts []string `json:"external_hosts"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	raw, exists := fields["replicas"]
+	*a = App(decoded.appAlias)
+	a.Disk = decoded.Disk
+	a.ExternalHosts = decoded.ExternalHosts
+	a.ReplicasPresent = exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+	decodeOptional := func(name string, target any) {
+		value, present := fields[name]
+		if present && len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			_ = json.Unmarshal(value, target)
+		}
+	}
+	var service AppService
+	if value := fields["svc"]; len(value) > 0 &&
+		!bytes.Equal(bytes.TrimSpace(value), []byte("null")) &&
+		json.Unmarshal(value, &service) == nil {
+		a.Service = &service
+	}
+	var config AppCustomConfig
+	if value := fields["custom_config"]; len(value) > 0 &&
+		!bytes.Equal(bytes.TrimSpace(value), []byte("null")) &&
+		json.Unmarshal(value, &config) == nil {
+		a.CustomConfig = &config
+	}
+	decodeOptional("readiness_probe_path", &a.ReadinessProbePath)
+	decodeOptional("command", &a.Command)
+	decodeOptional("args", &a.Args)
+	return nil
 }
 
 // plainCreationMethods are the methods that produce an ordinary workload: an
