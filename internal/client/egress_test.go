@@ -44,7 +44,7 @@ func TestGetEgressRoutesHTTPContract(t *testing.T) {
 	cluster := got["65"]
 	if cluster.Cluster.ID != 65 ||
 		cluster.Cluster.Name != "test-cluster" ||
-		cluster.DefaultOutgoingIP != "192.0.2.1" ||
+		cluster.Cluster.DefaultOutgoingIP != "192.0.2.1" ||
 		len(cluster.Routes) != 1 {
 		t.Fatalf("cluster = %+v", cluster)
 	}

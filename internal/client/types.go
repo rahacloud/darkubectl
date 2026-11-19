@@ -37,11 +37,10 @@ func (f *FlexID) UnmarshalJSON(data []byte) error {
 
 // Cluster is the physical cluster an app's namespace lives on.
 type Cluster struct {
-	ID                int    `json:"id"`
-	Name              string `json:"name"`
-	DefaultOutgoingIP string `json:"default_outgoing_ip,omitempty"`
-	LocationCountry   string `json:"location_country"`
-	IsOnPremise       bool   `json:"is_on_premise"`
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	LocationCountry string `json:"location_country"`
+	IsOnPremise     bool   `json:"is_on_premise"`
 }
 
 // Namespace maps to a Darkube "project" (a Kubernetes namespace).
