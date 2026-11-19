@@ -61,7 +61,9 @@ brew install rahacloud/tap/darkubectl
 **AUR** (Arch Linux):
 
 ```sh
-yay -S darkubectl-bin
+yay -S darkubectl-bin  # the prebuilt release binary
+yay -S darkubectl      # the release, built from source
+yay -S darkubectl-git  # the main branch, built from source
 ```
 
 **Go**:

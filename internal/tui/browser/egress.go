@@ -31,7 +31,7 @@ func (m *browser) egressIPForApp(a client.App) string {
 	if !ok {
 		return "-"
 	}
-	effectiveIP := clusterRoutes.DefaultOutgoingIP
+	effectiveIP := clusterRoutes.Cluster.DefaultOutgoingIP
 	var matchedRoute *client.EgressRoute
 	for i := range clusterRoutes.Routes {
 		route := &clusterRoutes.Routes[i]

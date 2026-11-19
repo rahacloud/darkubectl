@@ -99,8 +99,8 @@ type App struct {
 	IsHPAEnabled        bool     `json:"is_hpa_enabled"`
 	RAMLimit            string   `json:"ram_limit"`
 	CPURequest          string   `json:"cpu_request"`
-	Disk                *Disk    `json:"disk"`
-	ExternalHosts       []string `json:"external_hosts"`
+	Disk                *Disk    `json:"-" yaml:"-"`
+	ExternalHosts       []string `json:"-" yaml:"-"`
 	CustomDomainAddress string   `json:"custom_domain_address"`
 	CustomSubdomainAddr string   `json:"custom_subdomain_addr"`
 	EnableSSL           bool     `json:"enable_SSL"`
@@ -189,7 +189,11 @@ type AppTCPSocket struct {
 // a known value and remains available through Replicas as before.
 func (a *App) UnmarshalJSON(data []byte) error {
 	type appAlias App
-	var decoded appAlias
+	var decoded struct {
+		appAlias
+		Disk          *Disk    `json:"disk"`
+		ExternalHosts []string `json:"external_hosts"`
+	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
@@ -198,7 +202,9 @@ func (a *App) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	raw, exists := fields["replicas"]
-	*a = App(decoded)
+	*a = App(decoded.appAlias)
+	a.Disk = decoded.Disk
+	a.ExternalHosts = decoded.ExternalHosts
 	a.ReplicasPresent = exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	a.Inputs = inputNames(fields["inputs"])
 	if raw, exists := fields["build_method"]; exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -211,12 +217,7 @@ func (a *App) UnmarshalJSON(data []byte) error {
 		"git_provider_type": &a.GitProvider, "git_build_dockerfile": &a.GitDockerfile,
 		"git_build_context": &a.GitContext, "git_build_workdir": &a.GitWorkdir,
 		"builder": &a.Builder, "autodeploy_on_git_push": &a.GitAutodeploy,
-		"git_build_args":       &a.GitBuildArgs,
-		"svc":                  &a.Service,
-		"custom_config":        &a.CustomConfig,
-		"readiness_probe_path": &a.ReadinessProbePath,
-		"command":              &a.Command,
-		"args":                 &a.Args,
+		"git_build_args": &a.GitBuildArgs,
 	} {
 		value, present := fields[name]
 		if present && len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
@@ -224,6 +225,17 @@ func (a *App) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("app.%s: %w", name, err)
 			}
 		}
+	}
+	var service AppService
+	if value := fields["svc"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &service) == nil {
+		a.Service = &service
+	}
+	var config AppCustomConfig
+	if value := fields["custom_config"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &config) == nil {
+		a.CustomConfig = &config
+	}
+	for name, target := range map[string]*string{"readiness_probe_path": &a.ReadinessProbePath, "command": &a.Command, "args": &a.Args} {
+		_ = json.Unmarshal(fields[name], target)
 	}
 	return nil
 }

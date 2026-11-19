@@ -15,10 +15,10 @@ var ErrNoOrganizationID = errors.New("could not determine the numeric organizati
 
 // Port is one entry of svc.ports, keyed by name in the API ("main", "amqp", …).
 type Port struct {
-	ContainerPort int    `json:"containerPort" yaml:"containerPort"`
-	ServicePort   int    `json:"servicePort"   yaml:"servicePort"`
+	ContainerPort int    `json:"containerPort"      yaml:"containerPort"`
+	ServicePort   int    `json:"servicePort"        yaml:"servicePort"`
 	NodePort      int    `json:"nodePort,omitempty" yaml:"nodePort,omitempty"`
-	Protocol      string `json:"protocol"      yaml:"protocol"`
+	Protocol      string `json:"protocol"           yaml:"protocol"`
 }
 
 // Partition is one mount inside a Disk.

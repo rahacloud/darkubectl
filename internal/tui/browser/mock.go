@@ -73,7 +73,7 @@ func newMockBrowser(profile MockProfile) *browser {
 			if cluster.ID == 0 {
 				key = cluster.Name
 			}
-			egressByTenant[tenant.Name][key] = client.ClusterEgress{Cluster: cluster, DefaultOutgoingIP: "198.51.100.42"}
+			egressByTenant[tenant.Name][key] = client.ClusterEgress{Cluster: client.EgressCluster{ID: cluster.ID, Name: cluster.Name, DefaultOutgoingIP: "198.51.100.42"}}
 		}
 		options = append(options, tenantOption{name: tenant.Name, source: "Mock profile"})
 	}

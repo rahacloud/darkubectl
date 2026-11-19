@@ -11,9 +11,6 @@ import (
 	"github.com/rahacloud/darkubectl/internal/client"
 )
 
-// version is overridable at build time via -ldflags "-X ...cmd.version=...".
-var version = "dev"
-
 // Shared command-level errors.
 var (
 	errMissingAppRef = errors.New("an app NAME or ID argument is required")
