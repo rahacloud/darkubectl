@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/rahacloud/darkubectl/internal/output"
+	"github.com/rahacloud/darkubectl/internal/tui/theme"
 )
 
 const (
@@ -65,10 +66,10 @@ func RunDescribe(title string, rows []output.Row) error {
 		plainLines:   plain,
 		styles:       styles,
 		search:       search,
-		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(output.ColorAccent),
-		hintStyle:    lipgloss.NewStyle().Foreground(output.ColorMuted).Faint(true),
-		matchStyle:   lipgloss.NewStyle().Background(output.ColorMatchBG).Foreground(output.ColorMatchFG),
-		currentStyle: lipgloss.NewStyle().Background(output.ColorCurrentBG).Foreground(output.ColorCurrentFG),
+		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(theme.ColorAccent),
+		hintStyle:    lipgloss.NewStyle().Foreground(theme.ColorMuted),
+		matchStyle:   lipgloss.NewStyle().Background(theme.ColorMatchBG).Foreground(theme.ColorMatchFG),
+		currentStyle: lipgloss.NewStyle().Background(theme.ColorCurrentBG).Foreground(theme.ColorCurrentFG),
 	}
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {
