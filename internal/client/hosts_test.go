@@ -54,3 +54,28 @@ func TestCertificateStatusAndCheckDNS(t *testing.T) {
 		t.Errorf("request body = %v", dnsBody)
 	}
 }
+
+func TestSSLCertificateRecords(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/darkube/apps/app-1/ssl_certificate_records/" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Hosts []string `json:"external_hosts"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Hosts) != 1 || body.Hosts[0] != "api.example.com" {
+			t.Errorf("request body = %#v, error = %v", body, err)
+		}
+		_, _ = w.Write([]byte(`{"_acme-challenge.example.com":"one.acme.example","_acme-challenge.other.com":"two.acme.example"}`))
+	}))
+	defer srv.Close()
+	c := client.New(srv.URL, client.APIKey("k"), "acme")
+	records, err := c.SSLCertificateRecords(context.Background(), "app-1", []string{"api.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records["_acme-challenge.example.com"] != "one.acme.example" || records["_acme-challenge.other.com"] != "two.acme.example" {
+		t.Fatalf("records = %#v", records)
+	}
+}

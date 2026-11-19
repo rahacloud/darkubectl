@@ -37,10 +37,11 @@ func (f *FlexID) UnmarshalJSON(data []byte) error {
 
 // Cluster is the physical cluster an app's namespace lives on.
 type Cluster struct {
-	ID              int    `json:"id"`
-	Name            string `json:"name"`
-	LocationCountry string `json:"location_country"`
-	IsOnPremise     bool   `json:"is_on_premise"`
+	ID                   int    `json:"id"`
+	Name                 string `json:"name"`
+	AppsCustomBaseDomain string `json:"apps_custom_base_domain"`
+	LocationCountry      string `json:"location_country"`
+	IsOnPremise          bool   `json:"is_on_premise"`
 }
 
 // Namespace maps to a Darkube "project" (a Kubernetes namespace).
@@ -101,6 +102,7 @@ type App struct {
 	Disk                *Disk    `json:"disk"`
 	ExternalHosts       []string `json:"external_hosts"`
 	CustomDomainAddress string   `json:"custom_domain_address"`
+	CustomSubdomainAddr string   `json:"custom_subdomain_addr"`
 	EnableSSL           bool     `json:"enable_SSL"`
 	ReadinessProbePath  string   `json:"-" yaml:"-"`
 	Command             string   `json:"-" yaml:"-"`
@@ -117,10 +119,16 @@ type App struct {
 	// "postgresqlnew", "grafana", "prometheus" and so on. Without surfacing it
 	// there is no way to tell the two apart, which is why `get apps -o wide`
 	// prints it and `--type` filters on it.
-	CreationMethod string           `json:"creation_method"`
-	Service        *AppService      `json:"-" yaml:"-"`
-	CustomConfig   *AppCustomConfig `json:"-" yaml:"-"`
-	Inputs         []string         `json:"-" yaml:"-"`
+	CreationMethod string `json:"creation_method"`
+	// BuildMethod distinguishes Darkube's repository webhook from custom CI/CD.
+	// It is kept out of generic JSON/YAML output with the rest of the TUI fields.
+	BuildMethod                                                                        string           `json:"-" yaml:"-"`
+	GitRepoURL, GitBranch, GitProvider, GitDockerfile, GitContext, GitWorkdir, Builder string           `json:"-" yaml:"-"`
+	GitAutodeploy                                                                      *bool            `json:"-" yaml:"-"`
+	GitBuildArgs                                                                       json.RawMessage  `json:"-" yaml:"-"`
+	Service                                                                            *AppService      `json:"-" yaml:"-"`
+	CustomConfig                                                                       *AppCustomConfig `json:"-" yaml:"-"`
+	Inputs                                                                             []string         `json:"-" yaml:"-"`
 }
 
 // AppService contains the platform-provided addresses for an app's service.
@@ -193,7 +201,17 @@ func (a *App) UnmarshalJSON(data []byte) error {
 	*a = App(decoded)
 	a.ReplicasPresent = exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	a.Inputs = inputNames(fields["inputs"])
+	if raw, exists := fields["build_method"]; exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if err := json.Unmarshal(raw, &a.BuildMethod); err != nil {
+			return fmt.Errorf("app.build_method: %w", err)
+		}
+	}
 	for name, target := range map[string]any{
+		"git_repo_url": &a.GitRepoURL, "git_branch_name": &a.GitBranch,
+		"git_provider_type": &a.GitProvider, "git_build_dockerfile": &a.GitDockerfile,
+		"git_build_context": &a.GitContext, "git_build_workdir": &a.GitWorkdir,
+		"builder": &a.Builder, "autodeploy_on_git_push": &a.GitAutodeploy,
+		"git_build_args":       &a.GitBuildArgs,
 		"svc":                  &a.Service,
 		"custom_config":        &a.CustomConfig,
 		"readiness_probe_path": &a.ReadinessProbePath,
