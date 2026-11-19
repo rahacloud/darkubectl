@@ -40,6 +40,11 @@ archives:
       - LICENSE
       - completions/*
 
+# Source archive (`darkubectl-<version>.tar.gz`, files at the root), attached to
+# the release. The `aur_sources` block below builds from it.
+source:
+  enabled: true
+
 checksum:
   name_template: checksums.txt
 
@@ -137,6 +142,53 @@ aurs:
       install -Dm644 "./completions/darkubectl.bash" "${pkgdir}/usr/share/bash-completion/completions/darkubectl"
       install -Dm644 "./completions/darkubectl.zsh" "${pkgdir}/usr/share/zsh/site-functions/_darkubectl"
       install -Dm644 "./completions/darkubectl.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/darkubectl.fish"
+
+# AUR package `darkubectl`, which builds the tagged release from source for
+# users who do not want a prebuilt binary. It was created by hand at 0.15.0
+# from the GitHub tag tarball; from the next tag on, GoReleaser regenerates it
+# against the source archive below and pushes it with the same AUR_KEY as
+# `darkubectl-bin`. The commands run at the root of that archive, so there is
+# no `cd`. Completions are generated from the binary that was just built,
+# because the `before` hook's output is not part of the source archive.
+# `darkubectl-git` (builds `main`) is hand-maintained on the AUR and needs no
+# update per release: its pkgver() reads the version from git.
+aur_sources:
+  - name: darkubectl
+    homepage: https://github.com/rahacloud/darkubectl
+    description: kubectl-like access to the Hamravesh Darkube platform
+    license: GPL-3.0-only
+    maintainers:
+      - "Parham Alvani <parham.alvani@gmail.com>"
+    depends: [glibc]
+    makedepends: [go]
+    provides: [darkubectl]
+    conflicts: [darkubectl-bin, darkubectl-git]
+    skip_upload: '{{ if index .Env "AUR_KEY" }}false{{ else }}true{{ end }}'
+    private_key: '{{ index .Env "AUR_KEY" }}'
+    git_url: ssh://aur@aur.archlinux.org/darkubectl.git
+    commit_author:
+      name: Parham Alvani
+      email: parham.alvani@gmail.com
+    commit_msg_template: "Update to {{ .Tag }}"
+    prepare: |-
+      export GOFLAGS="-mod=readonly -modcacherw"
+      go mod download
+    build: |-
+      export CGO_CPPFLAGS="${CPPFLAGS}"
+      export CGO_CFLAGS="${CFLAGS}"
+      export CGO_CXXFLAGS="${CXXFLAGS}"
+      export CGO_LDFLAGS="${LDFLAGS}"
+      export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
+      go build -o darkubectl -ldflags="-linkmode=external -X github.com/rahacloud/darkubectl/cmd.version=${pkgver}" .
+      for shell in bash zsh fish; do
+        ./darkubectl completion "${shell}" > "darkubectl.${shell}"
+      done
+    package: |-
+      install -Dm755 "./darkubectl" "${pkgdir}/usr/bin/darkubectl"
+      install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+      install -Dm644 "./darkubectl.bash" "${pkgdir}/usr/share/bash-completion/completions/darkubectl"
+      install -Dm644 "./darkubectl.zsh" "${pkgdir}/usr/share/zsh/site-functions/_darkubectl"
+      install -Dm644 "./darkubectl.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/darkubectl.fish"
 
 release:
   draft: false
