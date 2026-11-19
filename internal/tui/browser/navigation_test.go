@@ -49,14 +49,14 @@ func TestTenantShortcutRemovedFromDispatchAndHelp(t *testing.T) {
 			}
 		}
 	}
-	foundImmediateTenantHint := false
+	foundTenantPaneShortcut := false
 	for _, hint := range m.keyHints(true) {
-		if hint.key == "1" && strings.Contains(hint.action, "switch now") {
-			foundImmediateTenantHint = true
+		if hint.key == "1" && strings.Contains(hint.action, "tenant") {
+			foundTenantPaneShortcut = true
 		}
 	}
-	if !foundImmediateTenantHint {
-		t.Fatal("help should explain immediate tenant switching")
+	if foundTenantPaneShortcut {
+		t.Fatal("help should not show the removed tenant shortcut")
 	}
 }
 

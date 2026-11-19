@@ -15,11 +15,22 @@ func TestMouseClickSelectsBorderViewTab(t *testing.T) {
 	_, summaryWidth, contextWidth := m.paneWidths()
 	appsWidth, _, _ := m.paneWidths()
 	viewLeft := contextWidth + 3 + appsWidth + 2 + 1
-	// At this width the title is "[4] [Summary] Usage Scaling Logs".
-	// Scaling starts after the prefix, selected Summary, and Usage labels.
-	scalingX := viewLeft + 1 + 2 + len("[4] ") + len("[Summary] ") + len("Usage ")
-	m.handleBrowserMouse(tea.MouseClickMsg{X: scalingX, Y: m.browserBodyY(), Button: tea.MouseLeft})
-	if m.activeAppView != appViewScaling {
-		t.Fatalf("active view = %v, want Scaling (pane width %d)", m.activeAppView, summaryWidth)
+	// Resolve the tab position from the labels actually rendered at this width.
+	tabs := appViewTabLabels(summaryWidth)
+	position := len("[4] ")
+	for i := range tabs {
+		span := len(tabs[i])
+		if visibleAppViews()[i] == appViewSummary {
+			span += 2
+		}
+		if visibleAppViews()[i] == appViewUsage {
+			break
+		}
+		position += span + 1
+	}
+	resourcesX := viewLeft + 1 + 2 + position
+	m.handleBrowserMouse(tea.MouseClickMsg{X: resourcesX, Y: m.browserBodyY(), Button: tea.MouseLeft})
+	if m.activeAppView != appViewUsage {
+		t.Fatalf("active view = %v, want Resources (pane width %d)", m.activeAppView, summaryWidth)
 	}
 }

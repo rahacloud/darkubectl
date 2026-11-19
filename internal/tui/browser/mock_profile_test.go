@@ -19,8 +19,39 @@ func TestLoadDemoMockProfile(t *testing.T) {
 		t.Fatalf("unexpected profile scope or app count: tenant=%q apps=%d", profile.Tenant, len(profile.Apps))
 	}
 	app := profile.Apps[0]
+	if app.CustomSubdomainAddr != "api-prod" || app.Namespace.Cluster.AppsCustomBaseDomain != "demo-west.darkube.app" {
+		t.Fatalf("platform subdomain fixture was not loaded: label=%q base=%q", app.CustomSubdomainAddr, app.Namespace.Cluster.AppsCustomBaseDomain)
+	}
 	if app.Namespace.Name != "production" || app.State.Text != "healthy (2/2)" || !app.ReplicasPresent || app.Service == nil || app.Service.InternalAddress != "api.production.demo.svc" || app.Service.Ports["http"].NodePort != 30421 || app.ReadinessProbePath != "/healthz" || app.Command != "/app/server" || app.Args != "--port 8080" || !reflect.DeepEqual(app.Inputs, []string{"LOG_LEVEL", "PUBLIC_BASE_URL"}) {
 		t.Fatalf("unexpected app projection: %+v", app)
+	}
+	if len(profile.Registries) != 1 || len(profile.Registries[0].Images) == 0 {
+		t.Fatalf("registry fixture missing: %+v", profile.Registries)
+	}
+	api := profile.Registries[0].Images[0]
+	if len(api.Digests) < 2 || !reflect.DeepEqual(api.Digests[0].Tags, []string{"release-53", "latest"}) || len(api.Digests[2].Tags) != 0 {
+		t.Fatalf("expected alias tags and untagged digest: %+v", api.Digests)
+	}
+}
+
+func TestMockRegistryDeleteTagPreservesManifest(t *testing.T) {
+	t.Parallel()
+	profile, err := LoadMockProfile("../../../demo/mock-profile.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := profile.Registries[0].Registry
+	image := profile.Registries[0].Images[0]
+	m := newMockBrowser(profile)
+	if err := m.deleteRegistryTags(nil, profile.Tenant, registry.ID, image.Repository.Name, image.Digests[0].Digest, []string{"latest"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.listRegistryDigests(nil, profile.Tenant, registry.ID, image.Repository.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || !reflect.DeepEqual(got[0].Tags, []string{"release-53"}) {
+		t.Fatalf("tag deletion changed manifest unexpectedly: %+v", got)
 	}
 }
 

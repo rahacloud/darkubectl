@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"github.com/rahacloud/darkubectl/internal/output"
 	"image/color"
 	"math"
 	"sort"
@@ -81,7 +80,7 @@ func historyXAxis(start, end time.Time, width, prefixWidth int) []string {
 		place(labels[1], width/2-ansi.StringWidth(labels[1])/2)
 	}
 	prefix := strings.Repeat(" ", prefixWidth)
-	return []string{paint(prefix+string(axis), output.ColorBorder, false), paint(prefix+string(labelLine), output.ColorMuted, false)}
+	return []string{paint(prefix+string(axis), browserBorder, false), paint(prefix+string(labelLine), browserMuted, false)}
 }
 
 type historyMetric struct {
@@ -267,7 +266,7 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 			} else {
 				rows[line][col] = '─'
 			}
-			colors[line][col] = output.ColorMatchBG
+			colors[line][col] = browserMatchBG
 		}
 	}
 	out := make([]string, height)
@@ -279,7 +278,7 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 				continue
 			}
 			if colors[row][col] == nil {
-				b.WriteString(paint(string(cell), output.ColorMatchBG, false))
+				b.WriteString(paint(string(cell), browserMatchBG, false))
 			} else {
 				b.WriteString(paint(string(cell), colors[row][col], false))
 			}

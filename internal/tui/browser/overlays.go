@@ -3,7 +3,6 @@ package browser
 import (
 	"fmt"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/output"
 	"strings"
 )
 
@@ -12,24 +11,24 @@ func (m *browser) namespaceModal(background []string) []string {
 	innerWidth := panelWidth - 6
 	choices := m.namespaceChoices()
 	content := []string{
-		paint("⎈  NAMESPACE SCOPE", output.ColorAccent, true),
-		"Filter by namespace, cluster, or ID: " + paint(m.namespaceQuery+"▏", output.ColorBranch, true),
-		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
+		paint("⎈  NAMESPACE SCOPE", browserAccent, true),
+		"Filter by namespace, cluster, or ID: " + paint(m.namespaceQuery+"▏", browserBranch, true),
+		paint(strings.Repeat("─", innerWidth), browserBorder, false),
 	}
 	if m.namespaceState.active() {
 		content = append(content, m.loadingMessage("Loading namespace inventory…"))
 	}
 	if m.namespaceState.err != nil && m.namespaceState.status != requestStale {
-		content = append(content, paint("Namespace inventory failed: "+safeText(m.namespaceState.err.Error()), output.ColorNumber, false))
+		content = append(content, paint("Namespace inventory failed: "+safeText(m.namespaceState.err.Error()), browserNumber, false))
 	} else if m.namespaceState.status == requestStale {
-		content = append(content, paint("Cached inventory · refresh failed", output.ColorNumber, false), staleRequestTime("Namespaces", m.namespaceState))
+		content = append(content, paint("Cached inventory · refresh failed", browserNumber, false), staleRequestTime("Namespaces", m.namespaceState))
 	}
 	if m.namespaceFallback {
 		message := "Inventory unavailable · showing namespaces with apps"
 		if strings.HasPrefix(m.mode, "MOCK") {
 			message = "Using mock app namespaces · empty projects need explicit fixture inventory"
 		}
-		content = append(content, paint(message, output.ColorNumber, false))
+		content = append(content, paint(message, browserNumber, false))
 	}
 	capacity := max(1, min(10, m.height-12))
 	first := max(0, min(m.namespaceCursor-capacity+1, len(choices)-capacity))
@@ -38,12 +37,11 @@ func (m *browser) namespaceModal(background []string) []string {
 		content = append(content, m.namespaceChoiceRow(choices[i], i, innerWidth))
 	}
 	if len(choices) == 0 {
-		content = append(content, paint("No namespaces match this filter.", output.ColorMuted, false))
+		content = append(content, paint("No namespaces match this filter.", browserMuted, false))
 	}
 	if first > 0 || last < len(choices) {
-		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(choices)), output.ColorMuted, false))
+		content = append(content, paint(fmt.Sprintf("Showing %d–%d of %d", first+1, last, len(choices)), browserMuted, false))
 	}
-	content = append(content, "", "↑/↓ move  ·  ↵ select", "Type to filter  ·  Esc close")
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	if len(background) < m.height {
@@ -70,16 +68,16 @@ func (m *browser) helpModal(background []string) []string {
 	panelWidth := min(helpModalMaxWidth, m.width-browserModalMargin)
 	innerWidth := panelWidth - 6
 	row := func(leftKey, leftLabel, rightKey, rightLabel string) string {
-		left := paint(leftKey, output.ColorBranch, true) + " " + paint(leftLabel, output.ColorMuted, false)
-		right := paint(rightKey, output.ColorBranch, true) + " " + paint(rightLabel, output.ColorMuted, false)
+		left := paint(leftKey, browserBranch, true) + " " + paint(leftLabel, browserMuted, false)
+		right := paint(rightKey, browserBranch, true) + " " + paint(rightLabel, browserMuted, false)
 		columnWidth := (innerWidth - 3) / 2
 		left = ansi.Truncate(left, columnWidth, "…")
 		left += strings.Repeat(" ", max(1, columnWidth-ansi.StringWidth(left)))
 		return left + "   " + ansi.Truncate(right, columnWidth, "…")
 	}
 	content := []string{
-		paint("⌘  QUICK HELP", output.ColorAccent, true),
-		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
+		paint("⌘  QUICK HELP", browserAccent, true),
+		paint(strings.Repeat("─", innerWidth), browserBorder, false),
 	}
 	groups := m.helpHintGroups(m.keyHints(true))
 	for groupIndex, group := range groups {
@@ -89,7 +87,7 @@ func (m *browser) helpModal(background []string) []string {
 		if groupIndex > 0 {
 			content = append(content, "")
 		}
-		content = append(content, paint(strings.ToUpper(group.title), output.ColorKey, true))
+		content = append(content, paint(strings.ToUpper(group.title), browserKey, true))
 		for i := 0; i < len(group.hints); i += 2 {
 			left := group.hints[i]
 			if i+1 == len(group.hints) {
@@ -100,7 +98,6 @@ func (m *browser) helpModal(background []string) []string {
 			content = append(content, row(left.key, left.action, right.key, right.action))
 		}
 	}
-	content = append(content, "", paint("Select text: Shift+drag · Copy: terminal copy shortcut", output.ColorMuted, false))
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	if len(background) < m.height {
@@ -135,18 +132,26 @@ func (m *browser) helpHintGroups(hints []keyHint) []helpHintGroup {
 	case appViewSummary:
 		viewTitle = "Summary view"
 	case appViewUsage:
-		viewTitle = "Usage view"
+		viewTitle = "Resources view"
 	case appViewScaling:
-		viewTitle = "Scaling view"
+		viewTitle = "Resources view"
 	case appViewLogs:
 		viewTitle = "Logs view"
+	case appViewBuilds:
+		viewTitle = "CI/CD view"
+	case appViewEnv:
+		viewTitle = "Environment view"
+	case appViewDomains:
+		viewTitle = "Domains view"
+	case appViewPorts:
+		viewTitle = "Ports view"
 	}
 	groups = append(groups, helpHintGroup{title: viewTitle}, helpHintGroup{title: "Actions"})
 	for _, hint := range hints {
 		switch {
 		case hint.action == "previous / next app view":
 			groups[1].hints = append(groups[1].hints, hint)
-		case m.detail && m.selectedAppActive() && (m.activeAppView == appViewLogs && isLogsHelpHint(hint) || m.activeAppView != appViewLogs && hint.action == "scroll details / move by page"):
+		case m.detail && m.selectedAppActive() && (m.activeAppView == appViewLogs && isLogsHelpHint(hint) || m.activeAppView == appViewBuilds && isBuildsHelpHint(hint) || m.activeAppView == appViewEnv && isEnvHelpHint(hint) || m.activeAppView == appViewDomains && isDomainsHelpHint(hint) || m.activeAppView == appViewPorts && isPortsHelpHint(hint) || m.activeAppView == appViewUsage && isResourcesHelpHint(hint) || m.activeAppView != appViewLogs && m.activeAppView != appViewUsage && m.activeAppView != appViewEnv && m.activeAppView != appViewDomains && m.activeAppView != appViewPorts && hint.action == "scroll details / move by page"):
 			groups[2].hints = append(groups[2].hints, hint)
 		case hint.action == "quit" || hint.action == "close help" || hint.action == "help":
 			groups[3].hints = append(groups[3].hints, hint)
@@ -157,6 +162,30 @@ func (m *browser) helpHintGroups(hints []keyHint) []helpHintGroup {
 	return groups
 }
 
+func isResourcesHelpHint(h keyHint) bool {
+	switch h.key {
+	case "↑↓/jk", "e", "s", "x", "w", "m", "p", "PgUp/Dn", "type", "Enter/y", "Esc/n", "Ctrl+U", "Enter":
+		return true
+	}
+	return h.action == "scroll diff" || h.action == "edit / toggle" || h.action == "review / save" || h.action == "select setting"
+}
+
+func isPortsHelpHint(hint keyHint) bool {
+	switch hint.key {
+	case "↑↓/jk", "←→/hl", "c", "y", "r", "m", "e", "+", "d", "s", "x", "type":
+		return true
+	}
+	return hint.action == "scroll diff"
+}
+
+func isBuildsHelpHint(hint keyHint) bool {
+	switch hint.key {
+	case "↑↓", "↵", "/", "n/N", "c", "Esc", "r", "a", "v", "y":
+		return true
+	}
+	return hint.action == "builds" || hint.action == "output" || hint.action == "search" || hint.action == "match" || hint.action == "copy" || hint.action == "list" || hint.action == "refresh" || hint.action == "build actions"
+}
+
 func isLogsHelpHint(hint keyHint) bool {
 	switch hint.key {
 	case "t", "v/V", "f", "p", "z", "m", "n/N", "w", "End/G":
@@ -164,6 +193,23 @@ func isLogsHelpHint(hint keyHint) bool {
 	default:
 		return hint.action == "search" || hint.action == "scroll logs" || hint.action == "refresh" || hint.action == "target"
 	}
+}
+
+func isEnvHelpHint(hint keyHint) bool {
+	switch hint.key {
+	case "↑/↓", "e", "+ / A", "d", "s", "x", "y", "v", "r", "m", "PgUp/Dn":
+		return true
+	default:
+		return hint.action == "scroll details / move by page"
+	}
+}
+
+func isDomainsHelpHint(hint keyHint) bool {
+	switch hint.key {
+	case "↑↓", "↑/↓", "+", "d", "e", "s", "x", "r", "m", "n", "y":
+		return true
+	}
+	return hint.action == "select domain or setting" || hint.action == "add domain" || hint.action == "remove domain" || hint.action == "edit selected setting" || hint.action == "review / save" || hint.action == "maximize"
 }
 
 func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) string {
@@ -193,7 +239,7 @@ func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) s
 	}
 	check := " "
 	if choice.scoped == m.namespaceScoped && (!choice.scoped || choice.key == m.namespaceScope) {
-		check = paint("✓", output.ColorSuccess, true)
+		check = paint("✓", browserSuccess, true)
 	}
 	metaWidth := min(20, max(8, width/3))
 	nameWidth := max(8, width-metaWidth-8)
@@ -205,5 +251,5 @@ func (m *browser) namespaceChoiceRow(choice namespaceChoice, index, width int) s
 	if index == m.namespaceCursor {
 		return selectedRowStyle().Width(width).Render(plain)
 	}
-	return " " + paint(marker, output.ColorBranch, true) + " " + paint(name, output.ColorKey, false) + strings.Repeat(" ", max(1, width-ansi.StringWidth(name)-ansi.StringWidth(meta)-6)) + paint(meta, output.ColorMuted, false) + "  " + check
+	return " " + paint(marker, browserBranch, true) + " " + paint(name, browserKey, false) + strings.Repeat(" ", max(1, width-ansi.StringWidth(name)-ansi.StringWidth(meta)-6)) + paint(meta, browserMuted, false) + "  " + check
 }

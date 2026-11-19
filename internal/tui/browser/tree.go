@@ -4,12 +4,32 @@ import (
 	"fmt"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"github.com/rahacloud/darkubectl/internal/output"
 	"sort"
 	"strings"
 )
 
 func (m *browser) sortLine() string {
+	if m.page == pageActivity {
+		return m.activitySortLine()
+	}
+	if m.page == pageDB {
+		choice := int(m.databaseSortBy)
+		if m.sorting && m.sortChoice >= 0 && m.sortChoice < len(dbSortNames) {
+			choice = m.sortChoice
+		}
+		direction := "↑"
+		if m.databaseSortDescending {
+			direction = "↓"
+		}
+		if m.sorting {
+			if m.sortDescending {
+				direction = "↓"
+			} else {
+				direction = "↑"
+			}
+		}
+		return paint("⇅", browserMuted, false) + " " + paint(dbSortNames[choice], browserBranch, true) + " " + paint(direction, browserNumber, true)
+	}
 	choice := int(m.sortBy)
 	if m.sorting && m.sortChoice >= 0 && m.sortChoice < len(appSortNames) {
 		choice = m.sortChoice
@@ -18,42 +38,18 @@ func (m *browser) sortLine() string {
 	if m.sortDescending {
 		direction = "↓"
 	}
-	return paint("⇅", output.ColorMuted, false) + " " + paint(appSortNames[choice], output.ColorBranch, true) + " " + paint(direction, output.ColorNumber, true)
+	return paint("⇅", browserMuted, false) + " " + paint(appSortNames[choice], browserBranch, true) + " " + paint(direction, browserNumber, true)
 }
 
 func (m *browser) namespaceTopLine() string {
 	if m.selectingNamespace && strings.TrimSpace(m.namespaceQuery) != "" {
-		return paint("⎈ NS", output.ColorMuted, true) + " " + paint("/ "+safeText(m.namespaceQuery), output.ColorBranch, true)
+		return paint("⎈ NS", browserMuted, true) + " " + paint("/ "+safeText(m.namespaceQuery), browserBranch, true)
 	}
 	if m.namespaceScoped {
 		name := ansi.Truncate(safeText(m.namespaceBreadcrumb(m.namespaceScope)), 28, "…")
-		return paint("⎈ NS", output.ColorMuted, true) + " " + paint(name, output.ColorBranch, true)
+		return paint("⎈ NS", browserMuted, true) + " " + paint(name, browserBranch, true)
 	}
-	return paint("⎈ NS", output.ColorMuted, true) + " " + paint("All", output.ColorBranch, true)
-}
-
-func (m *browser) filterLine() string {
-	query := safeText(m.filterQuery)
-	line := paint("⌕", output.ColorBranch, true) + "  " + paint("FILTER", output.ColorMuted, true) + "  " + paint("›", output.ColorBorder, false) + " "
-	if query == "" && m.filterEditing {
-		line += paint("type app or namespace/app", output.ColorMuted, false)
-	} else if query != "" {
-		line += paint(query, output.ColorBranch, true)
-	}
-	if m.filterEditing {
-		line += paint("▏", output.ColorNumber, true)
-	}
-	if !m.filterEditing && m.filterQuery != "" {
-		matches := len(m.visibleAppIndices())
-		matchColor := output.ColorMuted
-		if matches == 0 {
-			matchColor = output.ColorDanger
-		} else {
-			matchColor = output.ColorNumber
-		}
-		line += paint(fmt.Sprintf("   ·   %d matches", matches), matchColor, false)
-	}
-	return line
+	return paint("⎈ NS", browserMuted, true) + " " + paint("All", browserBranch, true)
 }
 
 func fuzzyMatch(value, query string) bool {
@@ -83,6 +79,44 @@ func (m *browser) breadcrumb() string {
 		}
 		parts = append(parts, tenant)
 	}
+	if m.page == pageActivity {
+		parts = append(parts, "Activity")
+		separator := paint(" / ", browserMuted, false)
+		crumbs := make([]string, 0, len(parts))
+		for i, part := range parts {
+			if i == 0 {
+				crumbs = append(crumbs, paint(part, browserAccent, true))
+			} else {
+				crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
+			}
+		}
+		path := strings.Join(crumbs, separator)
+		if m.mode == "LIVE" {
+			return m.liveGlyph() + " " + path
+		}
+		return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
+	}
+	if m.page == pageRegistry {
+		parts = append(parts, "Registry")
+		separator := paint(" / ", browserMuted, false)
+		crumbs := make([]string, 0, len(parts))
+		for i, part := range parts {
+			if i == 0 {
+				crumbs = append(crumbs, paint(part, browserAccent, true))
+			} else {
+				crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
+			}
+		}
+		path := strings.Join(crumbs, separator)
+		if m.mode == "LIVE" {
+			return m.liveGlyph() + " " + path
+		}
+		return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
+	}
+	if m.page == pageDB {
+		parts = append(parts, "DB")
+		return m.contextBreadcrumb(parts)
+	}
 	parts = append(parts, "Apps")
 	if m.namespaceScoped {
 		parts = append(parts, safeText(m.namespaceBreadcrumb(m.namespaceScope)))
@@ -94,20 +128,37 @@ func (m *browser) breadcrumb() string {
 		}
 		parts = append(parts, safeText(app.Name))
 	}
-	separator := paint(" / ", output.ColorMuted, false)
+	separator := paint(" / ", browserMuted, false)
 	crumbs := make([]string, 0, len(parts))
 	for i, part := range parts {
 		if i == 0 {
-			crumbs = append(crumbs, paint(part, output.ColorAccent, true))
+			crumbs = append(crumbs, paint(part, browserAccent, true))
 		} else {
-			crumbs = append(crumbs, paint(part, output.ColorBranch, i == len(parts)-1))
+			crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
 		}
 	}
 	path := strings.Join(crumbs, separator)
 	if m.mode == "LIVE" {
 		return m.liveGlyph() + " " + path
 	}
-	return paint("◈", output.ColorNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", output.ColorMuted, false) + "  " + path
+	return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
+}
+
+func (m *browser) contextBreadcrumb(parts []string) string {
+	separator := paint(" / ", browserMuted, false)
+	crumbs := make([]string, 0, len(parts))
+	for i, part := range parts {
+		if i == 0 {
+			crumbs = append(crumbs, paint(part, browserAccent, true))
+		} else {
+			crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
+		}
+	}
+	path := strings.Join(crumbs, separator)
+	if m.mode == "LIVE" {
+		return m.liveGlyph() + " " + path
+	}
+	return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
 }
 
 func (m *browser) namespaceBreadcrumb(key namespaceKey) string {
@@ -227,7 +278,7 @@ func (m *browser) appTreeForWidth(height, width int) []string {
 	start := max(0, selectedRow-height+1)
 	var result []string
 	if rows[start].app >= 0 {
-		result = append(result, "  "+paint("▾ "+safeText(rows[start].heading), output.ColorBranch, true))
+		result = append(result, "  "+paint("▾ "+safeText(rows[start].heading), browserBranch, true))
 		if selectedRow-start >= height-1 {
 			start++
 		}
@@ -240,7 +291,7 @@ func (m *browser) appTreeForWidth(height, width int) []string {
 			if m.collapsed[node.key] {
 				indicator = "▸"
 			}
-			line = "  " + paint(indicator+" "+safeText(node.heading), output.ColorBranch, true)
+			line = "  " + paint(indicator+" "+safeText(node.heading), browserBranch, true)
 		} else {
 			branch := "├── "
 			if node.last {
@@ -251,7 +302,7 @@ func (m *browser) appTreeForWidth(height, width int) []string {
 			padding := strings.Repeat(" ", max(0, nameWidth-ansi.StringWidth(name)))
 			state := safeText(appState(app))
 			glyph, stateColor := stateStyle(state)
-			line = "  " + paint(branch, output.ColorBorder, false) + name + padding + "  " + paint(glyph+" "+state, stateColor, false)
+			line = "  " + paint(branch, browserBorder, false) + name + padding + "  " + paint(glyph+" "+state, stateColor, false)
 		}
 		if i == selectedRow {
 			plain := ansi.Truncate(ansi.Strip(line), width, "")

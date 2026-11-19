@@ -19,6 +19,11 @@ func (m *browser) openActionMenu() {
 		return
 	}
 	app := m.apps[m.selected]
+	items := m.actionMenuItems()
+	if len(items) == 0 {
+		m.actionNotice = "No actions are available for this app."
+		return
+	}
 	m.actionTargetTenant = m.tenant
 	m.actionTargetID = app.ID
 	m.actionTargetName = app.Name
@@ -40,6 +45,9 @@ func (m *browser) actionAvailable(action appAction) bool {
 	if m.actionIsMock() {
 		return true
 	}
+	if action == appActionTerminal {
+		return m.terminal != nil
+	}
 	if !m.allowWrites {
 		return false
 	}
@@ -53,19 +61,36 @@ func (m *browser) actionAvailable(action appAction) bool {
 	}
 }
 
+func (m *browser) actionMenuItems() []appAction {
+	all := []appAction{appActionTerminal, appActionRestart, appActionDelete}
+	items := make([]appAction, 0, len(all))
+	for _, action := range all {
+		if m.actionAvailable(action) {
+			items = append(items, action)
+		}
+	}
+	return items
+}
+
 func actionTitle(action appAction) string {
 	switch action {
 	case appActionRestart:
 		return "Restart app"
 	case appActionDelete:
 		return "Delete app"
+	case appActionTerminal:
+		return "Open terminal"
 	default:
 		return "Unknown action"
 	}
 }
 
 func (m *browser) handleActionMenuKey(msg tea.KeyPressMsg) tea.Cmd {
-	items := []appAction{appActionRestart, appActionDelete}
+	items := m.actionMenuItems()
+	if len(items) == 0 {
+		m.actionMenu = false
+		return nil
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return tea.Quit
@@ -73,27 +98,46 @@ func (m *browser) handleActionMenuKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.actionMenu = false
 		m.actionMenuMessage = ""
 	case "up", "k":
-		m.actionCursor = (m.actionCursor + len(items) - 1) % len(items)
+		m.moveActionCursor(-1, items)
 	case "down", "j":
-		m.actionCursor = (m.actionCursor + 1) % len(items)
+		m.moveActionCursor(1, items)
 	case "enter":
-		m.beginActionConfirmation(items[m.actionCursor])
+		return m.beginActionConfirmation(items[m.actionCursor])
 	case "r":
-		m.beginActionConfirmation(appActionRestart)
+		if m.actionAvailable(appActionRestart) {
+			return m.beginActionConfirmation(appActionRestart)
+		}
 	case "d":
-		m.beginActionConfirmation(appActionDelete)
+		if m.actionAvailable(appActionDelete) {
+			return m.beginActionConfirmation(appActionDelete)
+		}
+	case "t":
+		if m.actionAvailable(appActionTerminal) {
+			return m.beginActionConfirmation(appActionTerminal)
+		}
 	}
 	return nil
 }
 
-func (m *browser) beginActionConfirmation(action appAction) {
+func (m *browser) moveActionCursor(delta int, items []appAction) {
+	m.actionCursor = (m.actionCursor + delta + len(items)) % len(items)
+}
+
+func (m *browser) beginActionConfirmation(action appAction) tea.Cmd {
 	if !m.actionAvailable(action) {
+		if !m.actionIsMock() && !m.allowWrites && (action == appActionRestart || action == appActionDelete) {
+			return nil
+		}
 		if !m.actionIsMock() && !m.allowWrites {
 			m.actionMenuMessage = "Writes are disabled. Relaunch with --allow-writes."
 		} else {
 			m.actionMenuMessage = actionTitle(action) + " is unavailable."
 		}
-		return
+		return nil
+	}
+	if action == appActionTerminal {
+		m.actionMenu = false
+		return m.beginTerminalPicker()
 	}
 	m.actionMenu = false
 	m.actionMenuMessage = ""
@@ -101,6 +145,7 @@ func (m *browser) beginActionConfirmation(action appAction) {
 	m.confirmButton = 0 // No/Cancel is focused first.
 	m.confirmName = ""
 	m.confirmError = ""
+	return nil
 }
 
 func (m *browser) handleActionConfirmationKey(msg tea.KeyPressMsg) tea.Cmd {

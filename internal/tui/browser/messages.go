@@ -55,6 +55,53 @@ type logsResult struct {
 	pod       string
 	container string
 }
+
+type buildsResult struct {
+	meta   requestMeta
+	builds []client.Build
+	err    error
+}
+
+type buildResult struct {
+	meta  requestMeta
+	id    client.BuildID
+	build *client.Build
+	err   error
+}
+
+type buildCopyResult struct {
+	bytes int
+	err   error
+}
+
+type cicdTokenResult struct {
+	tenant, appID, token string
+	generation           uint64
+	copy, reveal         bool
+	err                  error
+}
+type cicdCopyResult struct {
+	tenant, appID string
+	err           error
+}
+
+type buildAction uint8
+
+const (
+	buildActionNone buildAction = iota
+	buildActionLatest
+	buildActionRetry
+	buildActionStop
+)
+
+type buildActionResult struct {
+	tenant, appID string
+	buildID       client.BuildID
+	action        buildAction
+	retryID       client.BuildID
+	mock          bool
+	err           error
+}
 type logsPollMsg struct {
 	appID, pod, container string
 	previous              bool
@@ -71,6 +118,7 @@ const (
 	appActionNone appAction = iota
 	appActionRestart
 	appActionDelete
+	appActionTerminal
 )
 
 type appActionResult struct {
@@ -86,4 +134,27 @@ type namespacesResult struct {
 	meta       requestMeta
 	namespaces []client.Namespace
 	err        error
+}
+
+type alertsResult struct {
+	meta   requestMeta
+	alerts []client.Alert
+	err    error
+}
+
+type notificationsResult struct {
+	meta          requestMeta
+	notifications []client.Notification
+	err           error
+}
+
+type databaseDetailResult struct {
+	meta   requestMeta
+	detail *client.DatabaseDetail
+	err    error
+}
+
+type databaseCopyResult struct {
+	tenant, databaseID string
+	err                error
 }

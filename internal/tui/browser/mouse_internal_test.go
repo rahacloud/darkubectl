@@ -14,7 +14,6 @@ func TestMouseAppSelectionInvalidatesAppSpecificViews(t *testing.T) {
 	}{
 		{name: "summary", view: appViewSummary},
 		{name: "usage", view: appViewUsage},
-		{name: "scaling", view: appViewScaling},
 		{name: "logs", view: appViewLogs},
 	}
 	inputs := []struct {

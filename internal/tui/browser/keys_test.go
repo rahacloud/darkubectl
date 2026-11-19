@@ -56,7 +56,7 @@ func TestHelpOverlayConsumesNavigationUntilClosed(t *testing.T) {
 	}
 }
 
-func TestSummaryUsageScalingAndLogsViewNavigation(t *testing.T) {
+func TestResourcesReplacesUsageAndScalingTabs(t *testing.T) {
 	t.Parallel()
 	m := &browser{width: 80, height: 24}
 	applyAppsResult(m, []client.App{{
@@ -74,27 +74,23 @@ func TestSummaryUsageScalingAndLogsViewNavigation(t *testing.T) {
 		t.Fatal("] should switch to Usage without changing app focus")
 	}
 	m.Update(tea.KeyPressMsg{Code: ']', Text: "]"})
-	if m.activeAppView != appViewScaling {
-		t.Fatal("] should switch to Scaling")
+	if m.activeAppView != appViewLogs {
+		t.Fatal("] should switch from Resources to Logs")
 	}
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
 	if m.activeAppView != appViewUsage {
-		t.Fatal("[ should switch backward to Usage")
+		t.Fatal("[ should switch backward to Resources")
 	}
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
 	if m.activeAppView != appViewSummary {
 		t.Fatal("[ should wrap backward to Summary")
 	}
 	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
-	if m.activeAppView != appViewLogs {
-		t.Fatal("[ should wrap backward to Logs")
-	}
-	m.Update(tea.KeyPressMsg{Code: '[', Text: "["})
-	if m.activeAppView != appViewScaling {
-		t.Fatal("[ should wrap backward to Scaling")
+	if m.activeAppView != appViewPorts {
+		t.Fatal("[ should wrap backward from Summary to Ports")
 	}
 	m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
-	if m.detail || m.activeAppView != appViewScaling {
+	if m.detail || m.activeAppView != appViewPorts {
 		t.Fatal("h should return focus to Apps while preserving the selected app view")
 	}
 }

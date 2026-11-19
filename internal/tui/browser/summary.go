@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"github.com/rahacloud/darkubectl/internal/output"
 	"math"
 	"net"
 	"net/url"
@@ -17,7 +16,7 @@ import (
 
 func (m *browser) summaryPaneLines() []string {
 	if m.activeAppView == appViewUsage {
-		return m.usagePaneLines()
+		return m.resourcesPaneLines()
 	}
 	if m.activeAppView == appViewScaling {
 		return m.scalingPaneLines()
@@ -25,8 +24,20 @@ func (m *browser) summaryPaneLines() []string {
 	if m.activeAppView == appViewLogs {
 		return m.logsPaneLines()
 	}
+	if m.activeAppView == appViewBuilds {
+		return m.buildsPaneLines()
+	}
+	if m.activeAppView == appViewEnv {
+		return m.envPaneLines()
+	}
+	if m.activeAppView == appViewDomains {
+		return m.domainsPaneLines()
+	}
+	if m.activeAppView == appViewPorts {
+		return m.portsPaneLines()
+	}
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return []string{paint("No app selected. Move to an app to preview its summary.", output.ColorMuted, false)}
+		return []string{summaryField("App", "not selected")}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
@@ -35,12 +46,12 @@ func (m *browser) summaryPaneLines() []string {
 	stateGlyph, stateColor := stateStyle(appState(a))
 	lines := []string{sectionHeading("Identity"), summaryField("Name", displayValue(a.Name))}
 	if m.detailState.err != nil {
-		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailState.err.Error()), output.ColorNumber, false))
+		lines = append(lines, summaryField("Refresh", paint("failed · "+safeText(m.detailState.err.Error()), browserNumber, false)))
 		if m.detailState.status == requestStale {
 			lines = append(lines, staleRequestTime("Summary", m.detailState))
 		}
 	} else if m.detailState.status == requestUnavailable {
-		lines = append(lines, paint("App detail is unavailable; showing the list snapshot.", output.ColorMuted, false))
+		lines = append(lines, summaryField("Detail", "list snapshot"))
 	}
 	replicas := "-"
 	if a.ReplicasPresent {
@@ -104,11 +115,22 @@ func (m *browser) summaryPaneLines() []string {
 		summaryField("Inputs", displayValue(strings.Join(a.Inputs, ", "))),
 		"", sectionHeading("Deployment"),
 		summaryField("Image", displayValue(a.Image())),
+		summaryField("Deployment type", deploymentTypeValue(a)),
 		summaryField("Created via", creationMethodLabel(a.CreationMethod)),
 		summaryField("Updated", formatLocalTime(a.UpdatedAt)))
 	lines = append(lines, "", sectionHeading("Pods"))
 	lines = m.appendPodsStatus(lines)
 	return lines
+}
+
+func deploymentTypeValue(app client.App) string {
+	switch app.BuildMethod {
+	case client.BuildMethodWebhook:
+		return paint("↻", browserBranch, true) + " Darkube"
+	case client.BuildMethodGitlabCI:
+		return paint("⚙", browserAccent, true) + " Custom CI/CD"
+	}
+	return paint("?", browserMuted, true) + " Unknown"
 }
 
 func appDomains(app client.App) []string {
@@ -218,27 +240,27 @@ func jsonScalar(raw json.RawMessage) string {
 }
 
 func summaryLabel(label string) string {
-	return paint(fmt.Sprintf("%-16s ", label), output.ColorMuted, true)
+	return paint(fmt.Sprintf("%-16s ", label), browserMuted, true)
 }
 
 func sectionHeading(label string) string {
-	return paint(label, output.ColorAccent, true)
+	return paint(label, browserAccent, true)
 }
 
 func staleRequestTime(label string, state requestState) string {
 	if state.lastSuccessAt.IsZero() {
-		return paint(label+" has no successful snapshot yet.", output.ColorMuted, false)
+		return summaryField(label+" updated", "no successful snapshot")
 	}
 	when := state.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
-	return paint(label+" last succeeded "+when+" · press r to retry", output.ColorMuted, false)
+	return summaryField(label+" updated", when)
 }
 
 func summaryField(label, value string) string {
-	return summaryLabel(label) + paint(value, output.ColorBranch, false)
+	return summaryLabel(label) + paint(value, browserValue, false)
 }
 
 func resourceField(icon, label, value string) string {
-	return summaryLabel(icon+" "+label) + paint(value, output.ColorBranch, false)
+	return summaryLabel(icon+" "+label) + paint(value, browserValue, false)
 }
 
 func displayValue(value string) string {
@@ -277,11 +299,11 @@ func domainLink(host string) string {
 	}
 	parsed, err := url.Parse(target)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return paint(host, output.ColorKey, false)
+		return paint(host, browserKey, false)
 	}
 	style := lipgloss.NewStyle().Underline(true).Hyperlink(target)
 	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
-		style = style.Foreground(output.ColorBranch)
+		style = style.Foreground(browserBranch)
 	}
 	return style.Render(host)
 }

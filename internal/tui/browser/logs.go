@@ -16,33 +16,25 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"github.com/rahacloud/darkubectl/internal/output"
 )
 
 const (
-	logDefaultTailSize   = 100
-	logMinTailSize       = 50
-	logMaxTailSize       = 1000
-	logTailStep          = 50
-	logMaxEntries        = 2000
-	logMaxBytes          = 2 << 20
-	logPollSeconds       = 3
-	logMaxRetrySeconds   = 30
-	logBytesPerRune      = 4
-	logPanePadding       = 2
-	logStickyHeaderLines = 4
-	logPickerMaxWidth    = 72
-	logModalMargin       = 4
-	logCenterDivisor     = 2
-	logTimestampWidth    = 30
-	logModeColumnWidth   = 25
-	logFollowColumnWidth = 27
-	logTailColumnWidth   = 19
-	logTimeColumnWidth   = 25
-	logWrapColumnWidth   = 27
-	logCopyColumnWidth   = 19
-	logMaxColumnWidth    = 14
+	logDefaultTailSize = 100
+	logMinTailSize     = 50
+	logMaxTailSize     = 1000
+	logTailStep        = 50
+	logMaxEntries      = 2000
+	logMaxBytes        = 2 << 20
+	logPollSeconds     = 3
+	logMaxRetrySeconds = 30
+	logBytesPerRune    = 4
+	logPanePadding     = 2
+	logPickerMaxWidth  = 72
+	logModalMargin     = 4
+	logCenterDivisor   = 2
+	logTimestampWidth  = 30
 )
 
 var (
@@ -64,19 +56,59 @@ func (m *browser) prepareLogTarget() tea.Cmd {
 	if m.logPod != "" {
 		for _, pod := range m.podList {
 			if pod.Name == m.logPod {
-				return m.loadSelectedLogs()
+				if m.logContainer == "" || !podHasContainer(pod, m.logContainer) {
+					m.logContainer = preferredLogContainer(pod)
+				}
+				return m.setLogTarget(pod.Name, m.logContainer)
 			}
 		}
 	}
-	if len(m.podList) == 1 && len(m.podList[0].Containers) == 1 {
-		m.logPod = m.podList[0].Name
-		m.logContainer = m.podList[0].Containers[0].Name
-		return m.loadSelectedLogs()
+	index := preferredLogPodIndex(m.podList)
+	pod := m.podList[index]
+	m.logPodCursor, m.logContainerCursor = index, 0
+	return m.setLogTarget(pod.Name, preferredLogContainer(pod))
+}
+
+// prefer a ready, non-terminating replica and a ready container so opening
+// Logs starts with useful output even when the app has several pods.
+func preferredLogPodIndex(pods []appstate.Pod) int {
+	for i, pod := range pods {
+		if pod.Ready && !pod.Terminating {
+			return i
+		}
 	}
-	m.logTargetPicker = true
-	m.logPodCursor = 0
-	m.logContainerCursor = 0
-	return nil
+	for i, pod := range pods {
+		if !pod.Terminating {
+			return i
+		}
+	}
+	return 0
+}
+
+func preferredLogContainer(pod appstate.Pod) string {
+	for _, container := range pod.Containers {
+		if container.Ready {
+			return container.Name
+		}
+	}
+	for _, container := range pod.Containers {
+		if container.Name == "main" {
+			return container.Name
+		}
+	}
+	if len(pod.Containers) > 0 {
+		return pod.Containers[0].Name
+	}
+	return "main"
+}
+
+func podHasContainer(pod appstate.Pod, name string) bool {
+	for _, container := range pod.Containers {
+		if container.Name == name {
+			return true
+		}
+	}
+	return name == "main" && len(pod.Containers) == 0
 }
 
 func (m *browser) selectedLogPod() (string, bool) {
@@ -119,6 +151,7 @@ func (m *browser) cycleLogPod(delta int) tea.Cmd {
 		}
 	}
 	index = (index + delta + len(m.podList)) % len(m.podList)
+	m.logPodCursor = index
 	pod := m.podList[index]
 	container := "main"
 	if len(pod.Containers) > 0 {
@@ -134,6 +167,7 @@ func (m *browser) cycleLogPod(delta int) tea.Cmd {
 }
 
 func (m *browser) setLogTarget(pod, container string) tea.Cmd {
+	m.logTargetPicker = false
 	m.cancelRequest(requestKey{kind: requestLogs})
 	m.logPollInFlight = false
 	m.logEntries = nil
@@ -413,56 +447,29 @@ func (m *browser) logMatches() []int {
 
 func (m *browser) logsPaneLines() []string {
 	lines := []string{}
-	if m.logTargetPicker {
-		return append(lines, "Choose a pod and container with t, then Enter.")
-	}
 	if m.logPod == "" {
-		message := m.logNotice
-		if message == "" {
-			message = "Choose a log target with t."
+		lines = append(lines, summaryField("Target", "waiting for pod snapshot"))
+		switch m.podsState.status {
+		case requestLoading, requestRefreshing:
+			lines = append(lines, summaryField("Pods", m.loadingMessage("loading…")))
+		case requestFailed, requestUnavailable:
+			message := "pod snapshot unavailable"
+			if m.podsState.err != nil {
+				message += " · " + safeText(m.podsState.err.Error())
+			}
+			lines = append(lines, paint(message+" · press r to retry", browserNumber, false))
+		case requestEmpty:
+			lines = append(lines, summaryField("Pods", "none reported for this app"))
+		default:
+			if m.logNotice != "" {
+				lines = append(lines, paint(safeText(m.logNotice), browserMuted, false))
+			}
 		}
-		return append(lines, paint(message, output.ColorMuted, false))
+		return lines
 	}
-	podLabel := m.logPod
-	for i, pod := range m.podList {
-		if pod.Name == m.logPod {
-			podLabel = fmt.Sprintf("%s (%d/%d)", m.logPod, i+1, len(m.podList))
-			break
-		}
-	}
-	follow := "Paused"
-	following := m.logFollowing
-	if m.logFollowing {
-		follow = fmt.Sprintf("Following · %ds", logPollSeconds)
-		if m.logRetryDelay > 0 {
-			follow = fmt.Sprintf("Retrying · %ds", m.logRetryDelay)
-		}
-	}
-	mode, modeColor := "Current", output.ColorSuccess
-	if m.logPrevious {
-		mode, modeColor = "Previous", output.ColorNumber
-	}
-	followColor := output.ColorMuted
-	if following {
-		followColor = output.ColorSuccess
-	}
-	wrap, wrapColor := "OFF", output.ColorMuted
-	if m.logWrap {
-		wrap, wrapColor = "ON", output.ColorSuccess
-	}
-	tail := fmt.Sprintf("%d", m.currentLogTail())
-	lines = append(lines,
-		paint("POD", output.ColorMuted, true)+" "+safeText(podLabel)+"  ·  "+
-			paint("CONTAINER", output.ColorMuted, true)+" "+safeText(m.logContainer),
-		logSettingsColumn("MODE", mode, "p", modeColor, logModeColumnWidth)+"  "+
-			logSettingsColumn("FOLLOW", follow, "f", followColor, logFollowColumnWidth)+"  "+
-			logSettingsColumn("TAIL", tail, "-/+", output.ColorMuted, logTailColumnWidth)+"  "+
-			logSettingsColumn("MAX", "Logs", "m", output.ColorBranch, logMaxColumnWidth),
-		logSettingsColumn("TIME", logClockLabel(m.logUTC), "z", output.ColorAccent, logTimeColumnWidth)+"  "+
-			logSettingsColumn("WRAP", wrap, "w", wrapColor, logWrapColumnWidth)+"  "+
-			logSettingsColumn("COPY", "logs", "c", output.ColorBranch, logCopyColumnWidth))
+	lines = append(lines, m.logMetadataLines()...)
 	if m.logCopyStatus != "" {
-		lines[len(lines)-1] += "  ·  " + paint(safeText(m.logCopyStatus), output.ColorMuted, false)
+		lines[len(lines)-1] += "  ·  " + paint(safeText(m.logCopyStatus), browserMuted, false)
 	}
 	if m.logSearchEditing {
 		lines = append(lines, "Search: "+safeText(m.logSearch)+"█")
@@ -472,11 +479,11 @@ func (m *browser) logsPaneLines() []string {
 		lines = append(lines, fmt.Sprintf("Search: %s   Match %d/%d", safeText(m.logSearch), matchNumber, len(matches)))
 	}
 	if m.logNotice != "" {
-		lines = append(lines, paint(safeText(m.logNotice), output.ColorNumber, false))
+		lines = append(lines, paint(safeText(m.logNotice), browserNumber, false))
 	}
 	if m.logState.status == requestUnavailable || m.logState.status == requestFailed || m.logState.status == requestStale {
 		if m.logState.err != nil {
-			lines = append(lines, paint(safeText(m.logState.err.Error()), output.ColorNumber, false))
+			lines = append(lines, paint(safeText(m.logState.err.Error()), browserNumber, false))
 		}
 	}
 	lines = m.appendLogEmptyState(lines)
@@ -501,9 +508,47 @@ func (m *browser) logsPaneLines() []string {
 		}
 	}
 	if m.logNewEntries > 0 {
-		lines = append(lines, paint(fmt.Sprintf("%d new entries · press End to follow bottom", m.logNewEntries), output.ColorBranch, true))
+		lines = append(lines, paint(fmt.Sprintf("%d new entries", m.logNewEntries), browserBranch, true))
 	}
 	return lines
+}
+
+func (m *browser) logMetadataLines() []string {
+	if m.logPod == "" {
+		return nil
+	}
+	podLabel := m.logPod
+	for i, pod := range m.podList {
+		if pod.Name == m.logPod {
+			podLabel = fmt.Sprintf("%s (%d/%d)", m.logPod, i+1, len(m.podList))
+			break
+		}
+	}
+	follow := "Paused"
+	followColor := browserMuted
+	if m.logFollowing {
+		follow = fmt.Sprintf("Following · %ds", logPollSeconds)
+		followColor = browserSuccess
+		if m.logRetryDelay > 0 {
+			follow = fmt.Sprintf("Retrying · %ds", m.logRetryDelay)
+		}
+	}
+	mode, modeColor := "Current", browserSuccess
+	if m.logPrevious {
+		mode, modeColor = "Previous", browserNumber
+	}
+	wrap, wrapColor := "OFF", browserMuted
+	if m.logWrap {
+		wrap, wrapColor = "ON", browserSuccess
+	}
+	return append(packLogFields(m.logPaneWidth(),
+		logField("POD", safeText(podLabel), browserValue),
+		logField("CONTAINER", safeText(m.logContainer), browserValue)),
+		packLogFields(m.logPaneWidth(),
+			logField("MODE", mode, modeColor), logField("FOLLOW", follow, followColor),
+			logField("TAIL", fmt.Sprintf("%d", m.currentLogTail()), browserValue),
+			logField("TIME", logClockLabel(m.logUTC), browserAccent),
+			logField("WRAP", wrap, wrapColor))...)
 }
 
 func (m *browser) appendLogEmptyState(lines []string) []string {
@@ -512,11 +557,11 @@ func (m *browser) appendLogEmptyState(lines []string) []string {
 	}
 	switch {
 	case m.logPrevious && !m.logState.active() && m.logState.err == nil:
-		return append(lines, paint("No previous logs returned.", output.ColorMuted, false))
+		return append(lines, summaryField("Logs", "no previous entries"))
 	case m.logState.status == requestLoading:
-		return append(lines, m.loadingMessage("Loading logs…"))
+		return append(lines, summaryField("Logs", m.loadingMessage("loading…")))
 	default:
-		return append(lines, paint("No log entries returned.", output.ColorMuted, false))
+		return append(lines, summaryField("Logs", "no entries"))
 	}
 }
 
@@ -785,16 +830,16 @@ func takeLogField(fields map[string]json.RawMessage, keys ...string) string {
 }
 
 func colorLogLevelLine(line, level string) string {
-	color := output.ColorMuted
+	color := browserMuted
 	switch strings.ToUpper(level) {
 	case "ERROR", "FATAL", "CRITICAL", "PANIC":
-		color = output.ColorDanger
+		color = browserDanger
 	case "WARN", "WARNING":
-		color = output.ColorNumber
+		color = browserNumber
 	case "INFO":
-		color = output.ColorSuccess
+		color = browserSuccess
 	case "DEBUG", "TRACE":
-		color = output.ColorMuted
+		color = browserMuted
 	}
 	return paint(line, color, true)
 }
@@ -817,7 +862,10 @@ func (m *browser) logsViewport(lines []string, height int) []string {
 	if height <= 0 {
 		return nil
 	}
-	sticky := min(logStickyHeaderLines, len(lines))
+	sticky := 0
+	if !m.logTargetPicker {
+		sticky = min(len(m.logMetadataLines()), len(lines))
+	}
 	if m.logSearch != "" || m.logSearchEditing {
 		sticky = min(sticky+1, len(lines))
 	}
@@ -840,15 +888,40 @@ func (m *browser) moveLogMatch(delta int) {
 	m.logScroll = max(0, len(m.logEntries)-position-1)
 }
 
-func logSettingsColumn(label, value, key string, foreground color.Color, width int) string {
-	column := paint(label, output.ColorMuted, true) + " " + paint(value, foreground, true) +
-		" (" + paint(key, output.ColorBranch, true) + ")"
-	column = ansi.Truncate(column, width, "…")
-	return column + strings.Repeat(" ", max(0, width-ansi.StringWidth(column)))
+func logField(label, value string, foreground color.Color) string {
+	return paint(label, browserMuted, true) + " " + paint(value, foreground, true)
+}
+
+func packLogFields(width int, fields ...string) []string {
+	width = max(1, width)
+	lines := make([]string, 0, len(fields))
+	line := ""
+	for _, field := range fields {
+		separator := "  ·  "
+		candidate := field
+		if line != "" {
+			candidate = line + separator + field
+		}
+		if line != "" && ansi.StringWidth(candidate) > width {
+			lines = append(lines, line)
+			line = field
+		} else {
+			line = candidate
+		}
+		if ansi.StringWidth(line) > width {
+			line = ansi.Truncate(line, width, "…")
+			lines = append(lines, line)
+			line = ""
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func (m *browser) logTargetModal(lines []string) []string {
-	if !m.logTargetPicker {
+	if !m.logTargetPicker || !m.terminalChoosing {
 		return lines
 	}
 	panelWidth := min(logPickerMaxWidth, m.width-logModalMargin)
@@ -870,13 +943,17 @@ func (m *browser) logTargetModal(lines []string) []string {
 	containerEnd := min(len(containers), containerStart+capacity)
 	leftHeader, rightHeader := fmt.Sprintf("PODS · %d", len(m.podList)), fmt.Sprintf("CONTAINERS · %d", len(containers))
 	if m.logPickerColumn == 0 {
-		leftHeader = paint(leftHeader, output.ColorAccent, true)
+		leftHeader = paint(leftHeader, browserAccent, true)
 	} else {
-		rightHeader = paint(rightHeader, output.ColorAccent, true)
+		rightHeader = paint(rightHeader, browserAccent, true)
+	}
+	title := "CHOOSE LOG TARGET"
+	if m.terminalChoosing {
+		title = "CHOOSE TERMINAL TARGET"
 	}
 	content := []string{
-		paint("CHOOSE LOG TARGET", output.ColorAccent, true),
-		paint(strings.Repeat("─", innerWidth), output.ColorBorder, false),
+		paint(title, browserAccent, true),
+		paint(strings.Repeat("─", innerWidth), browserBorder, false),
 		pickerColumns(leftHeader, rightHeader, podWidth, containerWidth, gap),
 	}
 	for row := 0; row < capacity; row++ {
@@ -901,12 +978,11 @@ func (m *browser) logTargetModal(lines []string) []string {
 		content = append(content, pickerColumns(podLine, containerLine, podWidth, containerWidth, gap))
 	}
 	if podStart > 0 || podEnd < len(m.podList) {
-		content = append(content, paint(fmt.Sprintf("Pods %d–%d of %d", podStart+1, podEnd, len(m.podList)), output.ColorMuted, false))
+		content = append(content, paint(fmt.Sprintf("Pods %d–%d of %d", podStart+1, podEnd, len(m.podList)), browserMuted, false))
 	}
 	if containerStart > 0 || containerEnd < len(containers) {
-		content = append(content, paint(fmt.Sprintf("Containers %d–%d of %d", containerStart+1, containerEnd, len(containers)), output.ColorMuted, false))
+		content = append(content, paint(fmt.Sprintf("Containers %d–%d of %d", containerStart+1, containerEnd, len(containers)), browserMuted, false))
 	}
-	content = append(content, "", "↑/↓ move   ←/→ switch   Enter select   Esc close")
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
 	startY, startX := max(0, (m.height-len(panelLines))/logCenterDivisor), max(0, (m.width-panelWidth)/logCenterDivisor)

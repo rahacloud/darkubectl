@@ -144,6 +144,9 @@ func (m *browser) selectAppIndex(index int, loadIfUnchanged bool, previousTarget
 		return nil
 	}
 	m.selected = index
+	m.resourceOriginal, m.resourceDraft = ResourceConfig{}, ResourceConfig{}
+	m.resourceEditing, m.resourceReview, m.resourceBusy = false, false, false
+	m.resourceAwaitingRefresh = false
 	m.namespaceSelected = false
 	selected := m.apps[index]
 	m.detailApp = &selected

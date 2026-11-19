@@ -3,6 +3,8 @@ package browser
 import (
 	"context"
 	"time"
+
+	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func (m *browser) requestTime() time.Time {
@@ -41,7 +43,7 @@ func (m *browser) finishRequest(kind requestKind, meta requestMeta) {
 
 func (m *browser) cancelRequests(keepProfile bool) {
 	for key, active := range m.inFlight {
-		if keepProfile && key.kind == requestProfile {
+		if keepProfile && (key.kind == requestProfile || key.kind == requestNotifications) {
 			continue
 		}
 		active.cancel()
@@ -72,13 +74,53 @@ func (m *browser) invalidateAppReads() {
 	m.cancelRequest(requestKey{kind: requestUsageHistory})
 	m.cancelRequest(requestKey{kind: requestPods})
 	m.cancelRequest(requestKey{kind: requestLogs})
+	m.cancelRequest(requestKey{kind: requestBuilds})
+	m.cancelRequest(requestKey{kind: requestBuild})
+	m.cancelRequest(requestKey{kind: requestDomains})
+	m.cancelRequest(requestKey{kind: requestPorts})
 	m.detailState.reset()
 	m.usageState.reset()
 	m.historyState.reset()
 	m.podsState.reset()
 	m.podList = nil
 	m.clearLogs()
+	m.buildsState.reset()
+	m.buildDetailState.reset()
+	m.builds = nil
+	m.buildDetail = nil
+	m.buildSelectedID = ""
+	m.buildListCursor = 0
+	m.buildScroll = 0
+	m.buildNotice = ""
+	m.cicdToken, m.cicdNotice = "", ""
+	m.cicdReveal, m.cicdTokenReveal, m.cicdLoading = false, false, false
+	m.cicdGeneration++
+	m.cicdSettingsOriginal, m.cicdSettingsDraft = client.GitBuildSettings{}, client.GitBuildSettings{}
+	m.cicdSettingsLoaded, m.cicdReview, m.cicdSaving = false, false, false
+	m.cicdSettingsNotice, m.cicdHistoryFocus = "", false
+	m.cicdEditField, m.cicdEditValue, m.cicdEditKey = -1, "", ""
 	m.history = nil
+	m.envState.reset()
+	m.domainState.reset()
+	m.portState.reset()
+	m.portConfig, m.portOriginal = PortConfig{}, PortConfig{}
+	m.domainConfig = DomainConfig{}
+	m.domainOriginal = DomainConfig{}
+	m.domainMessage = ""
+	m.domainConfirm = false
+	m.domainEditing = false
+	m.domainBusy = false
+	m.envBusy = false
+	m.envPlain = nil
+	m.envSecretNames = nil
+	m.envMessage = ""
+	m.envEditMode = envEditNone
+	m.envEditName, m.envEditValue = "", ""
+	m.envRevealName, m.envRevealValue = "", ""
+	m.envConfirm = false
+	m.clearPendingEnv()
+	m.terminalPod = ""
+	m.terminalContainer = ""
 	m.historyPod = ""
 	m.historyPodChosen = false
 	m.usageScroll = 0

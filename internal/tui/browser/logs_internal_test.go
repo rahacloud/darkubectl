@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,9 +13,24 @@ import (
 	"github.com/rahacloud/darkubectl/internal/client"
 )
 
-func TestLogTargetSelectionUsesExplicitPodAndContainer(t *testing.T) {
+func TestLogsShowPodSnapshotFailureCauseAndRetryHint(t *testing.T) {
 	t.Parallel()
-	calls := 0
+	meta := requestMeta{tenant: "tenant", appID: "app"}
+	m := &browser{
+		tenant: "tenant", detail: true, activeAppView: appViewLogs,
+		apps:      []client.App{{ID: "app"}},
+		podsState: requestState{status: requestLoading, meta: meta},
+	}
+	m.handlePodsResult(podsResult{meta: meta, err: errors.New("dial app-state websocket: unexpected HTTP response: 503 Service Unavailable")})
+	got := ansi.Strip(strings.Join(m.logsPaneLines(), "\n"))
+	if !strings.Contains(got, "503 Service Unavailable") || !strings.Contains(got, "press r to retry") || strings.Contains(got, "Target not selected") {
+		t.Fatalf("log view hid pod failure cause or retry hint: %s", got)
+	}
+}
+
+func TestLogsChooseDefaultTargetAndCyclePodsInline(t *testing.T) {
+	t.Parallel()
+	var calls []client.LogOptions
 	m := &browser{
 		tenant: "tenant", detail: true, activeAppView: appViewLogs,
 		apps: []client.App{{ID: "app"}},
@@ -23,24 +39,19 @@ func TestLogTargetSelectionUsesExplicitPodAndContainer(t *testing.T) {
 			{Name: "pod-b", Containers: []appstate.Container{{Name: "worker"}}},
 		},
 		appLogs: func(_ context.Context, _, id string, opts client.LogOptions) ([]client.LogEntry, error) {
-			calls++
-			if id != "app" || opts.PodName != "pod-a" || opts.Container != "sidecar" || opts.Tail != 100 || opts.Previous {
+			calls = append(calls, opts)
+			if id != "app" || opts.Tail != 100 || opts.Previous {
 				t.Errorf("unexpected request target/options: %s %+v", id, opts)
 			}
 			return []client.LogEntry{{Timestamp: "2026-11-19T10:00:00Z", Text: "line"}}, nil
 		},
 	}
-	if cmd := m.prepareLogTarget(); cmd != nil || !m.logTargetPicker {
-		t.Fatal("multiple targets should require a picker")
+	cmd := m.prepareLogTarget()
+	if cmd == nil || m.logTargetPicker || m.logPod != "pod-a" || m.logContainer != "main" {
+		t.Fatalf("default target = %s/%s; command nil=%t; picker=%t", m.logPod, m.logContainer, cmd == nil, m.logTargetPicker)
 	}
 	if !m.logFollowing {
-		t.Fatal("current logs should follow by default while the target picker is open")
-	}
-	m.logPickerColumn = 1
-	m.logContainerCursor = 1
-	cmd := m.chooseLogTarget()
-	if cmd == nil || m.logTargetPicker {
-		t.Fatal("target selection should start a read")
+		t.Fatal("current logs should follow by default")
 	}
 	msg := cmd()
 	result, ok := msg.(logsResult)
@@ -48,8 +59,18 @@ func TestLogTargetSelectionUsesExplicitPodAndContainer(t *testing.T) {
 		t.Fatalf("command result = %T", msg)
 	}
 	m.handleLogsResult(result)
-	if calls != 1 || m.logPod != "pod-a" || m.logContainer != "sidecar" || len(m.logEntries) != 1 {
-		t.Fatalf("selection/read state: calls=%d pod=%q container=%q entries=%v", calls, m.logPod, m.logContainer, m.logEntries)
+	cmd = m.cycleLogPod(1)
+	if cmd == nil || m.logPod != "pod-b" || m.logContainer != "worker" {
+		t.Fatalf("cycled target = %s/%s; command nil=%t", m.logPod, m.logContainer, cmd == nil)
+	}
+	result, ok = cmd().(logsResult)
+	if !ok {
+		t.Fatal("pod cycle returned an unexpected result")
+	}
+	m.handleLogsResult(result)
+	if len(calls) != 2 || calls[0].PodName != "pod-a" || calls[0].Container != "main" ||
+		calls[1].PodName != "pod-b" || calls[1].Container != "worker" || len(m.logEntries) != 1 {
+		t.Fatalf("target/read state: calls=%+v pod=%q container=%q entries=%v", calls, m.logPod, m.logContainer, m.logEntries)
 	}
 }
 

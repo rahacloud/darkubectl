@@ -2,7 +2,6 @@ package browser
 
 import (
 	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/output"
 	"strings"
 )
 
@@ -13,9 +12,9 @@ func (m *browser) tenantPaneLines(height int) []string {
 		if m.profileState.active() || m.profileState.status == requestIdle {
 			lines = append(lines, m.loadingMessage("Loading…"))
 		} else if m.profileState.err != nil || m.profileState.status == requestUnavailable {
-			lines = append(lines, paint("No choices", output.ColorMuted, false), paint("Use --org or login", output.ColorMuted, false))
+			lines = append(lines, paint("No choices", browserMuted, false), paint("Use --org or login", browserMuted, false))
 		} else {
-			lines = append(lines, paint("No memberships", output.ColorMuted, false))
+			lines = append(lines, paint("No memberships", browserMuted, false))
 		}
 	} else {
 		first := max(0, min(m.tenantCursor-height+1, len(m.tenants)-height))
@@ -34,9 +33,17 @@ func (m *browser) tenantPaneLines(height int) []string {
 
 func (m *browser) pagesPaneLines(height int) []string {
 	_, _, width := m.paneWidths()
-	lines := []string{m.contextRowLine("● Apps", width, m.contextFocused && m.contextRow == 1)}
-	for _, page := range []string{"Activity", "Tickets", "Resources", "Registry", "Billing", "Account"} {
-		lines = append(lines, m.contextRowLine("· "+page, width, false))
+	lines := []string{m.contextRowLine("▦ Apps", width, m.contextFocused && m.contextRow == 1)}
+	pages := []struct{ icon, name string }{
+		{"∿", "Activity"},
+		{"▱", "Tickets"},
+		{"▤", "DB"},
+		{"◇", "Registry"},
+		{"¤", "Billing"},
+	}
+	for _, page := range pages {
+		selected := m.contextFocused && m.contextRow == len(lines)+1
+		lines = append(lines, m.contextRowLine(page.icon+" "+page.name, width, selected))
 	}
 	return fitPaneLines(lines, height)
 }
@@ -57,11 +64,21 @@ func (m *browser) contextRowLine(value string, width int, selected bool) string 
 	if selected {
 		return selectedRowStyle().Width(width).Render(line)
 	}
-	if strings.HasPrefix(value, "● Apps") {
-		return paint(line, output.ColorSuccess, true)
+	if strings.HasPrefix(value, "▦ Apps") && m.page == pageApps {
+		return paint(line, browserSuccess, true)
 	}
-	if strings.HasPrefix(value, "· ") {
-		return paint(line, output.ColorMuted, false)
+	if strings.HasPrefix(value, "∿ Activity") && m.page == pageActivity {
+		return paint(line, browserSuccess, true)
+	}
+	if strings.HasPrefix(value, "◇ Registry") && m.page == pageRegistry {
+		return paint(line, browserSuccess, true)
+	}
+	if strings.HasPrefix(value, "▤ DB") && m.page == pageDB {
+		return paint(line, browserSuccess, true)
+	}
+	if strings.HasPrefix(value, "∿ ") || strings.HasPrefix(value, "▱ ") || strings.HasPrefix(value, "▤ ") ||
+		strings.HasPrefix(value, "◇ ") || strings.HasPrefix(value, "¤ ") {
+		return paint(line, browserMuted, false)
 	}
 	return line
 }

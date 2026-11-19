@@ -3,14 +3,13 @@ package browser
 import (
 	"fmt"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"github.com/rahacloud/darkubectl/internal/output"
 	"strings"
 )
 
 func (m *browser) usagePaneLines() []string {
 	lines := []string{}
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return []string{paint("No app selected. Move to an app to view its resource usage.", output.ColorMuted, false)}
+		return []string{summaryField("App", "not selected")}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
@@ -18,20 +17,20 @@ func (m *browser) usagePaneLines() []string {
 	}
 	switch m.usageState.status {
 	case requestLoading:
-		lines = append(lines, paint("Loading current resource usage…", output.ColorMuted, false))
+		lines = append(lines, summaryField("Usage", "loading"))
 	case requestRefreshing:
-		lines = append(lines, paint("Refreshing current resource usage…", output.ColorMuted, false))
+		lines = append(lines, summaryField("Usage", "refreshing"))
 	case requestStale:
-		lines = append(lines, paint("Refresh failed · showing the last successful samples", output.ColorNumber, false), staleRequestTime("Usage", m.usageState))
+		lines = append(lines, summaryField("Refresh", paint("failed · last samples shown", browserNumber, false)), staleRequestTime("Usage", m.usageState))
 	case requestFailed:
-		lines = append(lines, paint("Resource usage is unavailable. Press r to retry.", output.ColorNumber, false))
+		lines = append(lines, summaryField("Usage", paint("unavailable", browserNumber, false)))
 	case requestUnavailable:
-		lines = append(lines, paint("Resource usage is unavailable for this connection.", output.ColorMuted, false))
+		lines = append(lines, summaryField("Usage", "unavailable for this connection"))
 	case requestEmpty:
-		lines = append(lines, paint("No resource samples in the last 5 minutes.", output.ColorMuted, false))
+		lines = append(lines, summaryField("Samples", "none · last 5 minutes"))
 	default:
 		if m.usageState.lastSuccessAt.IsZero() {
-			lines = append(lines, paint("No usage snapshot yet. Press r to load it.", output.ColorMuted, false))
+			lines = append(lines, summaryField("Usage", "no snapshot yet"))
 		}
 	}
 	usage := m.detailUsage
@@ -48,9 +47,9 @@ func (m *browser) usagePaneLines() []string {
 	lines = append(lines, m.historyLines()...)
 	if !m.usageState.lastSuccessAt.IsZero() {
 		when := m.usageState.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
-		lines = append(lines, "", paint("Last usage response · "+when, output.ColorMuted, false))
+		lines = append(lines, "", summaryField("Updated", when))
 	}
-	lines = append(lines, paint("Window · latest samples from the last 5 minutes", output.ColorMuted, false))
+	lines = append(lines, summaryField("Usage window", "last 5 minutes"))
 	return lines
 }
 
@@ -77,7 +76,7 @@ func resourceLimit(app client.App, resource string) string {
 func usageField(label string, value *float64, limit string, format func(float64) string, failed bool) string {
 	icon := map[string]string{"CPU": "", "RAM": "", "Disk": ""}[label]
 	field := func(shown string) string {
-		return paint(icon+" "+label+" ", output.ColorMuted, true) + paint(shown, output.ColorBranch, false)
+		return paint(icon+" "+label+" ", browserMuted, true) + paint(shown, browserValue, false)
 	}
 	if value == nil && !failed {
 		return field("-")

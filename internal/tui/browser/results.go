@@ -3,6 +3,7 @@ package browser
 import (
 	tea "charm.land/bubbletea/v2"
 	"fmt"
+	"github.com/rahacloud/darkubectl/internal/client"
 	"sort"
 	"strings"
 )
@@ -124,6 +125,118 @@ func (m *browser) handleAppDetailResult(msg appDetailResult) (tea.Model, tea.Cmd
 	}
 	m.detailState.succeed(false, m.requestTime())
 	m.detailApp = msg.app
+	m.syncResourceDraftFromDetail()
+	if m.detail && m.activeAppView == appViewBuilds && msg.app.BuildMethod == client.BuildMethodWebhook {
+		return m, m.loadSelectedBuilds()
+	}
+	return m, nil
+}
+
+func (m *browser) handleBuildsResult(msg buildsResult) (tea.Model, tea.Cmd) {
+	m.finishRequest(requestBuilds, msg.meta)
+	if !m.buildsState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || m.selectedDetailTarget() != msg.meta.appID {
+		return m, nil
+	}
+	if msg.err != nil {
+		m.buildsState.fail(msg.err)
+		if m.buildActionAwaiting != buildActionNone {
+			m.buildActionNotice = "Submission accepted · follow-up observation failed; outcome unknown"
+			m.buildActionAwaiting = buildActionNone
+		}
+		return m, nil
+	}
+	selected := m.buildSelectedID
+	m.builds = msg.builds
+	m.buildsState.succeed(len(msg.builds) == 0, m.requestTime())
+	m.buildListCursor = 0
+	for i, b := range m.builds {
+		if selected != "" && b.ID == selected {
+			m.buildListCursor = i
+			break
+		}
+	}
+	if m.buildActionAwaiting == buildActionRetry && m.buildActionRetryID != "" {
+		for i, b := range m.builds {
+			if b.ID == m.buildActionRetryID {
+				m.buildListCursor = i
+				m.buildSelectedID = b.ID
+				if m.buildDetail != nil {
+					return m, m.openSelectedBuild()
+				}
+				break
+			}
+		}
+	}
+	if len(m.builds) > 0 {
+		m.buildSelectedID = m.builds[m.buildListCursor].ID
+	} else {
+		m.buildSelectedID = ""
+	}
+	if m.buildActionAwaiting != buildActionNone {
+		switch m.buildActionAwaiting {
+		case buildActionStop:
+			observed := ""
+			for _, b := range m.builds {
+				if b.ID == m.buildActionAwaitingID {
+					observed = b.Status
+					break
+				}
+			}
+			if observed == client.BuildCanceled {
+				m.buildActionNotice = "Stop accepted · canceled state observed"
+			} else if observed != "" {
+				m.buildActionNotice = "Stop accepted · observed status: " + safeText(observed)
+			} else {
+				m.buildActionNotice = "Stop accepted · build not present in refreshed list; outcome unknown"
+			}
+		case buildActionRetry:
+			if m.buildActionRetryID != "" {
+				found := false
+				for _, b := range m.builds {
+					if b.ID == m.buildActionRetryID {
+						found = true
+						break
+					}
+				}
+				if found {
+					m.buildActionNotice = "Retry accepted · returned build ID found in refreshed list"
+				} else {
+					m.buildActionNotice = "Retry accepted · returned ID not found in refreshed list; outcome unknown"
+				}
+			} else {
+				m.buildActionNotice = "Retry accepted · refreshed list; new build attribution is unknown"
+			}
+		case buildActionLatest:
+			m.buildActionNotice = "Build and deploy accepted · refreshed list; new build attribution is unknown"
+		}
+		if m.actionIsMock() {
+			m.buildActionNotice = "MOCK · simulated · " + m.buildActionNotice
+		}
+		m.buildActionAwaiting = buildActionNone
+		m.buildActionRetryID = ""
+	}
+	return m, nil
+}
+
+func (m *browser) handleBuildResult(msg buildResult) (tea.Model, tea.Cmd) {
+	m.finishRequest(requestBuild, msg.meta)
+	if !m.buildDetailState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || m.selectedDetailTarget() != msg.meta.appID || m.buildSelectedID != msg.id {
+		return m, nil
+	}
+	if msg.err != nil {
+		m.buildDetailState.fail(msg.err)
+		return m, nil
+	}
+	if msg.build == nil || msg.build.ID != msg.id {
+		m.buildDetailState.fail(fmt.Errorf("build response did not match selected ID"))
+		return m, nil
+	}
+	if len(msg.build.Log) > buildOutputLimit {
+		msg.build.Log = msg.build.Log[:buildOutputLimit]
+	}
+	m.buildDetail = msg.build
+	m.buildDetailState.succeed(false, m.requestTime())
+	m.buildScroll = 0
 	return m, nil
 }
 
@@ -207,6 +320,10 @@ func (m *browser) handlePodsResult(msg podsResult) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.err != nil {
+		if m.terminalRequestPending {
+			m.terminalRequestPending = false
+			m.actionNotice = "Could not load pods for terminal access"
+		}
 		if strings.Contains(msg.err.Error(), "requires a Console JWT") {
 			m.podsState.unavailable(msg.err)
 			return m, nil
@@ -215,12 +332,20 @@ func (m *browser) handlePodsResult(msg podsResult) (tea.Model, tea.Cmd) {
 			m.podsState.fail(fmt.Errorf("Console rejected the session; run `darkubectl login` and retry"))
 			return m, nil
 		}
-		m.podsState.fail(fmt.Errorf("pod request failed"))
+		m.podsState.fail(fmt.Errorf("pod request failed: %w", msg.err))
 		return m, nil
 	}
 	sort.Slice(msg.pods, func(i, j int) bool { return msg.pods[i].Name < msg.pods[j].Name })
 	m.podList = msg.pods
 	m.podsState.succeed(len(m.podList) == 0, m.requestTime())
+	if m.terminalRequestPending {
+		m.terminalRequestPending = false
+		if len(m.podList) == 0 {
+			m.actionNotice = "No pods are available for terminal access"
+			return m, nil
+		}
+		return m, m.beginTerminalPicker()
+	}
 	if m.activeAppView == appViewLogs && m.logPod == "" {
 		return m, m.prepareLogTarget()
 	}

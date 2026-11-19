@@ -2,14 +2,12 @@ package browser
 
 import (
 	"fmt"
-
-	"github.com/rahacloud/darkubectl/internal/output"
 )
 
 func (m *browser) scalingPaneLines() []string {
 	lines := []string{}
 	if m.namespaceSelected || !m.selectedAppVisible() {
-		return []string{paint("No app selected. Move to an app to view its scaling settings.", output.ColorMuted, false)}
+		return []string{summaryField("App", "not selected")}
 	}
 	a := m.apps[m.selected]
 	if m.detailApp != nil && m.detailApp.ID == a.ID {
@@ -17,9 +15,9 @@ func (m *browser) scalingPaneLines() []string {
 	}
 	lines = append(lines, sectionHeading("Scaling"))
 	if m.detailState.err != nil {
-		lines = append(lines, paint("Detail refresh failed: "+safeText(m.detailState.err.Error()), output.ColorNumber, false))
+		lines = append(lines, summaryField("Refresh", paint("failed · "+safeText(m.detailState.err.Error()), browserNumber, false)))
 	} else if m.detailState.status == requestUnavailable {
-		lines = append(lines, paint("Scaling settings are unavailable; showing the list snapshot.", output.ColorMuted, false))
+		lines = append(lines, summaryField("Detail", "list snapshot"))
 	}
 
 	autoscaling := "Disabled"

@@ -3,11 +3,29 @@ package browser
 import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/output"
+	"github.com/rahacloud/darkubectl/internal/tui/theme"
 	"image/color"
 	"os"
 	"strings"
 	"unicode"
+)
+
+var (
+	browserAccent      = theme.ColorAccent
+	browserBranch      = theme.ColorBranch
+	browserKey         = theme.ColorKey
+	browserBorder      = theme.ColorBorder
+	browserSuccess     = theme.ColorSuccess
+	browserDanger      = theme.ColorDanger
+	browserMuted       = theme.ColorMuted
+	browserValue       = theme.ColorValue
+	browserNumber      = theme.ColorNumber
+	browserSelectionBG = theme.ColorSelectionBG
+	browserSelectionFG = theme.ColorSelectionFG
+	browserMatchBG     = theme.ColorMatchBG
+	browserMatchFG     = theme.ColorMatchFG
+	browserCurrentBG   = theme.ColorCurrentBG
+	browserCurrentFG   = theme.ColorCurrentFG
 )
 
 func fallbackText(value string) string {
@@ -23,7 +41,7 @@ func (m *browser) busy() bool {
 
 func (m *browser) liveGlyph() string {
 	if m.busy() {
-		return paint(m.spinnerGlyph(), output.ColorBranch, true)
+		return paint(m.spinnerGlyph(), browserBranch, true)
 	}
 	pulse := m.spinnerFrame % 8
 	if _, disabled := os.LookupEnv("NO_COLOR"); disabled {
@@ -32,7 +50,7 @@ func (m *browser) liveGlyph() string {
 		}
 		return "●"
 	}
-	style := lipgloss.NewStyle().Foreground(output.ColorBranch)
+	style := lipgloss.NewStyle().Foreground(browserBranch)
 	if pulse < 2 || pulse >= 6 {
 		style = style.Faint(true)
 	}
@@ -45,13 +63,13 @@ func (m *browser) spinnerGlyph() string {
 }
 
 func (m *browser) loadingMessage(label string) string {
-	return paint(m.spinnerGlyph(), output.ColorBranch, true) + " " + paint(label, output.ColorKey, false)
+	return paint(m.spinnerGlyph(), browserBranch, true) + " " + paint(label, browserKey, false)
 }
 
 func tenantPanelStyle() lipgloss.Style {
 	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
 	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
-		style = style.BorderForeground(output.ColorBorder)
+		style = style.BorderForeground(browserBorder)
 	} else {
 		style = style.Border(lipgloss.NormalBorder())
 	}
@@ -61,7 +79,7 @@ func tenantPanelStyle() lipgloss.Style {
 func selectedRowStyle() lipgloss.Style {
 	style := lipgloss.NewStyle().Bold(true)
 	if _, disabled := os.LookupEnv("NO_COLOR"); !disabled {
-		style = style.Foreground(output.ColorSelectionFG).Background(output.ColorSelectionBG)
+		style = style.Foreground(browserSelectionFG).Background(browserSelectionBG)
 	} else {
 		style = style.Reverse(true)
 	}
@@ -93,12 +111,12 @@ func stateStyle(state string) (string, color.Color) {
 	switch {
 	case strings.Contains(s, "unhealthy"), strings.Contains(s, "not ready"), strings.Contains(s, "error"),
 		strings.Contains(s, "fail"), strings.Contains(s, "crash"):
-		return "●", output.ColorDanger
+		return "●", browserDanger
 	case strings.Contains(s, "healthy"), strings.Contains(s, "running"), strings.Contains(s, "ready"):
-		return "●", output.ColorSuccess
+		return "●", browserSuccess
 	case strings.Contains(s, "degraded"), strings.Contains(s, "warning"):
-		return "▲", output.ColorNumber
+		return "▲", browserNumber
 	default:
-		return "○", output.ColorMuted
+		return "○", browserMuted
 	}
 }

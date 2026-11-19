@@ -56,25 +56,58 @@ func (m *browser) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *browser) handleSortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	options := appSortNames[:]
+	descending := m.sortDescending
+	if m.page == pageActivity {
+		var sortBy activitySort
+		options, sortBy, descending = m.activitySortOptions()
+		if !m.sorting {
+			m.sortChoice = int(sortBy)
+		}
+	} else if m.page == pageDB {
+		options = dbSortNames[:]
+		descending = m.databaseSortDescending
+		if !m.sorting {
+			m.sortChoice = int(m.databaseSortBy)
+		}
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
 		m.sorting = false
 	case "up", "k":
-		m.sortChoice = (m.sortChoice + len(appSortNames) - 1) % len(appSortNames)
+		m.sortChoice = (m.sortChoice + len(options) - 1) % len(options)
 	case "down", "j":
-		m.sortChoice = (m.sortChoice + 1) % len(appSortNames)
+		m.sortChoice = (m.sortChoice + 1) % len(options)
 	case "left", "h":
-		m.sortDescending = false
+		descending = false
 	case "right", "l":
-		m.sortDescending = true
+		descending = true
 	case "enter":
-		m.sortBy = appSort(m.sortChoice)
+		if m.page == pageActivity {
+			m.applyActivitySort(m.sortChoice, descending)
+		} else if m.page == pageDB {
+			m.databaseSortBy = dbSort(m.sortChoice)
+			m.databaseSortDescending = descending
+			m.sortDatabases()
+			m.databaseCursor = 0
+			cmd = m.updateDatabaseSelection()
+		} else {
+			m.sortBy = appSort(m.sortChoice)
+			m.sortDescending = descending
+			m.sortApps()
+		}
 		m.sorting = false
-		m.sortApps()
 	}
-	return m, nil
+	if m.page == pageActivity && m.sorting {
+		m.setActivitySortDirection(descending)
+	}
+	if m.page != pageActivity {
+		m.sortDescending = descending
+	}
+	return m, cmd
 }
 
 func (m *browser) handleHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

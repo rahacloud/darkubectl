@@ -27,22 +27,57 @@ type UsageMetricFailures struct {
 	NetworkSend    bool
 }
 
+// ResourceConfig is the staged, editable resource and scaling projection.
+type ResourceConfig struct {
+	Plan, CPU, RAM                                        string
+	DiskGi, Replicas, MinReplicas, MaxReplicas, CPUTarget int
+	Autoscaling                                           bool
+}
+
 // BrowserOptions contains the live browser's reads and opt-in app lifecycle actions.
 type BrowserOptions struct {
-	Tenant       string
-	LocalTenants []string
-	AllowWrites  bool
-	Profile      func(context.Context) (*client.Profile, error)
-	ListApps     func(context.Context, string) ([]client.App, error)
-	GetApp       func(context.Context, string, string) (*client.App, error)
-	Usage        func(context.Context, string, string) (*AppUsage, error)
-	UsageHistory func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
-	Pods         func(context.Context, string, string) ([]appstate.Pod, error)
-	AppLogs      func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
-	EgressRoutes func(context.Context, string) (map[string]client.ClusterEgress, error)
-	Namespaces   func(context.Context, string) ([]client.Namespace, error)
-	RestartApp   func(context.Context, string, string) error
-	DeleteApp    func(context.Context, string, string) error
+	Tenant                   string
+	LocalTenants             []string
+	AllowWrites              bool
+	Profile                  func(context.Context) (*client.Profile, error)
+	Alerts                   func(context.Context, string) ([]client.Alert, error)
+	Notifications            func(context.Context) ([]client.Notification, error)
+	ListDatabases            func(context.Context, string) ([]client.Database, error)
+	GetDatabase              func(context.Context, string, string) (*client.DatabaseDetail, error)
+	ListApps                 func(context.Context, string) ([]client.App, error)
+	GetApp                   func(context.Context, string, string) (*client.App, error)
+	Usage                    func(context.Context, string, string) (*AppUsage, error)
+	UsageHistory             func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
+	Pods                     func(context.Context, string, string) ([]appstate.Pod, error)
+	AppLogs                  func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
+	ListBuilds               func(context.Context, string, string, int) ([]client.Build, error)
+	GetBuild                 func(context.Context, string, client.BuildID) (*client.Build, error)
+	DeployToken              func(context.Context, string, string) (string, error)
+	UpdateGitBuildSettings   func(context.Context, string, string, client.GitBuildSettings, client.GitBuildSettings) error
+	BuildLatest              func(context.Context, string, string) error
+	RetryBuild               func(context.Context, string, client.BuildID) (*client.Build, error)
+	StopBuild                func(context.Context, string, client.BuildID) error
+	Environment              func(context.Context, string, string) ([]client.EnvVar, []string, error)
+	SecretEnvs               func(context.Context, string, string) ([]client.EnvVar, error)
+	UpdatePlainEnv           func(context.Context, string, string, []client.EnvVar) error
+	UpdateSecretEnv          func(context.Context, string, string, []client.EnvVar) error
+	Domains                  func(context.Context, string, string) (DomainConfig, error)
+	UpdateDomains            func(context.Context, string, string, DomainConfig) error
+	Ports                    func(context.Context, string, string) (PortConfig, error)
+	UpdatePorts              func(context.Context, string, string, PortConfig) error
+	UpdateResources          func(context.Context, string, string, ResourceConfig) error
+	ListResourcePlans        func(context.Context, string) ([]client.Plan, error)
+	Terminal                 func(context.Context, string, string, string, string, string) tea.ExecCommand
+	EgressRoutes             func(context.Context, string) (map[string]client.ClusterEgress, error)
+	Namespaces               func(context.Context, string) ([]client.Namespace, error)
+	ListRegistries           func(context.Context, string) ([]client.Registry, error)
+	ListRegistryRepositories func(context.Context, string, client.FlexID) ([]client.Repository, error)
+	ListRegistryDigests      func(context.Context, string, client.FlexID, string) ([]client.Digest, error)
+	DeleteRegistryRepository func(context.Context, string, client.FlexID, string) error
+	DeleteRegistryDigests    func(context.Context, string, client.FlexID, string, []string) error
+	DeleteRegistryTags       func(context.Context, string, client.FlexID, string, string, []string) error
+	RestartApp               func(context.Context, string, string) error
+	DeleteApp                func(context.Context, string, string) error
 }
 
 // RunBrowser opens the app browser using the caller's scoped clients.
@@ -50,6 +85,7 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
+		activityAlertStatusFilter: 1, activitySortAlertsDescending: true, activitySortNotificationsDescending: true,
 		allowWrites: options.AllowWrites, localTenants: append([]string(nil), options.LocalTenants...),
 		listApps: options.ListApps, logWrap: true, logTail: logDefaultTailSize}
 	if options.GetApp != nil {
@@ -61,10 +97,26 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	m.usageHistory = options.UsageHistory
 	m.fetchPods = options.Pods
 	m.appLogs = options.AppLogs
+	m.listBuilds, m.getBuild = options.ListBuilds, options.GetBuild
+	m.deployToken = options.DeployToken
+	m.updateGitBuildSettings = options.UpdateGitBuildSettings
+	m.buildLatest, m.retryBuild, m.stopBuild = options.BuildLatest, options.RetryBuild, options.StopBuild
+	m.environment, m.secretEnvs = options.Environment, options.SecretEnvs
+	m.updatePlainEnv, m.updateSecretEnv = options.UpdatePlainEnv, options.UpdateSecretEnv
+	m.domains, m.updateDomains = options.Domains, options.UpdateDomains
+	m.ports, m.updatePorts = options.Ports, options.UpdatePorts
+	m.updateResources = options.UpdateResources
+	m.listResourcePlans = options.ListResourcePlans
+	m.terminal = options.Terminal
+	m.alerts, m.notifications = options.Alerts, options.Notifications
+	m.listDatabases = options.ListDatabases
+	m.getDatabase = options.GetDatabase
 	m.egressRoutes = options.EgressRoutes
 	if options.Namespaces != nil {
 		m.listNamespaces = options.Namespaces
 	}
+	m.listRegistries, m.listRegistryRepositories, m.listRegistryDigests = options.ListRegistries, options.ListRegistryRepositories, options.ListRegistryDigests
+	m.deleteRegistryRepository, m.deleteRegistryDigests, m.deleteRegistryTags = options.DeleteRegistryRepository, options.DeleteRegistryDigests, options.DeleteRegistryTags
 	if options.RestartApp != nil {
 		m.restartApp = func(tenant, id string) error { return options.RestartApp(ctx, tenant, id) }
 	}

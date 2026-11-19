@@ -16,15 +16,15 @@ func TestActionMenuHintsMatchVimShortcuts(t *testing.T) {
 	}}, nil)
 	m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	if m.actionCursor != 1 {
-		t.Fatal("j should move to Delete in the action menu")
+		t.Fatal("j should move from Terminal to Restart in the action menu")
 	}
 	m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	if m.actionCursor != 0 {
-		t.Fatal("k should move to Restart in the action menu")
+		t.Fatal("k should move from Restart to Terminal in the action menu")
 	}
 	footer := ansi.Strip(m.footerLine())
-	if footer != "q quit · ? help" {
-		t.Fatalf("action footer = %q, want only quit and help", footer)
+	if !strings.Contains(footer, "Esc close") {
+		t.Fatalf("action footer = %q, want a close hint", footer)
 	}
 	if !strings.Contains(ansi.Strip(m.actionMenuPanel()), "j/k choose") {
 		t.Fatal("action menu modal should advertise j/k navigation")
