@@ -121,6 +121,11 @@ func appDomains(app client.App) []string {
 		if domain == "" {
 			continue
 		}
+		if app.Service != nil && strings.HasSuffix(strings.ToLower(domain), ".hsvc.ir") {
+			if port, ok := primaryServicePort(app.Service.Ports); ok && port.ServicePort > 0 {
+				domain = net.JoinHostPort(domain, fmt.Sprint(port.ServicePort))
+			}
+		}
 		key := strings.ToLower(domain)
 		if _, exists := seen[key]; exists {
 			continue

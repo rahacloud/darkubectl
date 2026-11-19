@@ -77,6 +77,31 @@ func TestAppDomainsCombinesAPIHostSourcesAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestAppDomainsIncludesServicePortForHsvc(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		host  string
+		ports map[string]client.Port
+		want  string
+	}{
+		{"service port", "app.hsvc.ir", map[string]client.Port{"main": {ServicePort: 27017, NodePort: 30161}}, "app.hsvc.ir:27017"},
+		{"existing port", "app.hsvc.ir:1234", map[string]client.Port{"main": {ServicePort: 27017}}, "app.hsvc.ir:1234"},
+		{"missing port", "app.hsvc.ir", nil, "app.hsvc.ir"},
+		{"ambiguous ports", "app.hsvc.ir", map[string]client.Port{"one": {ServicePort: 1}, "two": {ServicePort: 2}}, "app.hsvc.ir"},
+		{"other domain", "app.example.com", map[string]client.Port{"main": {ServicePort: 27017}}, "app.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			app := client.App{Service: &client.AppService{ExternalAddress: tt.host, Ports: tt.ports}}
+			if got := appDomains(app); !reflect.DeepEqual(got, []string{tt.want}) {
+				t.Fatalf("appDomains() = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSummaryShowsOptionalServiceAndRuntimeFields(t *testing.T) {
 	t.Parallel()
 	app := client.App{
