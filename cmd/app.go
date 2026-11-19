@@ -55,7 +55,7 @@ func NewApp() *cli.Command {
 			"active tenant (X-Organization).\n\n" +
 			"`whoami`, `get notifications` and `get plans` are account-wide and need no\n" +
 			"tenant; run `whoami` first to find out which tenants this account can reach.",
-		Version: version,
+		Version: buildVersion(),
 		// `darkubectl completion bash|zsh|fish|pwsh` prints the script. It is
 		// hidden by default in urfave/cli; shown here so --help advertises it.
 		EnableShellCompletion: true,
@@ -127,7 +127,7 @@ func newVersionCommand() *cli.Command {
 		Name:  "version",
 		Usage: "Print the darkubectl version",
 		Action: func(_ context.Context, _ *cli.Command) error {
-			fmt.Fprintf(os.Stdout, "darkubectl %s\n", version)
+			fmt.Fprintf(os.Stdout, "darkubectl %s\n", buildVersion())
 			return nil
 		},
 	}

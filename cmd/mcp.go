@@ -336,7 +336,7 @@ func mcpAction(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	server := mcp.NewServer(
-		&mcp.Implementation{Name: progName, Title: "Hamravesh Darkube", Version: version},
+		&mcp.Implementation{Name: progName, Title: "Hamravesh Darkube", Version: buildVersion()},
 		&mcp.ServerOptions{Instructions: s.instructions(NewApp())},
 	)
 	s.register(server)
