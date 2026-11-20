@@ -20,29 +20,44 @@ Env COLORTERM "truecolor"
 
 Hide
 Type "unset NO_COLOR; export TERM=xterm-256color COLORTERM=truecolor; clear" Enter
-Type "/tmp/darkubectl-mock tui --mock-file demo/mock-profile.yaml" Enter
-Sleep 1s
+Type "go build -o /tmp/darkubectl-mock . && /tmp/darkubectl-mock tui --mock-file demo/mock-profile.yaml" Enter
+Sleep 3s
 Show
 
-# Start in the tenant app list, then inspect usage and logs.
+# Show available app actions, then inspect every detail view for the API app.
+Type "a"
+Sleep 1s
+Escape
 Type "4"
-Sleep 800ms
+Sleep 1s
 Type "]"
 Sleep 1s
 Type "]"
+Sleep 1s
+Type "]"
+Sleep 1s
+Type "]"
+Sleep 1s
+Type "]"
+Sleep 1s
+Type "]"
+Sleep 1s
 Type "m"
 Sleep 1s
 Type "m"
 
-# Select the Git backed worker and step through its detail views.
+# Select the Git backed worker, show its actions and step through each view.
 Type "3"
 Down
-Sleep 800ms
+Sleep 1s
+Type "a"
+Sleep 1s
+Escape
 Type "4"
 Type "]"
-Sleep 800ms
+Sleep 1s
 Type "]"
-Sleep 800ms
+Sleep 1s
 Type "]"
 Sleep 1s
 Type "]"
@@ -52,18 +67,10 @@ Sleep 1s
 Type "]"
 Sleep 1s
 
-# Switch to the second tenant and inspect its notebook app.
+# Keep the populated hamravesh tenant selected for Activity, DB and Registry.
 Type "1"
-Down
-Sleep 1s
-Type "3"
-Type "4"
-Type "]"
-Sleep 1s
-Type "]"
-Sleep 1s
-
-# Visit Activity alerts and notifications, Tickets, DB, and Registry.
+Up
+Sleep 500ms
 Type "2"
 Down
 Enter
@@ -90,10 +97,10 @@ Escape
 Type "2"
 Down
 Enter
-Sleep 500ms
+Sleep 1s
+Enter
+Sleep 1s
 Down
 Enter
 Sleep 1s
-Escape
-Ctrl+C
-Sleep 1s
+Sleep 2s
