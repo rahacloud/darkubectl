@@ -38,7 +38,7 @@ func TestAppListFooterShowsListShortcutsAndHelpModalListsShortcuts(t *testing.T)
 	}}, nil)
 
 	footer := ansi.Strip(m.footerLine())
-	for _, hint := range []string{"q quit", "? help", "↑↓/jk apps", "↵ details", "n scope", "/ filter", "s sort", "r refresh"} {
+	for _, hint := range []string{"q quit", "? help", "↑↓/jk apps", "Enter details", "n scope", "/ filter", "s sort", "r refresh"} {
 		if !strings.Contains(footer, hint) {
 			t.Errorf("footer = %q, missing list hint %q", footer, hint)
 		}

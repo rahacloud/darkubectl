@@ -42,7 +42,6 @@ func runMouseSelectionCase(t *testing.T, view struct {
 	click bool
 }) {
 	t.Helper()
-	t.Parallel()
 	m := newMouseSelectionBrowser(view.view)
 	generation := m.selectionGeneration
 	appsLeft := mouseSelectionAppsLeft(m)

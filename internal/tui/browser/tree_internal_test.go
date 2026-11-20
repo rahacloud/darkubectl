@@ -37,6 +37,7 @@ func TestAppTreeGroupsAndScrolls(t *testing.T) {
 		t.Fatalf("namespace did not collapse: %s", got)
 	}
 	m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	got = ansi.Strip(strings.Join(m.appTree(6), "\n"))
 	if !strings.Contains(got, "  ▾ prod (ID 1)") || !strings.Contains(got, "└── worker") {
 		t.Fatalf("namespace did not expand: %s", got)
 	}

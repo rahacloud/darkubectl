@@ -46,6 +46,7 @@ func (m *browser) egressIPForApp(a client.App) string {
 		for i := range clusterRoutes.Routes {
 			route := &clusterRoutes.Routes[i]
 			if route.ApplyToAllNamespaces {
+				matchedRoute = route
 				break
 			}
 		}

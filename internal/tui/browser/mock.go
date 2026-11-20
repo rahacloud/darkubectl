@@ -153,7 +153,10 @@ func populateMockTenantData(state *mockBrowserData, tenant MockTenant) {
 			Author: client.TicketUser{DisplayName: "Operator"}, Created: client.TicketTime(now)}, {ID: "1",
 			Body:   "Please send the project name and the time the error occurred.\n\n```text\nconnection refused\n```",
 			Author: client.TicketUser{DisplayName: "Support", Email: "support@hamravesh.com"}, Created: client.TicketTime(now)}},
-		"33408": {{ID: "0", Body: "Please review the billing statement.", Author: client.TicketUser{DisplayName: "Operator"}, Created: client.TicketTime(now)}},
+		"33408": {{
+			ID: "0", Body: "Please review the billing statement.",
+			Author: client.TicketUser{DisplayName: "Operator"}, Created: client.TicketTime(now),
+		}},
 	}
 	state.appsByTenant[tenant.Name] = append([]client.App(nil), tenant.Apps...)
 	state.databasesByTenant[tenant.Name] = append([]client.Database(nil), tenant.Databases...)

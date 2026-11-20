@@ -31,8 +31,9 @@ func TestCICDModeGatesBuildHistory(t *testing.T) {
 
 func TestBuildArgumentsMaskedUntilRevealed(t *testing.T) {
 	t.Parallel()
-	app := client.App{GitBuildArgs: json.RawMessage(`[{"name":"API_KEY","value":"secret-value"}]`)}
-	m := &browser{}
+	app := client.App{ID: "app", BuildMethod: client.BuildMethodWebhook,
+		GitBuildArgs: json.RawMessage(`[{"name":"API_KEY","value":"secret-value"}]`)}
+	m := &browser{apps: []client.App{app}}
 	text := ansi.Strip(strings.Join(m.cicdDarkubeInfo(app), "\n"))
 	if !strings.Contains(text, "API_KEY") || strings.Contains(text, "secret-value") {
 		t.Fatalf("unexpected masked output: %q", text)

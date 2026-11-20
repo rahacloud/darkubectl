@@ -195,22 +195,27 @@ func (m *browser) handleKeyEditorMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, 
 
 func (m *browser) handleKeyEnvironmentEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m.handleKeyAppEditor(msg, appViewEnv, m.envEditMode != envEditNone || m.envConfirm, m.handleEnvKey,
-		[]string{"[", "]", inputKeyCtrlC, "q", "?", "1", "2", "3", "4", inputKeyShiftTab, inputKeyBacktab, "a", inputKeyPgUp, inputKeyPgDown})
+		appEditorGlobalKeys)
 }
 
 func (m *browser) handleKeyDomainsEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m.handleKeyAppEditor(msg, appViewDomains, m.domainEditing || m.domainConfirm, m.handleDomainsKey,
-		[]string{"[", "]", inputKeyCtrlC, "q", "?", "1", "2", "3", "4", inputKeyShiftTab, inputKeyBacktab, "a"})
+		appEditorGlobalKeys)
 }
 
 func (m *browser) handleKeyPortsEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m.handleKeyAppEditor(msg, appViewPorts, m.portEditing || m.portConfirm, m.handlePortsKey,
-		[]string{"[", "]", inputKeyCtrlC, "q", "?", "1", "2", "3", "4", inputKeyShiftTab, inputKeyBacktab, "a"})
+		appEditorGlobalKeys)
 }
 
 func (m *browser) handleKeyResourcesEditor(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m.handleKeyAppEditor(msg, appViewUsage, m.resourceEditing || m.resourceReview, m.handleResourcesKey,
-		[]string{"[", "]", inputKeyCtrlC, "q", "?", "1", "2", "3", "4", inputKeyShiftTab, inputKeyBacktab, "a"})
+		appEditorGlobalKeys)
+}
+
+var appEditorGlobalKeys = []string{
+	"[", "]", inputKeyCtrlC, "q", "?", "1", "2", "3", "4", inputKeyShiftTab, inputKeyBacktab, "a",
+	keyLeft, "h", keyRight, "l", inputKeyPgUp, inputKeyPgDown,
 }
 
 func (m *browser) handleKeyAppEditor(msg tea.KeyPressMsg, view appView, editing bool, handler func(tea.KeyPressMsg) tea.Cmd,

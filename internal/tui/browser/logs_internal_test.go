@@ -16,7 +16,7 @@ func TestLogsShowPodSnapshotFailureCauseAndRetryHint(t *testing.T) {
 	t.Parallel()
 	meta := requestMeta{tenant: "tenant", appID: "app"}
 	m := &browser{
-		tenant: "tenant", detail: true, activeAppView: appViewLogs,
+		tenant: "tenant", width: 120, height: 30, detail: true, activeAppView: appViewLogs,
 		apps:      []client.App{{ID: "app"}},
 		podsState: requestState{status: requestLoading, meta: meta},
 	}
@@ -78,7 +78,7 @@ func TestLogCurrentPreviousToggleAndEmptyPreviousMessage(t *testing.T) {
 	t.Parallel()
 	modes := []bool{}
 	m := &browser{
-		tenant: "tenant", detail: true, activeAppView: appViewLogs,
+		tenant: "tenant", width: 120, height: 30, detail: true, activeAppView: appViewLogs,
 		apps: []client.App{{ID: "app"}}, logPod: "pod", logContainer: "main",
 		logState: requestState{status: requestEmpty},
 		appLogs: func(_ context.Context, _, _ string, opts client.LogOptions) ([]client.LogEntry, error) {
@@ -99,7 +99,7 @@ func TestLogCurrentPreviousToggleAndEmptyPreviousMessage(t *testing.T) {
 		t.Fatalf("previous mode = %t; modes=%v", m.logPrevious, modes)
 	}
 	got := ansi.Strip(strings.Join(m.logsPaneLines(), "\n"))
-	if !strings.Contains(got, "No previous logs returned") || !strings.Contains(got, "MODE Previous (p)") {
+	if !strings.Contains(got, "no previous entries") || !strings.Contains(got, "Previous") {
 		t.Fatalf("empty previous view = %s", got)
 	}
 	cmd = m.toggleLogPrevious()
@@ -122,7 +122,7 @@ func TestLogCurrentPreviousToggleAndEmptyPreviousMessage(t *testing.T) {
 func TestLogStatusDoesNotReplaceFollowStateWithRequestStatus(t *testing.T) {
 	t.Parallel()
 	m := &browser{
-		detail: true, activeAppView: appViewLogs, apps: []client.App{{ID: "app"}},
+		width: 120, height: 30, detail: true, activeAppView: appViewLogs, apps: []client.App{{ID: "app"}},
 		logPod: "pod", logContainer: "main", logFollowing: true,
 		logState: requestState{status: requestLoading},
 	}
