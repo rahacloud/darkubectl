@@ -8,25 +8,24 @@ import (
 )
 
 const (
-	appViewTabAtValue2             = 2
-	handleActivityMouseValue2      = 2
-	handleActivityMouseValue3      = 3
-	handleActivityMouseValue4      = 4
-	handleBrowserMouseValue11      = 11
-	handleBrowserMouseValue2       = 2
-	handleBrowserMouseValue3       = 3
-	handleBrowserMouseValue4       = 4
-	handleBrowserWheelValue2       = 2
-	handleBrowserWheelValue3       = 3
-	handleBrowserWheelValue4       = 4
-	handleBuildActionMouseValue2   = 2
-	ticketMouseHeaderHeight        = 2
-	ticketMouseRowOffset           = 2
-	ticketMouseTitleRightInset     = 6
-	ticketMouseTitleSeparatorWidth = 2
-	buildActionMenuVerticalOffset  = 4
-	buildActionMenuContentPadding  = 7
-	contextPaneHeightDivisor       = 2
+	appViewTabAtValue2            = 2
+	handleActivityMouseValue2     = 2
+	handleActivityMouseValue3     = 3
+	handleActivityMouseValue4     = 4
+	handleBrowserMouseValue11     = 11
+	handleBrowserMouseValue2      = 2
+	handleBrowserMouseValue3      = 3
+	handleBrowserMouseValue4      = 4
+	handleBrowserWheelValue2      = 2
+	handleBrowserWheelValue3      = 3
+	handleBrowserWheelValue4      = 4
+	handleBuildActionMouseValue2  = 2
+	ticketMouseHeaderHeight       = 2
+	ticketMouseRowOffset          = 2
+	ticketMouseTitleRightInset    = 6
+	buildActionMenuVerticalOffset = 4
+	buildActionMenuContentPadding = 7
+	contextPaneHeightDivisor      = 2
 )
 
 func (m *browser) handleBrowserMouse(msg tea.MouseClickMsg) tea.Cmd {
@@ -88,7 +87,7 @@ func (m *browser) handleTicketMouse(msg tea.MouseClickMsg) tea.Cmd {
 		return m.handleContextPaneMouse(msg, bodyY, false)
 	}
 	if msg.X >= listLeft && msg.X < listRight {
-		return m.handleTicketListMouse(msg, bodyY, listRight)
+		return m.handleTicketListMouse(msg, bodyY, listRight, listWidth)
 	}
 	if msg.X >= detailLeft && msg.X < detailLeft+detailWidth+2 {
 		m.contextFocused = false
@@ -98,14 +97,14 @@ func (m *browser) handleTicketMouse(msg tea.MouseClickMsg) tea.Cmd {
 	return nil
 }
 
-func (m *browser) handleTicketListMouse(msg tea.MouseClickMsg, bodyY, listRight int) tea.Cmd {
+func (m *browser) handleTicketListMouse(msg tea.MouseClickMsg, bodyY, listRight, listWidth int) tea.Cmd {
 	if msg.Y == bodyY {
-		return m.handleTicketHeaderMouse(msg, listRight)
+		return m.handleTicketHeaderMouse(msg, listRight, listWidth)
 	}
 	return m.selectTicketMouseRow(msg, bodyY)
 }
 
-func (m *browser) handleTicketHeaderMouse(msg tea.MouseClickMsg, listRight int) tea.Cmd {
+func (m *browser) handleTicketHeaderMouse(msg tea.MouseClickMsg, listRight, listWidth int) tea.Cmd {
 	m.contextFocused = false
 	scope := ticketScopeControl(m.ticketMine)
 	scopeStart := listRight - ticketMouseTitleRightInset - ansi.StringWidth(scope) + 1
@@ -114,7 +113,7 @@ func (m *browser) handleTicketHeaderMouse(msg tea.MouseClickMsg, listRight int) 
 		m.ticketCursor = 0
 		return m.loadTickets(true)
 	}
-	statusEnd := scopeStart - ticketMouseTitleSeparatorWidth
+	statusEnd := scopeStart - ticketControlSeparatorWidth(listWidth, m.ticketStatus, m.ticketMine)
 	statusStart := statusEnd - ansi.StringWidth(ticketStatusControl(m.ticketStatus))
 	if msg.X >= statusStart && msg.X < statusEnd {
 		return m.cycleTicketStatus()

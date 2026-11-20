@@ -25,6 +25,7 @@ const (
 	ticketPageBottomInset       = 4
 	ticketComposeFieldCount     = 4
 	ticketLastComposeFieldIndex = 3
+	ticketControlWideSeparator  = 2
 )
 
 type ticketListResult struct {
@@ -320,16 +321,27 @@ func ticketStatusGlyph(status string) (string, color.Color) {
 
 func ticketScopeControl(mine bool) string {
 	if mine {
-		return "o Mine"
+		return "Mine"
 	}
-	return "o Org"
+	return "Org"
 }
 
 func ticketStatusControl(status string) string {
 	if status == "" {
 		status = client.TicketStatusAll
 	}
-	return "f " + status
+	return status
+}
+
+func ticketControlSeparatorWidth(width int, status string, mine bool) int {
+	available := max(1, width-borderTitleWithControlsValue6)
+	label := ansi.Truncate("[3] TICKETS", available, "…")
+	room := max(0, available-ansi.StringWidth(label)-1)
+	full := ticketStatusControl(status) + "  " + ticketScopeControl(mine)
+	if ansi.StringWidth(full) > room-2 {
+		return 1
+	}
+	return ticketControlWideSeparator
 }
 
 func ticketVisibleRange(count, cursor, height int) (int, int) {

@@ -138,7 +138,7 @@ func TestTicketPageKeysAndMouseFocus(t *testing.T) {
 	listWidth, _, contextWidth := m.paneWidths()
 	_, listRight := browserWheelListBounds(listWidth, contextWidth)
 	m.ticketStatus = client.TicketStatusAll
-	m.handleBrowserMouse(tea.MouseClickMsg{X: listRight - 14, Y: m.browserBodyY(), Button: tea.MouseLeft})
+	m.handleBrowserMouse(tea.MouseClickMsg{X: listRight - 12, Y: m.browserBodyY(), Button: tea.MouseLeft})
 	if m.ticketStatus != client.TicketStatusOpen {
 		t.Fatalf("status border click: %q", m.ticketStatus)
 	}
@@ -153,7 +153,11 @@ func TestTicketControlsInPaneBorder(t *testing.T) {
 	m := &browser{page: pageTickets, width: 140, ticketStatus: client.TicketStatusClosed, userEmail: "operator@example.test"}
 	appsWidth, summaryWidth, _ := m.paneWidths()
 	title, _ := m.paneTitles(appsWidth, summaryWidth)
-	if !strings.Contains(title, "Closed") || !strings.Contains(title, "o Org") {
+	hasStatus := strings.Contains(title, "Closed")
+	hasScope := strings.Contains(title, "Org")
+	hasLegacyScope := strings.Contains(title, "o Org")
+	hasLegacyStatus := strings.Contains(title, "f Closed")
+	if !hasStatus || !hasScope || hasLegacyScope || hasLegacyStatus {
 		t.Fatalf("ticket filter and scope absent from border: %q", title)
 	}
 	list := strings.Join(m.ticketPaneLines(8), "\n")
