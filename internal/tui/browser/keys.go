@@ -688,7 +688,8 @@ func (m *browser) refreshDetail() tea.Cmd {
 		}
 		return m.loadSelectedLogs()
 	case appViewUsage:
-		return tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
+		m.pvcsState.reset()
+		return tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory(), m.loadSelectedPVCs())
 	default:
 		return tea.Batch(m.loadSelectedSummary(), m.loadEgressRoutes(true))
 	}

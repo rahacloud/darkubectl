@@ -149,7 +149,7 @@ func (m *browser) appendEnvEditPrompt(lines []string) []string {
 		return lines
 	}
 	if m.envEditName == "" {
-		return append(lines, "", "Variable name: "+safeText(m.envEditValue)+"█")
+		return append(lines, "", "Variable name  "+safeText(m.envEditValue)+"█")
 	}
 	value := safeText(m.envEditValue)
 	if m.envEditMode == envEditSecret || m.envEditMode == envAddSecret {

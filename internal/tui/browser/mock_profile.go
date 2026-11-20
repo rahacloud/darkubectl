@@ -244,42 +244,50 @@ func convertMockRegistryDigest(raw mockProfileRegistryDigest, imageName string, 
 
 //nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileApp struct {
-	ID                  string                  `yaml:"id"`
-	Name                string                  `yaml:"name"`
-	Namespace           mockProfileNamespace    `yaml:"namespace"`
-	State               mockProfileState        `yaml:"state"`
-	Replicas            *int                    `yaml:"replicas"`
-	CreationMethod      string                  `yaml:"creation_method"`
-	BuildMethod         string                  `yaml:"build_method"`
-	GitRepoURL          string                  `yaml:"git_repo_url"`
-	GitBranch           string                  `yaml:"git_branch_name"`
-	GitProvider         string                  `yaml:"git_provider_type"`
-	GitDockerfile       string                  `yaml:"git_build_dockerfile"`
-	GitContext          string                  `yaml:"git_build_context"`
-	GitWorkdir          string                  `yaml:"git_build_workdir"`
-	Builder             string                  `yaml:"builder"`
-	GitAutodeploy       *bool                   `yaml:"autodeploy_on_git_push"`
-	GitBuildArgs        map[string]string       `yaml:"git_build_args"`
-	ImageRepo           string                  `yaml:"image_repo"`
-	ImageTag            string                  `yaml:"image_tag"`
-	CustomDomainAddress string                  `yaml:"custom_domain_address"`
-	CustomSubdomainAddr string                  `yaml:"custom_subdomain_addr"`
-	ExternalHosts       []string                `yaml:"external_hosts"`
-	Service             mockProfileService      `yaml:"service"`
-	ReadinessProbePath  string                  `yaml:"readiness_probe_path"`
-	Command             string                  `yaml:"command"`
-	Args                string                  `yaml:"args"`
-	RAMLimit            string                  `yaml:"ram_limit"`
-	CPURequest          string                  `yaml:"cpu_request"`
-	DiskSizeInGi        int                     `yaml:"disk_size_in_gi"`
-	Plan                *mockProfilePlan        `yaml:"plan"`
-	CustomConfig        mockProfileCustomConfig `yaml:"custom_config"`
-	Envs                []client.EnvVar         `yaml:"envs"`
-	SecretEnvNames      []string                `yaml:"secret_envs"`
-	Pods                []mockProfilePod        `yaml:"pods"`
-	Logs                []mockProfileLog        `yaml:"logs"`
-	Usage               mockProfileUsage        `yaml:"usage"`
-	History             mockProfileHistory      `yaml:"history"`
+	ID                  string                     `yaml:"id"`
+	Name                string                     `yaml:"name"`
+	Namespace           mockProfileNamespace       `yaml:"namespace"`
+	State               mockProfileState           `yaml:"state"`
+	Replicas            *int                       `yaml:"replicas"`
+	CreationMethod      string                     `yaml:"creation_method"`
+	BuildMethod         string                     `yaml:"build_method"`
+	GitRepoURL          string                     `yaml:"git_repo_url"`
+	GitBranch           string                     `yaml:"git_branch_name"`
+	GitProvider         string                     `yaml:"git_provider_type"`
+	GitDockerfile       string                     `yaml:"git_build_dockerfile"`
+	GitContext          string                     `yaml:"git_build_context"`
+	GitWorkdir          string                     `yaml:"git_build_workdir"`
+	Builder             string                     `yaml:"builder"`
+	GitAutodeploy       *bool                      `yaml:"autodeploy_on_git_push"`
+	GitBuildArgs        map[string]string          `yaml:"git_build_args"`
+	ImageRepo           string                     `yaml:"image_repo"`
+	ImageTag            string                     `yaml:"image_tag"`
+	CustomDomainAddress string                     `yaml:"custom_domain_address"`
+	CustomSubdomainAddr string                     `yaml:"custom_subdomain_addr"`
+	ExternalHosts       []string                   `yaml:"external_hosts"`
+	Service             mockProfileService         `yaml:"service"`
+	ReadinessProbePath  string                     `yaml:"readiness_probe_path"`
+	Command             string                     `yaml:"command"`
+	Args                string                     `yaml:"args"`
+	RAMLimit            string                     `yaml:"ram_limit"`
+	CPURequest          string                     `yaml:"cpu_request"`
+	DiskSizeInGi        int                        `yaml:"disk_size_in_gi"`
+	DiskPartitions      []mockProfileDiskPartition `yaml:"disk_partitions"`
+	Plan                *mockProfilePlan           `yaml:"plan"`
+	CustomConfig        mockProfileCustomConfig    `yaml:"custom_config"`
+	Envs                []client.EnvVar            `yaml:"envs"`
+	SecretEnvNames      []string                   `yaml:"secret_envs"`
+	Pods                []mockProfilePod           `yaml:"pods"`
+	Logs                []mockProfileLog           `yaml:"logs"`
+	Usage               mockProfileUsage           `yaml:"usage"`
+	History             mockProfileHistory         `yaml:"history"`
+}
+
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
+type mockProfileDiskPartition struct {
+	DisplayName string `yaml:"display_name"`
+	MountPath   string `yaml:"mount_path"`
+	SubPath     string `yaml:"sub_path"`
 }
 
 type mockProfileLog struct {
@@ -586,6 +594,9 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 		if app.DiskSizeInGi < 0 {
 			return nil, fmt.Errorf("%w: mock profile app %q has negative disk size", errInvalidMockProfile, app.ID)
 		}
+		if app.DiskSizeInGi == 0 && len(app.DiskPartitions) > 0 {
+			return nil, fmt.Errorf("%w: mock profile app %q has disk partitions but no disk size", errInvalidMockProfile, app.ID)
+		}
 		if _, exists := seenIDs[app.ID]; exists {
 			return nil, fmt.Errorf("%w: mock profile has duplicate app id %q", errInvalidMockProfile, app.ID)
 		}
@@ -654,15 +665,20 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 			CustomDomainAddress: app.CustomDomainAddress,
 			CustomSubdomainAddr: app.CustomSubdomainAddr,
 			Service:             service,
-			Disk:                mockDisk(app.DiskSizeInGi),
+			Disk:                mockDisk(app.DiskSizeInGi, app.DiskPartitions),
 		})
 	}
 	return apps, nil
 }
 
-func mockDisk(size int) *client.Disk {
+func mockDisk(size int, partitions []mockProfileDiskPartition) *client.Disk {
 	if size <= 0 {
 		return nil
 	}
-	return &client.Disk{SizeInGi: size}
+	converted := make([]client.Partition, 0, len(partitions))
+	for _, partition := range partitions {
+		converted = append(converted, client.Partition{DisplayName: partition.DisplayName, MountPath: partition.MountPath,
+			SubPath: partition.SubPath})
+	}
+	return &client.Disk{SizeInGi: size, Partitions: converted}
 }

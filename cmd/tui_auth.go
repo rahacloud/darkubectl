@@ -35,6 +35,16 @@ type tuiCredential struct {
 
 func newTUICredential(ctx context.Context, cmd *cli.Command, cfg *config.Config) (*tuiCredential, error) {
 	c := &tuiCredential{baseURL: resolveBaseURL(cmd, cfg), now: time.Now}
+	resolved, err := resolveAuth(ctx, cmd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(string(resolved), "Api-key ") {
+		c.static = resolved
+	}
+	if token, ok := strings.CutPrefix(string(resolved), "Bearer "); ok {
+		c.access = token
+	}
 	if explicit := os.Getenv("DARKUBE_ACCESS_TOKEN"); explicit != "" {
 		c.access = explicit
 		c.refreshAccess = func(context.Context, string) (string, error) {
@@ -48,18 +58,17 @@ func newTUICredential(ctx context.Context, cmd *cli.Command, cfg *config.Config)
 			return a.Refresh(ctx, refresh)
 		}
 	}
-	if token := resolveToken(cmd, cfg); token != "" {
-		c.static = client.APIKey(token)
-		// API keys authenticate REST calls, but the pod websocket requires a
-		// Console JWT. Keep both credentials when the user configured both.
-		if c.access == "" && c.refresh == "" {
-			return c, nil
-		}
-	} else if c.access == "" && c.refresh == "" {
-		return nil, errNoCredentials
+	// An API key is the resolved REST credential, but a configured Console
+	// refresh token can still supply the JWT needed by the pod websocket.
+	if c.static != "" && c.access == "" && c.refresh == "" {
+		return c, nil
 	}
 	if c.static == "" {
 		if _, err := c.current(ctx); err != nil {
+			return nil, err
+		}
+	} else if c.refresh != "" {
+		if _, err := c.consoleAccessToken(ctx); err != nil {
 			return nil, err
 		}
 	}

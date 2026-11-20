@@ -503,14 +503,14 @@ func (m *browser) logTargetLines() []string {
 
 func (m *browser) appendLogSearchStatus(lines []string) []string {
 	if m.logSearchEditing {
-		return append(lines, "Search: "+safeText(m.logSearch)+"█")
+		return append(lines, "Search  "+safeText(m.logSearch)+"█")
 	}
 	if m.logSearch == "" {
 		return lines
 	}
 	matches := m.logMatches()
 	matchNumber := min(m.logMatch+1, max(1, len(matches)))
-	return append(lines, fmt.Sprintf("Search: %s   Match %d/%d", safeText(m.logSearch), matchNumber, len(matches)))
+	return append(lines, fmt.Sprintf("Search  %s   Match %d/%d", safeText(m.logSearch), matchNumber, len(matches)))
 }
 
 func (m *browser) appendLogRequestError(lines []string) []string {

@@ -502,9 +502,9 @@ func (m *browser) buildDetailLines() []string {
 	}
 	lines = append(lines, "", sectionHeading("Build output"))
 	if m.buildSearchEditing {
-		lines = append(lines, paint("Search: "+safeText(m.buildSearch)+"▌", browserAccent, true))
+		lines = append(lines, paint("Search  "+safeText(m.buildSearch)+"▌", browserAccent, true))
 	} else if m.buildSearch != "" {
-		lines = append(lines, paint("Search: "+safeText(m.buildSearch), browserMuted, false))
+		lines = append(lines, paint("Search  "+safeText(m.buildSearch), browserMuted, false))
 	}
 	if m.buildCopyStatus != "" {
 		lines = append(lines, paint(safeText(m.buildCopyStatus), browserMuted, false))
@@ -526,7 +526,7 @@ func buildDetailStickyLines(lines []string) int {
 	for i, line := range lines {
 		if ansi.Strip(line) == "Build output" {
 			sticky := i + 1
-			for sticky < len(lines) && (strings.HasPrefix(ansi.Strip(lines[sticky]), "Search:") ||
+			for sticky < len(lines) && (strings.HasPrefix(ansi.Strip(lines[sticky]), "Search  ") ||
 				strings.Contains(ansi.Strip(lines[sticky]), "Copied ") || ansi.Strip(lines[sticky]) == "Copying build output…") {
 				sticky++
 			}
@@ -697,7 +697,7 @@ func (m *browser) moveBuildMatch(delta int) {
 		}
 	}
 	if m.buildSearch != "" {
-		if outputStart < len(allLines) && strings.HasPrefix(ansi.Strip(allLines[outputStart]), "Search:") {
+		if outputStart < len(allLines) && strings.HasPrefix(ansi.Strip(allLines[outputStart]), "Search  ") {
 			outputStart++
 		}
 	}

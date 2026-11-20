@@ -71,6 +71,7 @@ func (m *browser) invalidateAppReads() {
 	m.activeAppView = appViewSummary
 	m.cancelRequest(requestKey{kind: requestSummary})
 	m.cancelRequest(requestKey{kind: requestUsage})
+	m.cancelRequest(requestKey{kind: requestPVCs})
 	m.cancelRequest(requestKey{kind: requestUsageHistory})
 	m.cancelRequest(requestKey{kind: requestPods})
 	m.cancelRequest(requestKey{kind: requestLogs})
@@ -80,6 +81,8 @@ func (m *browser) invalidateAppReads() {
 	m.cancelRequest(requestKey{kind: requestPorts})
 	m.detailState.reset()
 	m.usageState.reset()
+	m.pvcsState.reset()
+	m.appPVCs = nil
 	m.historyState.reset()
 	m.podsState.reset()
 	m.podList = nil

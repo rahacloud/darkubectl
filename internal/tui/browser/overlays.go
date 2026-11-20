@@ -32,7 +32,7 @@ func (m *browser) namespaceModal(background []string) []string {
 	choices := m.namespaceChoices()
 	content := []string{
 		paint("⎈  NAMESPACE SCOPE", browserAccent, true),
-		"Filter by namespace, cluster, or ID: " + paint(m.namespaceQuery+"▏", browserBranch, true),
+		"Filter by namespace, cluster, or ID  " + paint(m.namespaceQuery+"▏", browserBranch, true),
 		paint(strings.Repeat("─", innerWidth), browserBorder, false),
 	}
 	if m.namespaceState.active() {

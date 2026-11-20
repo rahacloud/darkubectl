@@ -35,9 +35,10 @@ type ResourceConfig struct {
 	Autoscaling                                           bool
 }
 
-// Options contains the live browser's reads and opt-in app lifecycle actions.
+// Options contains the live browser's reads and opt-in write actions.
 type Options struct {
 	Tenant                   string
+	Version                  string
 	LocalTenants             []string
 	AllowWrites              bool
 	ListTickets              func(context.Context, string, string, bool) (client.TicketList, error)
@@ -55,6 +56,7 @@ type Options struct {
 	ListApps                 func(context.Context, string) ([]client.App, error)
 	GetApp                   func(context.Context, string, string) (*client.App, error)
 	Usage                    func(context.Context, string, string) (*AppUsage, error)
+	ListPVCs                 func(context.Context, string, string, int) ([]client.PVC, error)
 	UsageHistory             func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
 	Pods                     func(context.Context, string, string) ([]appstate.Pod, error)
 	AppLogs                  func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
@@ -90,9 +92,10 @@ type Options struct {
 
 // RunBrowser opens the app browser using the caller's scoped clients.
 func RunBrowser(ctx context.Context, options Options) error {
+	options = gateWriteCallbacks(options)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &browser{tenant: options.Tenant, mode: connectionLabelLive, profile: options.Profile, ctx: ctx,
+	m := &browser{tenant: options.Tenant, version: options.Version, mode: connectionLabelLive, profile: options.Profile, ctx: ctx,
 		activityAlertStatusFilter: 1, activitySortAlertsDescending: true, activitySortNotificationsDescending: true,
 		allowWrites: options.AllowWrites, localTenants: append([]string(nil), options.LocalTenants...),
 		listApps: options.ListApps, logWrap: true, logTail: logDefaultTailSize}
@@ -102,6 +105,7 @@ func RunBrowser(ctx context.Context, options Options) error {
 	if options.Usage != nil {
 		m.usage = options.Usage
 	}
+	m.listPVCs = options.ListPVCs
 	m.usageHistory = options.UsageHistory
 	m.fetchPods = options.Pods
 	m.appLogs = options.AppLogs
@@ -145,9 +149,11 @@ func RunBrowser(ctx context.Context, options Options) error {
 }
 
 // RunMockBrowser opens a browser backed only by the supplied local fixture.
-func RunMockBrowser(ctx context.Context, profile MockProfile) error {
+func RunMockBrowser(ctx context.Context, profile MockProfile, version string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	_, err := tea.NewProgram(newMockBrowser(profile), tea.WithContext(ctx)).Run()
+	m := newMockBrowser(profile)
+	m.version = version
+	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }

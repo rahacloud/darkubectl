@@ -51,7 +51,7 @@ func (m *browser) appendPodsStatus(lines []string) []string {
 			}
 			row := fmt.Sprintf("  └ %s · %s · %d restarts", safeText(container.Name), safeText(state), container.RestartCount)
 			if container.LastState != "" {
-				row += " · previous: " + safeText(container.LastState)
+				row += " · previous " + safeText(container.LastState)
 			}
 			lines = append(lines, paint(row, browserMuted, false))
 		}

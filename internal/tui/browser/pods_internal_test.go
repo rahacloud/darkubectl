@@ -24,7 +24,7 @@ func TestSummaryShowsReadinessRestartsAndPreviousContainerState(t *testing.T) {
 		}},
 	}
 	got := ansi.Strip(strings.Join(m.summaryPaneLines(), "\n"))
-	for _, want := range []string{"api-abc", "Ready 0/1", "CrashLoopBackOff", "Restarts 4", "previous: Error"} {
+	for _, want := range []string{"api-abc", "Ready 0/1", "CrashLoopBackOff", "Restarts 4", "previous Error"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Summary missing pod detail %q: %s", want, got)
 		}

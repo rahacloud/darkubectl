@@ -260,7 +260,7 @@ func (m *browser) stopBuildObservation() string {
 	if status == client.BuildCanceled {
 		return "Stop accepted · canceled state observed"
 	}
-	return "Stop accepted · observed status: " + safeText(status)
+	return "Stop accepted · observed status " + safeText(status)
 }
 
 func (m *browser) retryBuildObservation() string {
@@ -342,6 +342,21 @@ func (m *browser) handleAppUsageResult(msg appUsageResult) tea.Model {
 	default:
 		m.usageState.succeed(false, m.requestTime())
 	}
+	return m
+}
+
+func (m *browser) handleAppPVCsResult(msg appPVCsResult) tea.Model {
+	m.finishRequest(requestPVCs, msg.meta)
+	if !m.pvcsState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration ||
+		m.selectedDetailTarget() != msg.meta.appID {
+		return m
+	}
+	if msg.err != nil {
+		m.pvcsState.fail(msg.err)
+		return m
+	}
+	m.appPVCs = msg.pvcs
+	m.pvcsState.succeed(len(msg.pvcs) == 0, m.requestTime())
 	return m
 }
 

@@ -73,7 +73,7 @@ func (m *browser) loadActiveAppView() tea.Cmd {
 		}
 		return m.loadSelectedPods()
 	case appViewUsage:
-		return m.loadUsageView()
+		return tea.Batch(m.loadUsageView(), m.loadSelectedPVCs())
 	case appViewEnv:
 		if m.envState.status == requestIdle {
 			return m.loadEnv()

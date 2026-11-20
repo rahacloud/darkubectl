@@ -894,8 +894,8 @@ func (m *browser) registryConfirmation(background []string) []string {
 		}
 	}
 	content := []string{paint("✖ Delete registry content", browserDanger, true), paint(strings.Repeat("─", inner), browserBorder,
-		false), "Target: " + safeText(target), "This action cannot be undone.",
-		paint("Type delete: "+safeText(m.registryConfirmText)+"█", browserKey, true), paint("Esc cancels · Enter confirms", browserMuted,
+		false), "Target  " + safeText(target), "This action cannot be undone.",
+		paint("Type delete  "+safeText(m.registryConfirmText)+"█", browserKey, true), paint("Esc cancels · Enter confirms", browserMuted,
 			false)}
 	for i := range content {
 		content[i] = ansi.Truncate(content[i], inner, "…")

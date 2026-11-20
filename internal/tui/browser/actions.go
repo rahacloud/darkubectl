@@ -22,7 +22,11 @@ func (m *browser) openActionMenu() {
 	app := m.apps[m.selected]
 	items := m.actionMenuItems()
 	if len(items) == 0 {
-		m.actionNotice = "No actions are available for this app."
+		if !m.actionIsMock() && !m.allowWrites {
+			m.actionNotice = errWriteActionsAreDisabledRelaunchWithAllow.Error()
+		} else {
+			m.actionNotice = "No actions are available for this app."
+		}
 		return
 	}
 	m.actionTargetTenant = m.tenant
@@ -46,11 +50,11 @@ func (m *browser) actionAvailable(action appAction) bool {
 	if m.actionIsMock() {
 		return true
 	}
-	if action == appActionTerminal {
-		return m.terminal != nil
-	}
 	if !m.allowWrites {
 		return false
+	}
+	if action == appActionTerminal {
+		return m.terminal != nil
 	}
 	switch action {
 	case appActionRestart:
@@ -113,9 +117,7 @@ func (m *browser) handleActionMenuKey(msg tea.KeyPressMsg) tea.Cmd {
 			return m.beginActionConfirmation(appActionDelete)
 		}
 	case "t":
-		if m.actionAvailable(appActionTerminal) {
-			return m.beginActionConfirmation(appActionTerminal)
-		}
+		return m.beginActionConfirmation(appActionTerminal)
 	}
 	return nil
 }
@@ -126,11 +128,8 @@ func (m *browser) moveActionCursor(delta int, items []appAction) {
 
 func (m *browser) beginActionConfirmation(action appAction) tea.Cmd {
 	if !m.actionAvailable(action) {
-		if !m.actionIsMock() && !m.allowWrites && (action == appActionRestart || action == appActionDelete) {
-			return nil
-		}
 		if !m.actionIsMock() && !m.allowWrites {
-			m.actionMenuMessage = "Writes are disabled. Relaunch with --allow-writes."
+			m.actionMenuMessage = errWriteActionsAreDisabledRelaunchWithAllow.Error()
 		} else {
 			m.actionMenuMessage = actionTitle(action) + " is unavailable."
 		}

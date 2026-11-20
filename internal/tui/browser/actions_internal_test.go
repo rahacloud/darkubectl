@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -29,6 +30,38 @@ func TestActionMenuHintsMatchVimShortcuts(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(m.actionMenuPanel()), "j/k choose") {
 		t.Fatal("action menu modal should advertise j/k navigation")
+	}
+}
+
+func TestLiveTerminalRequiresWriteOptIn(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	m := &browser{
+		mode: connectionLabelLive,
+		terminal: func(context.Context, string, string, string, string, string) tea.ExecCommand {
+			calls++
+			return &mockTerminalCommand{}
+		},
+	}
+	if m.actionAvailable(appActionTerminal) {
+		t.Fatal("terminal action is available without --allow-writes")
+	}
+	if items := m.actionMenuItems(); len(items) != 0 {
+		t.Fatalf("read-only live action menu = %v, want no write actions", items)
+	}
+	if cmd := m.connectTerminal(); cmd != nil {
+		t.Fatal("terminal command started without --allow-writes")
+	}
+	if calls != 0 {
+		t.Fatalf("terminal callback called %d times without --allow-writes", calls)
+	}
+	if m.actionNotice != errWriteActionsAreDisabledRelaunchWithAllow.Error() {
+		t.Fatalf("terminal notice = %q", m.actionNotice)
+	}
+
+	m.allowWrites = true
+	if !m.actionAvailable(appActionTerminal) {
+		t.Fatal("terminal action is unavailable with --allow-writes")
 	}
 }
 

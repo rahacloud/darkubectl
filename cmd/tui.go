@@ -17,7 +17,7 @@ func newTUICommand() *cli.Command {
 		Usage: "Browse Darkube apps interactively (experimental)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagMockFile, Usage: "load a local YAML profile without connecting to Darkube"},
-			&cli.BoolFlag{Name: flagTUIAllowWrites, Usage: "enable confirmed write actions in the TUI"},
+			&cli.BoolFlag{Name: flagTUIAllowWrites, Usage: "enable TUI write actions, including pod terminal access"},
 		},
 		Action: tuiAction,
 	}
@@ -53,7 +53,7 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		return browserUI.RunMockBrowser(ctx, profile)
+		return browserUI.RunMockBrowser(ctx, profile, buildVersion())
 	}
 	cfg, err := loadConfig(cmd)
 	if err != nil {

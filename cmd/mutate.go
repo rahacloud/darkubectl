@@ -85,17 +85,25 @@ func runAppChange(ctx context.Context, cmd *cli.Command, c *client.Client, app *
 		return false, errAborted
 	}
 
-	if _, err := c.UpdateApp(ctx, app.ID, ch.apply); err != nil {
-		return false, err
+	return true, applyPreparedAppChange(ctx, c, app.ID, ch, after, changes)
+}
+
+// applyPreparedAppChange writes an already reviewed app change and verifies
+// it from a fresh read. Both command and TUI edits use this path.
+func applyPreparedAppChange(
+	ctx context.Context, c *client.Client, id string, ch appChange, after map[string]any, changes []fieldChange,
+) error {
+	if _, err := c.UpdateApp(ctx, id, ch.apply); err != nil {
+		return err
 	}
 	took := ch.took
 	if ch.verifyDiff {
 		took = func(raw map[string]any) bool { return diffStored(raw, after, changes) }
 	}
 	if took == nil {
-		return true, nil
+		return nil
 	}
-	return true, verifyChange(ctx, c.GetApp, app.ID, took)
+	return verifyChange(ctx, c.GetApp, id, took)
 }
 
 // diffStored reports whether a fresh read holds every changed field as it was

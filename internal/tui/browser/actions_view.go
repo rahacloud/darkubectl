@@ -124,7 +124,7 @@ func (m *browser) actionConfirmationContent() actionConfirmation {
 			paint("✖ Delete", browserNumber, true),
 			paint(strings.Repeat("─", innerWidth), browserBorder, false),
 			"Delete "+safeText(m.actionTargetName)+" permanently?",
-			paint(ansi.Truncate("App name: "+safeText(m.confirmName)+"█", innerWidth, "…"), browserKey, true),
+			paint(ansi.Truncate("App name  "+safeText(m.confirmName)+"█", innerWidth, "…"), browserKey, true),
 			paint("Cannot be undone.", browserMuted, false),
 		)
 		if m.confirmError != "" {

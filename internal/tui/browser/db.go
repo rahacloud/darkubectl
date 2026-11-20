@@ -24,6 +24,7 @@ const (
 const (
 	databaseCPUValue1000           = 1000
 	databaseConnectionLinesValue18 = 18
+	databaseContentHorizontalInset = 2
 	databasePaneLinesValue2        = 2
 	handleDatabaseKeyValue8        = 8
 	databaseRowNameStatusGap       = 2
@@ -424,25 +425,18 @@ func (m *browser) databaseConnectionLines() []string {
 		lines = append(lines, paint("Connection details unavailable for this address.", browserMuted, false))
 		return lines
 	}
+	lines = append(lines, paint("SHARED", browserBranch, true))
+	lines = append(lines, databaseSharedField("Username", firstDatabaseValue(external, internal, func(c *client.DatabaseConnection) string {
+		return c.Username
+	})))
+	lines = append(lines, databaseSharedField("Database", firstDatabaseValue(external, internal, func(c *client.DatabaseConnection) string {
+		return c.Database
+	})))
+	lines = append(lines, m.databasePasswordField())
 	lines = append(lines, paint("EXTERNAL", browserBranch, true))
-	lines = appendDatabaseConnectionFields(lines, external)
+	lines = appendDatabaseConnectionFields(lines, m.selectedDatabase(), external, width)
 	lines = append(lines, paint("INTERNAL", browserBranch, true))
-	lines = appendDatabaseConnectionFields(lines, internal)
-	if strings.HasPrefix(m.mode, "MOCK") {
-		lines = append(lines, paint("Password:", browserMuted, false)+"synthetic mock credential")
-	} else {
-		consoleURL := databaseConsoleURL(m.tenant, m.selectedDatabase())
-		lines = append(lines, paint("Password:", browserMuted, false)+"Retrieve it in Console (TOTP required).")
-		lines = append(lines, paint("Please go to:", browserMuted, false))
-		link := lipgloss.NewStyle().Underline(true).Hyperlink(consoleURL).Render(consoleURL)
-		lines = append(lines, wrapRegistryText(link, width)...)
-	}
-	if external != nil {
-		lines = append(lines, paint("External connection string:", browserMuted, false))
-		for _, part := range wrapRegistryText(databaseConnectionURI(m.selectedDatabase(), external, false), width) {
-			lines = append(lines, safeText(part))
-		}
-	}
+	lines = appendDatabaseConnectionFields(lines, m.selectedDatabase(), internal, width)
 	if m.databaseNotice != "" {
 		lines = append(lines, paint(m.databaseNotice, browserNumber, false))
 	}
@@ -477,19 +471,52 @@ func (m *browser) databaseConnectionsForRole() (*client.DatabaseConnection, *cli
 	return external, internal
 }
 
-func appendDatabaseConnectionFields(lines []string, connection *client.DatabaseConnection) []string {
+func (m *browser) databasePasswordField() string {
+	label := paint(fmt.Sprintf("%-13s", "  Password"), browserMuted, false)
+	if strings.HasPrefix(m.mode, "MOCK") {
+		return label + paint("synthetic mock credential", browserMuted, false)
+	}
+	consoleURL := databaseConsoleURL(m.tenant, m.selectedDatabase())
+	link := lipgloss.NewStyle().Foreground(browserAccent).Underline(true).Hyperlink(consoleURL).Render("Open Console")
+	return label + paint("Retrieve with TOTP · ", browserMuted, false) + link
+}
+
+func databaseSharedField(name, value string) string {
+	if strings.TrimSpace(value) == "" {
+		value = "—"
+	}
+	return paint(fmt.Sprintf("%-13s", "  "+name), browserMuted, false) + safeText(value)
+}
+
+func firstDatabaseValue(external, internal *client.DatabaseConnection, value func(*client.DatabaseConnection) string) string {
+	if external != nil && strings.TrimSpace(value(external)) != "" {
+		return value(external)
+	}
+	if internal != nil {
+		return value(internal)
+	}
+	return ""
+}
+
+func appendDatabaseConnectionFields(lines []string, db *client.Database, connection *client.DatabaseConnection, width int) []string {
 	if !databaseConnectionPresent(connection) {
 		return append(lines, paint("  Unavailable", browserMuted, false))
 	}
 	values := []struct{ name, value string }{
-		{"  Username", connection.Username}, {"  Host", connection.Host},
-		{"  Port", strconv.Itoa(connection.Port)}, {"  Database", connection.Database},
+		{"  Host", connection.Host}, {"  Port", strconv.Itoa(connection.Port)},
 	}
 	for _, field := range values {
 		if field.name == "  Port" && connection.Port == 0 || field.value == "" {
 			field.value = "—"
 		}
-		lines = append(lines, paint(fmt.Sprintf("%-13s", field.name+":"), browserMuted, false)+safeText(field.value))
+		lines = append(lines, paint(fmt.Sprintf("%-13s", field.name), browserMuted, false)+safeText(field.value))
+	}
+	connectionString := databaseConnectionURI(db, connection, true)
+	if connectionString != "" {
+		lines = append(lines, paint("  Connection string", browserMuted, false))
+		for _, part := range wrapRegistryText(connectionString, max(1, width-databaseContentHorizontalInset)) {
+			lines = append(lines, "  "+safeText(part))
+		}
 	}
 	return lines
 }

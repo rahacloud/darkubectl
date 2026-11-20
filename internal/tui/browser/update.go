@@ -148,6 +148,8 @@ func (m *browser) handleRemainingDataResult(message tea.Msg) (tea.Model, tea.Cmd
 		return m, nil, true
 	case appUsageResult:
 		return asHandledModel(m.handleAppUsageResult(msg))
+	case appPVCsResult:
+		return asHandledModel(m.handleAppPVCsResult(msg))
 	case usageHistoryResult:
 		return asHandledModel(m.handleUsageHistoryResult(msg))
 	case podsResult:

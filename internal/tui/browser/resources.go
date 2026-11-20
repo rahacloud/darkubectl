@@ -2,6 +2,7 @@ package browser
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -10,6 +11,10 @@ import (
 )
 
 const (
+	resourcePVCNameWidth     = 20
+	resourcePVCMinNameWidth  = 12
+	resourcePVCColumnCount   = 3
+	resourcePVCWidthDivisor  = 2
 	demoPlanCPURequest       = 500
 	handleResourcesKeyValue5 = 5
 	handleResourcesKeyValue8 = 8
@@ -158,7 +163,7 @@ func (m *browser) appendResourceSettings(lines []string, a client.App, changed [
 			value += paint(" · controlled by autoscaler", browserMuted, false)
 		}
 		marker := "  "
-		label = fmt.Sprintf("%-16s", label+":")
+		label = fmt.Sprintf("%-16s", label)
 		if m.resourceCursor == i {
 			marker = domainMarker("› ", true)
 			label = paint(label, browserAccent, true)
@@ -189,7 +194,7 @@ func (m *browser) resourceReviewLines(changed []bool) []string {
 	lines := []string{sectionHeading("Review resource changes"), ""}
 	for i, label := range resourceFields {
 		if changed[i] {
-			lines = append(lines, fmt.Sprintf("~ %s: %s → %s", label, resourceValue(m.resourceOriginal, i), resourceValue(m.resourceDraft, i)))
+			lines = append(lines, fmt.Sprintf("~ %s  %s → %s", label, resourceValue(m.resourceOriginal, i), resourceValue(m.resourceDraft, i)))
 		}
 	}
 	lines = append(lines, "", paint("Saving may restart the app or change its billed plan.", browserNumber, true))
@@ -247,12 +252,77 @@ func (m *browser) resourceUsageLines(lines []string, a client.App) []string {
 			"disk"), formatBytes, usage != nil && usage.Failed.Disk))
 	}
 	lines = append(lines, "")
+	lines = append(lines, m.resourcePVCsLines(a)...)
 	lines = append(lines, m.historyLines()...)
 	if !m.usageState.lastSuccessAt.IsZero() {
 		lines = append(lines, "", summaryField("Updated", formatLocalWallTime(m.usageState.lastSuccessAt, "Jan 2, 3:04 PM MST")))
 	}
 	lines = append(lines, summaryField("Usage window", "last 5 minutes"))
 	return lines
+}
+
+func (m *browser) resourcePVCsLines(a client.App) []string {
+	if m.pvcsState.status == requestEmpty || m.pvcsState.status == requestIdle || m.pvcsState.status == requestUnavailable {
+		return nil
+	}
+	if m.pvcsState.status == requestLoading || m.pvcsState.status == requestRefreshing {
+		return []string{paint("Loading persistent volumes…", browserMuted, false), ""}
+	}
+	if m.pvcsState.status == requestFailed || m.pvcsState.status == requestStale {
+		return []string{paint("Persistent volumes unavailable", browserNumber, false), ""}
+	}
+	if len(m.appPVCs) == 0 {
+		return nil
+	}
+	width := m.domainContentWidth()
+	nameWidth := min(max(len("NAME"), resourcePVCNameWidth), max(resourcePVCMinNameWidth, width/resourcePVCWidthDivisor))
+	sizeWidth, statusWidth := 8, 10
+	classWidth := max(1, width-nameWidth-sizeWidth-statusWidth-resourcePVCColumnCount)
+	lines := []string{"", sectionHeading(fmt.Sprintf("Persistent volumes · %d", len(m.appPVCs))),
+		resourcePVCHeader(nameWidth, sizeWidth, statusWidth, classWidth)}
+	for _, pvc := range m.appPVCs {
+		glyph, statusColor := "●", browserSuccess
+		switch strings.ToLower(pvc.Status) {
+		case "pending", "terminating":
+			glyph, statusColor = "◷", browserNumber
+		case "lost", "failed", "error":
+			glyph, statusColor = "●", browserDanger
+		case "":
+			glyph, statusColor = "○", browserMuted
+		}
+		status := paint(glyph+" "+displayValue(pvc.Status), statusColor, true)
+		row := domainCell(paint(safeText(pvc.Name), browserAccent, true), nameWidth) + " " +
+			domainCell(paint(safeText(pvc.Size), browserValue, true), sizeWidth) + " " +
+			domainCell(status, statusWidth) + " " + domainCell(safeText(pvc.StorageClass), classWidth)
+		lines = append(lines, row)
+		for _, partition := range appDiskPartitions(a) {
+			if partition != "" {
+				lines = append(lines, paint("  Mount  "+safeText(partition), browserMuted, false))
+			}
+		}
+	}
+	return append(lines, "")
+}
+
+func resourcePVCHeader(nameWidth, sizeWidth, statusWidth, classWidth int) string {
+	columns := []string{
+		domainCell("NAME", nameWidth), domainCell("SIZE", sizeWidth),
+		domainCell("STATUS", statusWidth), domainCell("STORAGE CLASS", classWidth),
+	}
+	return paint(strings.Join(columns, " "), browserMuted, true)
+}
+
+func appDiskPartitions(a client.App) []string {
+	if a.Disk == nil {
+		return nil
+	}
+	mounts := make([]string, 0, len(a.Disk.Partitions))
+	for _, partition := range a.Disk.Partitions {
+		if path := strings.TrimSpace(partition.MountPath); path != "" {
+			mounts = append(mounts, path)
+		}
+	}
+	return slices.Compact(mounts)
 }
 
 func resourceConfigChanged(a, b ResourceConfig) []bool {
@@ -460,7 +530,8 @@ func (m *browser) handleResourceBrowseAction(key string) tea.Cmd {
 		}
 	case "r":
 		if !changedAny(resourceConfigChanged(m.resourceOriginal, m.resourceDraft)) {
-			return tea.Batch(m.loadSelectedSummary(), m.loadSelectedUsage(), m.loadUsageHistory())
+			m.pvcsState.reset()
+			return tea.Batch(m.loadSelectedSummary(), m.loadSelectedUsage(), m.loadUsageHistory(), m.loadSelectedPVCs())
 		}
 		m.resourceMessage = messageSaveOrDiscardBeforeRefresh
 	case "w":

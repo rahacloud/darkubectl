@@ -339,7 +339,7 @@ func portEditNumber(port int) string {
 func (m *browser) portDiffLines() []string {
 	var lines []string
 	if m.portOriginal.Type != m.portConfig.Type {
-		lines = append(lines, fmt.Sprintf("~ External access: %s → %s", portExposureLabel(m.portOriginal.Type),
+		lines = append(lines, fmt.Sprintf("~ External access  %s → %s", portExposureLabel(m.portOriginal.Type),
 			portExposureLabel(m.portConfig.Type)))
 	}
 	oldNames := make(map[string]bool, len(m.portOriginal.Ports))
@@ -357,7 +357,7 @@ func (m *browser) portDiffLines() []string {
 			continue
 		}
 		if old != current {
-			lines = append(lines, fmt.Sprintf("~ %s: %s/%d → %s/%d · %s", safeText(name), old.Protocol, old.ContainerPort, current.Protocol,
+			lines = append(lines, fmt.Sprintf("~ %s  %s/%d → %s/%d · %s", safeText(name), old.Protocol, old.ContainerPort, current.Protocol,
 				current.ContainerPort, portNumber(current.ServicePort)))
 		}
 	}
@@ -369,7 +369,7 @@ func (m *browser) portDiffLines() []string {
 			if servicePort == 0 {
 				servicePort = p.ContainerPort
 			}
-			line := "+ " + safeText(name) + ": " + p.Protocol + "/" + strconv.Itoa(p.ContainerPort) + " → " + strconv.Itoa(servicePort)
+			line := "+ " + safeText(name) + "  " + p.Protocol + "/" + strconv.Itoa(p.ContainerPort) + " → " + strconv.Itoa(servicePort)
 			if m.portConfig.Type == serviceTypeLoadBalancer || m.portConfig.Type == serviceTypeNodePort {
 				line += " · public port assigned after save"
 			}

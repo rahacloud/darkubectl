@@ -1,6 +1,9 @@
 package browser
 
 import (
+	"slices"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/rahacloud/darkubectl/internal/client"
 )
@@ -149,6 +152,48 @@ func (m *browser) loadSelectedUsage() tea.Cmd {
 	return func() tea.Msg {
 		usage, err := getUsage(requestCtx, tenant, id)
 		return appUsageResult{meta: meta, usage: usage, err: err}
+	}
+}
+
+func (m *browser) loadSelectedPVCs() tea.Cmd {
+	id := m.selectedDetailTarget()
+	if id == "" || m.pvcsState.active() || m.pvcsState.status == requestReady || m.pvcsState.status == requestEmpty {
+		return nil
+	}
+	app := m.selectedResourceApp()
+	if app.Namespace.Name == "" {
+		m.pvcsState.unavailable(nil)
+		return nil
+	}
+	meta, requestCtx := m.startRequest(requestPVCs, m.tenant, id, m.selectionGeneration)
+	m.pvcsState.begin(meta, m.requestTime())
+	if m.listPVCs == nil {
+		m.finishRequest(requestPVCs, meta)
+		m.pvcsState.unavailable(nil)
+		return nil
+	}
+	listPVCs, tenant, namespace, clusterID := m.listPVCs, m.tenant, app.Namespace.Name, app.Namespace.Cluster.ID
+	appName := app.Name
+	appNames := make([]string, 0, len(m.apps))
+	for _, candidate := range m.apps {
+		if candidate.Namespace.ID == app.Namespace.ID {
+			appNames = append(appNames, candidate.Name)
+		}
+	}
+	return func() tea.Msg {
+		pvcs, err := listPVCs(requestCtx, tenant, namespace, clusterID)
+		if err == nil {
+			pvcs = slices.DeleteFunc(pvcs, func(pvc client.PVC) bool {
+				owner := ""
+				for _, candidate := range appNames {
+					if strings.HasPrefix(pvc.Name, candidate+"-") && len(candidate) > len(owner) {
+						owner = candidate
+					}
+				}
+				return owner != appName
+			})
+		}
+		return appPVCsResult{meta: meta, pvcs: pvcs, err: err}
 	}
 }
 

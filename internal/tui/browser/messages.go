@@ -29,6 +29,12 @@ type appUsageResult struct {
 	err   error
 }
 
+type appPVCsResult struct {
+	meta requestMeta
+	pvcs []client.PVC
+	err  error
+}
+
 type usageHistoryResult struct {
 	meta    requestMeta
 	history *UsageHistory

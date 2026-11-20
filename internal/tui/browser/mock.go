@@ -143,17 +143,17 @@ func newMockBrowserData(tenants []MockTenant) (*mockBrowserData, []tenantOption)
 func populateMockTenantData(state *mockBrowserData, tenant MockTenant) {
 	now := mockNow().Format("2006-01-02T15:04:05.000-0700")
 	state.ticketRowsByTenant[tenant.Name] = []client.Ticket{
-		{ID: client.TicketID("33421"), Summary: "مشکل اتصال به دیتابیس", Status: "Open",
+		{ID: client.TicketID("33421"), Summary: "Database connection issue", Status: "Open",
 			RequestType: client.TicketRequestType{Key: ticketRequestDatabase, Value: "Database"}, Created: now, Updated: now},
-		{ID: client.TicketID("33408"), Summary: "پیگیری صورتحساب", Status: "Close",
+		{ID: client.TicketID("33408"), Summary: "Billing follow-up", Status: "Close",
 			RequestType: client.TicketRequestType{Key: ticketRequestFinancial, Value: "Financial"}, Created: now, Updated: now},
 	}
 	state.ticketThreadsByTenant[tenant.Name] = map[string][]client.TicketComment{
-		"33421": {{ID: "0", Body: "اتصال به پایگاه داده برقرار نمی\u200cشود.\nخطا: connection refused on port 5432",
-			Author: client.TicketUser{DisplayName: "اپراتور"}, Created: client.TicketTime(now)}, {ID: "1",
-			Body:   "لطفاً نام پروژه و زمان خطا را بفرستید.\n\n```text\nconnection refused\n```",
-			Author: client.TicketUser{DisplayName: "پشتیبانی", Email: "support@hamravesh.com"}, Created: client.TicketTime(now)}},
-		"33408": {{ID: "0", Body: "درخواست بررسی صورتحساب", Author: client.TicketUser{DisplayName: "اپراتور"}, Created: client.TicketTime(now)}},
+		"33421": {{ID: "0", Body: "Unable to connect to the database.\nError: connection refused on port 5432",
+			Author: client.TicketUser{DisplayName: "Operator"}, Created: client.TicketTime(now)}, {ID: "1",
+			Body:   "Please send the project name and the time the error occurred.\n\n```text\nconnection refused\n```",
+			Author: client.TicketUser{DisplayName: "Support", Email: "support@hamravesh.com"}, Created: client.TicketTime(now)}},
+		"33408": {{ID: "0", Body: "Please review the billing statement.", Author: client.TicketUser{DisplayName: "Operator"}, Created: client.TicketTime(now)}},
 	}
 	state.appsByTenant[tenant.Name] = append([]client.App(nil), tenant.Apps...)
 	state.databasesByTenant[tenant.Name] = append([]client.Database(nil), tenant.Databases...)
@@ -476,6 +476,9 @@ func setupMockDatabasesCallbacks(m *browser, state *mockBrowserData) {
 func setupMockAppsCallbacks(m *browser, state *mockBrowserData) {
 	appsByTenant := state.appsByTenant
 	deletedApps := state.deletedApps
+	m.listPVCs = func(_ context.Context, tenant, namespace string, clusterID int) ([]client.PVC, error) {
+		return mockPVCsForNamespace(appsByTenant, deletedApps, tenant, namespace, clusterID)
+	}
 	m.listApps = func(_ context.Context, tenant string) ([]client.App, error) {
 		apps, ok := appsByTenant[tenant]
 		if !ok {
@@ -526,6 +529,34 @@ func setupMockAppsCallbacks(m *browser, state *mockBrowserData) {
 		}
 		return fmt.Errorf("%w: app %q is not present in mock tenant %q", errAppQIsNotPresentInMock, id, tenant)
 	}
+}
+
+func mockPVCsForNamespace(appsByTenant map[string][]client.App, deletedApps map[string]map[string]bool,
+	tenant, namespace string, clusterID int) ([]client.PVC, error) {
+	apps, ok := appsByTenant[tenant]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", errTenantQIsNotPresentInThis, tenant)
+	}
+	pvcs := make([]client.PVC, 0, len(apps))
+	for _, app := range apps {
+		pvc, ok := mockAppPVC(app, deletedApps[tenant][app.ID], namespace, clusterID)
+		if ok {
+			pvcs = append(pvcs, pvc)
+		}
+	}
+	return pvcs, nil
+}
+
+func mockAppPVC(app client.App, deleted bool, namespace string, clusterID int) (client.PVC, bool) {
+	if deleted || app.Namespace.Name != namespace || app.Namespace.Cluster.ID != clusterID || app.Disk == nil || app.Disk.SizeInGi <= 0 {
+		return client.PVC{}, false
+	}
+	storageClass := app.Disk.StorageClassName
+	if storageClass == "" {
+		storageClass = "rawfile-btrfs"
+	}
+	return client.PVC{Name: app.Name + "-data", Size: fmt.Sprintf("%d GiB", app.Disk.SizeInGi),
+		StorageClass: storageClass, Status: "Bound"}, true
 }
 
 func setupMockBuildsCallbacks(m *browser, state *mockBrowserData) {

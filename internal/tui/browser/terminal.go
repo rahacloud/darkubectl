@@ -76,6 +76,10 @@ func (m *browser) handleTerminalPickerKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *browser) connectTerminal() tea.Cmd {
+	if !m.actionIsMock() && !m.allowWrites {
+		m.actionNotice = errWriteActionsAreDisabledRelaunchWithAllow.Error()
+		return nil
+	}
 	if m.terminal == nil {
 		m.actionNotice = "Terminal is unavailable"
 		return nil
@@ -144,8 +148,8 @@ func (c *mockTerminalCommand) SetStdout(w io.Writer) { c.stdout = w }
 func (c *mockTerminalCommand) SetStderr(w io.Writer) { c.stderr = w }
 func (c *mockTerminalCommand) Run() error {
 	const preview = "\r\nMOCK TERMINAL PREVIEW · no remote connection made\r\n" +
-		"App: %s · pod: %s · container: %s\r\n" +
-		"Live controls: Ctrl+D exits · Ctrl+C interrupts the remote process · Ctrl+L clears the screen. " +
+		"App %s · Pod %s · Container %s\r\n" +
+		"Live controls · Ctrl+D exits · Ctrl+C interrupts the remote process · Ctrl+L clears the screen. " +
 		"Use your terminal's usual copy and paste shortcuts.\r\n" +
 		"Press Ctrl+D to return to the browser. Commands are not executed in mock mode.\r\nmock$ "
 	if _, err := fmt.Fprintf(c.stdout, preview, c.appName, c.pod, c.container); err != nil {

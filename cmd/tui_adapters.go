@@ -27,7 +27,9 @@ func newTUIBrowserOptions(cmd *cli.Command, cfg *config.Config, credential *tuiC
 		return client.New(baseURL, auth, tenant), nil
 	}
 	deps := tuiAdapterDeps{newClient: newClient, credential: credential, baseURL: baseURL, org: org}
-	options := browserUI.Options{Tenant: org, LocalTenants: append([]string(nil), cfg.Tenants...), AllowWrites: cmd.Bool(flagTUIAllowWrites)}
+	options := browserUI.Options{
+		Tenant: org, Version: buildVersion(), LocalTenants: append([]string(nil), cfg.Tenants...), AllowWrites: cmd.Bool(flagTUIAllowWrites),
+	}
 	addTUIAccountOptions(&options, deps)
 	addTUIDataOptions(&options, deps)
 	addTUIAppMutationOptions(&options, deps)
@@ -57,19 +59,17 @@ func loadDomainHostStatus(ctx context.Context, c *client.Client, id string, cfg 
 
 // updateTUIAppAndVerify follows the same prepare, PUT and read-back path as
 // command mutations after the TUI has shown and confirmed its staged diff.
-func updateTUIAppAndVerify(ctx context.Context, c *client.Client, id string, mutate func(map[string]any) error) error {
+func updateTUIAppAndVerify(ctx context.Context, c *client.Client, id string, mutate func(map[string]any) error) (bool, error) {
 	before, after, err := c.PrepareAppUpdate(ctx, id, mutate)
 	if err != nil {
-		return err
+		return false, err
 	}
 	changes := diffApps(before, after)
 	if len(changes) == 0 {
-		return nil
+		return false, nil
 	}
-	if _, err = c.UpdateApp(ctx, id, mutate); err != nil {
-		return err
-	}
-	return verifyChange(ctx, c.GetApp, id, func(fresh map[string]any) bool { return diffStored(fresh, after, changes) })
+	err = applyPreparedAppChange(ctx, c, id, appChange{apply: mutate, verifyDiff: true}, after, changes)
+	return err == nil, err
 }
 
 type tuiAdapterDeps struct {
@@ -463,7 +463,10 @@ func addTUIEnvironmentOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		_, err = c.UpdateApp(requestCtx, id, func(app map[string]any) error { client.SetEnvVars(app, envs); return nil })
+		_, err = updateTUIAppAndVerify(requestCtx, c, id, func(app map[string]any) error {
+			client.SetEnvVars(app, envs)
+			return nil
+		})
 		return tuiAuthError(err)
 	}
 	options.UpdateSecretEnv = func(requestCtx context.Context, tenant, id string, envs []client.EnvVar) error {
@@ -472,8 +475,24 @@ func addTUIEnvironmentOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		_, err = c.UpdateSecretEnvs(requestCtx, id, func([]client.EnvVar) ([]client.EnvVar, error) { return envs, nil })
-		return tuiAuthError(err)
+		want, err := c.UpdateSecretEnvs(requestCtx, id, func([]client.EnvVar) ([]client.EnvVar, error) { return envs, nil })
+		if err != nil {
+			return tuiAuthError(err)
+		}
+		ok, err := retryReadBack(requestCtx, func(ctx context.Context) (bool, error) {
+			got, err := c.SecretEnvs(ctx, id)
+			if err != nil {
+				return false, err
+			}
+			return sameEnvs(got, want), nil
+		})
+		if err != nil {
+			return tuiAuthError(err)
+		}
+		if !ok {
+			return errChangeIgnored
+		}
+		return tuiAuthError(c.RestartApp(requestCtx, id))
 	}
 }
 
@@ -521,9 +540,12 @@ func addTUIDomainsOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 			raw["enable_httpv2"] = cfg.HTTP2
 			return nil
 		}
-		err = updateTUIAppAndVerify(requestCtx, c, id, mutate)
+		wrote, err := updateTUIAppAndVerify(requestCtx, c, id, mutate)
 		if err != nil {
 			return tuiAuthError(err)
+		}
+		if !wrote {
+			return nil
 		}
 		_, err = c.UpdateApp(requestCtx, id, func(map[string]any) error { return nil })
 		return tuiAuthError(err)
@@ -550,9 +572,10 @@ func addTUIPortsOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 			return err
 		}
 		defer func() { _ = c.Close() }()
-		return tuiAuthError(updateTUIAppAndVerify(requestCtx, c, id, func(raw map[string]any) error {
+		_, err = updateTUIAppAndVerify(requestCtx, c, id, func(raw map[string]any) error {
 			return setTUIServicePorts(raw, cfg)
-		}))
+		})
+		return tuiAuthError(err)
 	}
 }
 
@@ -611,6 +634,15 @@ func setTUIServicePorts(raw map[string]any, cfg browserUI.PortConfig) error {
 
 func addTUIResourcesOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 	newClient := deps.newClient
+	options.ListPVCs = func(requestCtx context.Context, tenant, namespace string, clusterID int) ([]client.PVC, error) {
+		c, err := newClient(requestCtx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = c.Close() }()
+		pvcs, err := c.ListPVCs(requestCtx, namespace, clusterID)
+		return pvcs, tuiAuthError(err)
+	}
 	options.UpdateResources = func(requestCtx context.Context, tenant, id string, cfg browserUI.ResourceConfig) error {
 		c, err := newClient(requestCtx, tenant)
 		if err != nil {
@@ -631,9 +663,10 @@ func addTUIResourcesOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 		if selected == nil {
 			return fmt.Errorf("no plan matching %q", cfg.Plan)
 		}
-		return tuiAuthError(updateTUIAppAndVerify(requestCtx, c, id, func(raw map[string]any) error {
+		_, err = updateTUIAppAndVerify(requestCtx, c, id, func(raw map[string]any) error {
 			return applyTUIResourceConfig(raw, cfg, selected)
-		}))
+		})
+		return tuiAuthError(err)
 	}
 	options.ListResourcePlans = func(requestCtx context.Context, tenant string) ([]client.Plan, error) {
 		c, err := newClient(requestCtx, tenant)

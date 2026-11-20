@@ -119,6 +119,7 @@ const (
 	requestNamespaces
 	requestSummary
 	requestUsage
+	requestPVCs
 	requestUsageHistory
 	requestEgress
 	requestPods
@@ -237,10 +238,12 @@ type browser struct {
 	registryTagCopy                          bool
 	registryCollapsed                        map[string]bool
 	tenant                                   string
+	version                                  string
 	mode                                     string
 	listApps                                 func(context.Context, string) ([]client.App, error)
 	getApp                                   func(context.Context, string, string) (*client.App, error)
 	usage                                    func(context.Context, string, string) (*AppUsage, error)
+	listPVCs                                 func(context.Context, string, string, int) ([]client.PVC, error)
 	usageHistory                             func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
 	fetchPods                                func(context.Context, string, string) ([]appstate.Pod, error)
 	appLogs                                  func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
@@ -359,6 +362,8 @@ type browser struct {
 	detailUsage                              *AppUsage
 	usageAppID                               string
 	usageState                               requestState
+	pvcsState                                requestState
+	appPVCs                                  []client.PVC
 	historyState                             requestState
 	podsState                                requestState
 	podList                                  []appstate.Pod

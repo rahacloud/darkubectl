@@ -79,7 +79,11 @@ func fuzzyMatch(value, query string) bool {
 }
 
 func (m *browser) breadcrumb() string {
-	parts := []string{"Darkubectl"}
+	version := m.version
+	if version == "" {
+		version = "dev"
+	}
+	parts := []string{"Darkubectl " + safeText(version)}
 	if m.tenant != "" {
 		tenant := safeText(m.tenant)
 		if m.tenantStatus != "" {
