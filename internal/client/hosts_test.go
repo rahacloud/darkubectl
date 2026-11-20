@@ -75,7 +75,8 @@ func TestSSLCertificateRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 2 || records["_acme-challenge.example.com"] != "one.acme.example" || records["_acme-challenge.other.com"] != "two.acme.example" {
+	if len(records) != 2 || records["_acme-challenge.example.com"] != "one.acme.example" ||
+		records["_acme-challenge.other.com"] != "two.acme.example" {
 		t.Fatalf("records = %#v", records)
 	}
 }

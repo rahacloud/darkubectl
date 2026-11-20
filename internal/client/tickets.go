@@ -413,7 +413,7 @@ func (c *Client) CloseTicket(ctx context.Context, id string) error {
 // RateTicket rates the support on a ticket, 1 to 5 stars, with an optional comment.
 func (c *Client) RateTicket(ctx context.Context, id string, stars int, comment string) error {
 	_, err := supportJSON[json.RawMessage](ctx, c, http.MethodPut, "/ticket/"+url.PathEscape(id)+"/rate", nil,
-		map[string]any{"value": stars, "comment": comment})
+		map[string]any{jsonValueField: stars, "comment": comment})
 	return err
 }
 

@@ -2,9 +2,13 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"time"
+)
+
+const (
+	updateGitBuildSettingsValue2 = 2
+	updateGitBuildSettingsValue4 = 4
 )
 
 // GitBuildArg is one Docker build argument returned by the app API.
@@ -84,7 +88,7 @@ func setGitBuildSettings(raw map[string]any, s GitBuildSettings) {
 	}
 	args := make([]any, 0, len(s.Args))
 	for _, arg := range s.Args {
-		args = append(args, map[string]any{"key": arg.Key, "value": arg.Value})
+		args = append(args, map[string]any{"key": arg.Key, jsonValueField: arg.Value})
 	}
 	raw["git_build_args"] = args
 }
@@ -95,10 +99,10 @@ func setGitBuildSettings(raw map[string]any, s GitBuildSettings) {
 func (c *Client) UpdateGitBuildSettings(ctx context.Context, id string, expected, desired GitBuildSettings) error {
 	mutate := func(raw map[string]any) error {
 		if raw["build_method"] != expected.BuildMethod {
-			return fmt.Errorf("deployment type changed since it was loaded; refresh before saving")
+			return errDeploymentTypeChangedSinceItWasLoaded
 		}
 		if got := GitBuildSettingsFromApp(raw); !got.Equal(expected) {
-			return fmt.Errorf("Git build settings changed since they were loaded; refresh before saving")
+			return errGitBuildSettingsChangedSinceTheyWere
 		}
 		setGitBuildSettings(raw, desired)
 		return nil
@@ -108,7 +112,7 @@ func (c *Client) UpdateGitBuildSettings(ctx context.Context, id string, expected
 	}
 	for attempt := range 5 {
 		if attempt > 0 {
-			timer := time.NewTimer(2 * time.Second)
+			timer := time.NewTimer(updateGitBuildSettingsValue2 * time.Second)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -118,7 +122,7 @@ func (c *Client) UpdateGitBuildSettings(ctx context.Context, id string, expected
 		}
 		raw, err := c.GetApp(ctx, id)
 		if err != nil {
-			if attempt == 4 {
+			if attempt == updateGitBuildSettingsValue4 {
 				return err
 			}
 			continue
@@ -127,5 +131,5 @@ func (c *Client) UpdateGitBuildSettings(ctx context.Context, id string, expected
 			return nil
 		}
 	}
-	return fmt.Errorf("platform accepted the Git settings update but did not store all requested values")
+	return errPlatformAcceptedTheGitSettingsUpdateBut
 }

@@ -60,28 +60,30 @@ type DatabaseConnection struct {
 	Username string `json:"username" yaml:"username"`
 	Password string `json:"password" yaml:"password"`
 	Database string `json:"database" yaml:"database"`
-	Host     string `json:"host" yaml:"host"`
-	Port     int    `json:"port" yaml:"port"`
+	Host     string `json:"host"     yaml:"host"`
+	Port     int    `json:"port"     yaml:"port"`
 }
 
+// DatabaseConnectionSet holds the external and private connection details.
 type DatabaseConnectionSet struct {
 	External *DatabaseConnection `json:"external" yaml:"external"`
-	Private  *DatabaseConnection `json:"private" yaml:"private"`
+	Private  *DatabaseConnection `json:"private"  yaml:"private"`
 }
 
+// DatabaseConnections groups connections by database role.
 type DatabaseConnections struct {
-	Master  DatabaseConnectionSet `json:"master" yaml:"master"`
+	Master  DatabaseConnectionSet `json:"master"  yaml:"master"`
 	Standby DatabaseConnectionSet `json:"standby" yaml:"standby"`
 }
 
 // DatabaseDetail is returned by GET /dbaas/api/v1/app/database/{id}/.
 // It includes a Vault reference in place of the usable database password.
 type DatabaseDetail struct {
-	Connection               *DatabaseConnection `json:"connection" yaml:"connection"`
-	PrivateConnection        *DatabaseConnection `json:"private_connection" yaml:"private_connection"`
-	StandbyConnection        *DatabaseConnection `json:"standby_connection" yaml:"standby_connection"`
+	Connection               *DatabaseConnection `json:"connection"                 yaml:"connection"`
+	PrivateConnection        *DatabaseConnection `json:"private_connection"         yaml:"private_connection"`
+	StandbyConnection        *DatabaseConnection `json:"standby_connection"         yaml:"standby_connection"`
 	PrivateStandbyConnection *DatabaseConnection `json:"private_standby_connection" yaml:"private_standby_connection"`
-	Connections              DatabaseConnections `json:"connections" yaml:"connections"`
+	Connections              DatabaseConnections `json:"connections"                yaml:"connections"`
 }
 
 // Service is a marketplace service instance (Jira, Rocket.Chat, n8n, …).

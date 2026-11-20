@@ -46,7 +46,7 @@ func (c *Client) CreateAPIKey(ctx context.Context, name string) (string, error) 
 	var out struct {
 		Value string `json:"value"`
 	}
-	body := map[string]any{"name": name}
+	body := map[string]any{fieldName: name}
 	if err := c.postJSON(ctx, apiKeysPath, body, &out); err != nil {
 		return "", err
 	}

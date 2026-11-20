@@ -25,13 +25,14 @@ const (
 // Shared command, argument, and flag literals reused across the app-oriented
 // command trees (describe/scale/patch/delete and get apps).
 const (
-	cmdApp       = "app"
-	aliasApp     = "application"
-	argRefUsage  = "NAME|ID"
-	flagYes      = "yes"
-	aliasYes     = "y"
-	flagReplicas = "replicas"
-	flagDryRun   = "dry-run"
+	cmdApp                 = "app"
+	aliasApp               = "application"
+	argRefUsage            = "NAME|ID"
+	flagYes                = "yes"
+	aliasYes               = "y"
+	flagReplicas           = "replicas"
+	flagDryRun             = "dry-run"
+	defaultPortProtocolTCP = "TCP"
 
 	usageSkipConfirm = "skip the confirmation prompt"
 	usageDryRun      = "show what would change and exit without writing"

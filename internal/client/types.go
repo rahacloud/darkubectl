@@ -7,6 +7,8 @@ import (
 	"sort"
 )
 
+const jsonValueField = "value"
+
 // page is the standard Django REST Framework pagination envelope.
 type page[T any] struct {
 	Count    int    `json:"count"`
@@ -93,20 +95,20 @@ type App struct {
 	Plan      *Plan     `json:"plan"`
 	Replicas  int       `json:"replicas"`
 	// ReplicasPresent distinguishes an explicit zero from an omitted/null API value.
-	ReplicasPresent     bool     `json:"-" yaml:"-"`
+	ReplicasPresent     bool     `json:"-"                     yaml:"-"`
 	IsEnabled           bool     `json:"is_enabled"`
 	IsDeployable        bool     `json:"is_deployable"`
 	IsHPAEnabled        bool     `json:"is_hpa_enabled"`
 	RAMLimit            string   `json:"ram_limit"`
 	CPURequest          string   `json:"cpu_request"`
-	Disk                *Disk    `json:"-" yaml:"-"`
-	ExternalHosts       []string `json:"-" yaml:"-"`
+	Disk                *Disk    `json:"-"                     yaml:"-"`
+	ExternalHosts       []string `json:"-"                     yaml:"-"`
 	CustomDomainAddress string   `json:"custom_domain_address"`
 	CustomSubdomainAddr string   `json:"custom_subdomain_addr"`
 	EnableSSL           bool     `json:"enable_SSL"`
-	ReadinessProbePath  string   `json:"-" yaml:"-"`
-	Command             string   `json:"-" yaml:"-"`
-	Args                string   `json:"-" yaml:"-"`
+	ReadinessProbePath  string   `json:"-"                     yaml:"-"`
+	Command             string   `json:"-"                     yaml:"-"`
+	Args                string   `json:"-"                     yaml:"-"`
 	ImageRepo           string   `json:"image_repo"`
 	ImageTag            string   `json:"image_tag"`
 	CreationTime        string   `json:"creation_time"`
@@ -156,10 +158,12 @@ type AppHPAConfig struct {
 	TargetCPUUtilizationPercentage int  `json:"targetCPUUtilizationPercentage"`
 }
 
+// AppContainerConfig contains container settings.
 type AppContainerConfig struct {
 	ReadinessProbe *AppProbe `json:"readinessProbe"`
 }
 
+// AppProbe describes a readiness probe.
 type AppProbe struct {
 	HTTPGet             *AppHTTPGet    `json:"httpGet"`
 	Exec                *AppExecAction `json:"exec"`
@@ -171,15 +175,18 @@ type AppProbe struct {
 	FailureThreshold    int            `json:"failureThreshold"`
 }
 
+// AppHTTPGet describes an HTTP probe.
 type AppHTTPGet struct {
 	Path string          `json:"path"`
 	Port json.RawMessage `json:"port"`
 }
 
+// AppExecAction describes an exec probe.
 type AppExecAction struct {
 	Command []string `json:"command"`
 }
 
+// AppTCPSocket describes a TCP probe.
 type AppTCPSocket struct {
 	Port json.RawMessage `json:"port"`
 }
@@ -191,6 +198,7 @@ func (a *App) UnmarshalJSON(data []byte) error {
 	type appAlias App
 	var decoded struct {
 		appAlias
+
 		Disk          *Disk    `json:"disk"`
 		ExternalHosts []string `json:"external_hosts"`
 	}
@@ -207,17 +215,28 @@ func (a *App) UnmarshalJSON(data []byte) error {
 	a.ExternalHosts = decoded.ExternalHosts
 	a.ReplicasPresent = exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	a.Inputs = inputNames(fields["inputs"])
+	if err := unmarshalAppBuildFields(fields, a); err != nil {
+		return err
+	}
+	unmarshalAppServiceFields(fields, a)
+	for name, target := range map[string]*string{"readiness_probe_path": &a.ReadinessProbePath, "command": &a.Command, "args": &a.Args} {
+		_ = json.Unmarshal(fields[name], target)
+	}
+	return nil
+}
+
+func unmarshalAppBuildFields(fields map[string]json.RawMessage, app *App) error {
 	if raw, exists := fields["build_method"]; exists && len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		if err := json.Unmarshal(raw, &a.BuildMethod); err != nil {
+		if err := json.Unmarshal(raw, &app.BuildMethod); err != nil {
 			return fmt.Errorf("app.build_method: %w", err)
 		}
 	}
 	for name, target := range map[string]any{
-		"git_repo_url": &a.GitRepoURL, "git_branch_name": &a.GitBranch,
-		"git_provider_type": &a.GitProvider, "git_build_dockerfile": &a.GitDockerfile,
-		"git_build_context": &a.GitContext, "git_build_workdir": &a.GitWorkdir,
-		"builder": &a.Builder, "autodeploy_on_git_push": &a.GitAutodeploy,
-		"git_build_args": &a.GitBuildArgs,
+		"git_repo_url": &app.GitRepoURL, "git_branch_name": &app.GitBranch,
+		"git_provider_type": &app.GitProvider, "git_build_dockerfile": &app.GitDockerfile,
+		"git_build_context": &app.GitContext, "git_build_workdir": &app.GitWorkdir,
+		"builder": &app.Builder, "autodeploy_on_git_push": &app.GitAutodeploy,
+		"git_build_args": &app.GitBuildArgs,
 	} {
 		value, present := fields[name]
 		if present && len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
@@ -226,18 +245,20 @@ func (a *App) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
+	return nil
+}
+
+func unmarshalAppServiceFields(fields map[string]json.RawMessage, app *App) {
 	var service AppService
-	if value := fields["svc"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &service) == nil {
-		a.Service = &service
+	if value := fields["svc"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value,
+		&service) == nil {
+		app.Service = &service
 	}
 	var config AppCustomConfig
-	if value := fields["custom_config"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) && json.Unmarshal(value, &config) == nil {
-		a.CustomConfig = &config
+	if value := fields["custom_config"]; len(value) > 0 && !bytes.Equal(bytes.TrimSpace(value),
+		[]byte("null")) && json.Unmarshal(value, &config) == nil {
+		app.CustomConfig = &config
 	}
-	for name, target := range map[string]*string{"readiness_probe_path": &a.ReadinessProbePath, "command": &a.Command, "args": &a.Args} {
-		_ = json.Unmarshal(fields[name], target)
-	}
-	return nil
 }
 
 func inputNames(raw json.RawMessage) []string {
