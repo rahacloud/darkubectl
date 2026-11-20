@@ -14,7 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/rahacloud/darkubectl/internal/agentsetup"
-	"github.com/rahacloud/darkubectl/internal/output"
+	"github.com/rahacloud/darkubectl/internal/tui/theme"
 	"golang.org/x/term"
 )
 
@@ -78,16 +78,16 @@ var setupClients = []agentsetup.Client{
 var setupScopes = []agentsetup.Scope{agentsetup.ScopeProject, agentsetup.ScopeGlobal}
 
 var (
-	setupTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(output.ColorAccent)
-	setupCurrentStyle  = lipgloss.NewStyle().Bold(true).Foreground(output.ColorBranch)
-	setupSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(output.ColorSuccess)
-	setupMutedStyle    = lipgloss.NewStyle().Foreground(output.ColorMuted)
-	setupDisabledStyle = lipgloss.NewStyle().Foreground(output.ColorMuted).Faint(true)
-	setupAddedStyle    = lipgloss.NewStyle().Foreground(output.ColorSuccess)
-	setupRemovedStyle  = lipgloss.NewStyle().Foreground(output.ColorDanger)
-	setupCautionStyle  = lipgloss.NewStyle().Bold(true).Foreground(output.ColorNumber)
-	setupWarningStyle  = lipgloss.NewStyle().Bold(true).Foreground(output.ColorDanger)
-	setupKeyStyle      = lipgloss.NewStyle().Bold(true).Foreground(output.ColorBranch)
+	setupTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(theme.ColorAccent)
+	setupCurrentStyle  = lipgloss.NewStyle().Bold(true).Foreground(theme.ColorBranch)
+	setupSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(theme.ColorSuccess)
+	setupMutedStyle    = lipgloss.NewStyle().Foreground(theme.ColorMuted)
+	setupDisabledStyle = lipgloss.NewStyle().Foreground(theme.ColorMuted).Faint(true)
+	setupAddedStyle    = lipgloss.NewStyle().Foreground(theme.ColorSuccess)
+	setupRemovedStyle  = lipgloss.NewStyle().Foreground(theme.ColorDanger)
+	setupCautionStyle  = lipgloss.NewStyle().Bold(true).Foreground(theme.ColorNumber)
+	setupWarningStyle  = lipgloss.NewStyle().Bold(true).Foreground(theme.ColorDanger)
+	setupKeyStyle      = lipgloss.NewStyle().Bold(true).Foreground(theme.ColorBranch)
 	setupFileStyle     = lipgloss.NewStyle().Bold(true)
 	setupBoldStyle     = lipgloss.NewStyle().Bold(true)
 )

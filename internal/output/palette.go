@@ -9,14 +9,16 @@ import "charm.land/lipgloss/v2"
 // terminal for its background color adds latency and can hang on some
 // terminals/multiplexers.
 var (
-	ColorAccent  = lipgloss.Color("#D6336C") // titles, section headers
-	ColorBranch  = lipgloss.Color("#228BE6") // nested object/array keys
-	ColorKey     = lipgloss.Color("#868E96") // field labels
-	ColorBorder  = lipgloss.Color("#5C5F77") // table borders
-	ColorSuccess = lipgloss.Color("#40C057") // healthy/true
-	ColorDanger  = lipgloss.Color("#E03131") // error/failed
-	ColorMuted   = lipgloss.Color("#868E96") // disabled/pending/false
-	ColorNumber  = lipgloss.Color("#F08C00") // numeric values
+	ColorAccent      = lipgloss.Color("#D6336C") // titles, section headers
+	ColorBranch      = lipgloss.Color("#228BE6") // nested object/array keys
+	ColorKey         = lipgloss.Color("#868E96") // field labels
+	ColorBorder      = lipgloss.Color("#5C5F77") // table borders
+	ColorSuccess     = lipgloss.Color("#40C057") // healthy/true
+	ColorDanger      = lipgloss.Color("#E03131") // error/failed
+	ColorMuted       = lipgloss.Color("#868E96") // disabled/pending/false
+	ColorNumber      = lipgloss.Color("#F08C00") // numeric values
+	ColorSelectionBG = lipgloss.Color("#228BE6") // focused or selected row background
+	ColorSelectionFG = lipgloss.Color("#FFFFFF") // focused or selected row foreground
 
 	// The four colors below set both foreground and background for search
 	// highlights, so they stay readable regardless of the terminal's own

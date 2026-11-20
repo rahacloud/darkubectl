@@ -1,0 +1,395 @@
+version: 1
+tenants:
+  - name: hamravesh
+    databases:
+      - id: db-orders
+        name: orders-db
+        engine: PostgreSQL
+        version: "15"
+        plan: standard
+        is_managed: true
+        namespace_id: 123
+        cluster_id: 42
+        num_node: 3
+        status: {role: Primary, status: running, detail: Healthy}
+        nodes:
+          - {name: orders-0, status: running, cpu: 1000, ram: 2048, disk: 30}
+          - {name: orders-1, status: running, cpu: 1000, ram: 2048, disk: 30}
+          - {name: orders-2, status: running, cpu: 1000, ram: 2048, disk: 30}
+      - id: db-cache
+        name: cache-db
+        engine: Redis
+        version: "7"
+        plan: small
+        is_managed: true
+        namespace_id: 123
+        cluster_id: 42
+        num_node: 1
+        status: {role: Primary, status: pending, detail: Starting replica}
+        nodes:
+          - {name: cache-0, status: pending, cpu: 500, ram: 1024, disk: 10}
+      - id: db-archive
+        name: archive-db
+        engine: PostgreSQL
+        version: "14"
+        plan: legacy
+        is_managed: false
+        namespace_id: 124
+        cluster_id: 43
+        num_node: 1
+        status: {role: Standby, status: maintenance, detail: Scheduled maintenance}
+        nodes:
+          - {name: archive-0, status: maintenance, cpu: 2000, ram: 4096, disk: 100}
+    alerts:
+      - id: mock-alert-critical-firing
+        alertname: High CPU usage
+        status: firing
+        severity: critical
+        instance: billing-api
+        service_owner: platform
+        condition: CPU > 90%
+        alert_description: CPU usage exceeded the configured threshold.
+        starts_at: '2026-11-19T09:48:00Z'
+      - id: mock-alert-warning-firing
+        alertname: Memory pressure
+        status: firing
+        severity: warning
+        instance: gateway
+        condition: Memory > 80%
+        starts_at: '2026-11-19T09:53:00Z'
+      - id: mock-alert-info-firing
+        alertname: Replica count low
+        status: firing
+        severity: info
+        instance: worker
+        condition: Replicas < 2
+        starts_at: '2026-11-19T09:56:00Z'
+      - id: mock-alert-critical-resolved
+        alertname: Database unavailable
+        status: resolved
+        severity: critical
+        instance: postgres
+        condition: Health check failed
+        starts_at: '2026-11-19T07:59:00Z'
+        ends_at: '2026-11-19T08:59:00Z'
+      - id: mock-alert-warning-resolved
+        alertname: Storage response slow
+        status: resolved
+        severity: warning
+        instance: object-store
+        condition: Latency > 2s
+        starts_at: '2026-11-19T08:59:00Z'
+        ends_at: '2026-11-19T09:14:00Z'
+      - id: mock-alert-info-resolved
+        alertname: Certificate renewed
+        status: resolved
+        severity: info
+        instance: api.demo.example.test
+        condition: Certificate expires < 14d
+        starts_at: '2026-11-19T09:29:00Z'
+        ends_at: '2026-11-19T09:39:00Z'
+    registries:
+      - id: registry-hamdocker-demo
+        name: hamdocker
+        address: registry.hamdocker.ir
+        username: demo-acme
+        is_provided_as_saas: true
+        storage_usage_bytes: 734003200
+        images:
+          - name: api
+            last_pushed: '2026-11-19T09:48:00Z'
+            recent_tag: release-53
+            digests:
+              - digest: sha256:af0132e82c58c18f1c2bb4e8c19750f7d30183c0f81627e991b2a46c7e135ace
+                tags: [release-53, latest]
+                size: 87031808
+                last_pushed: '2026-11-19T09:48:00Z'
+              - digest: sha256:221a9f20cc669c32f578b777ab43f0c9e423e75acb750e302ba36c32bd221aaa
+                tags: [release-52]
+                size: 84672512
+                last_pushed: '2026-11-18T15:12:00Z'
+              - digest: sha256:98d104c68f0bf87cbfcab02bcad454fea631371a33f3ad20fbb96f9ed28ade27
+                tags: []
+                size: 82575360
+                last_pushed: '2026-11-17T12:05:00Z'
+          - name: worker
+            last_pushed: '2026-11-19T08:30:00Z'
+            recent_tag: build-204
+            digests:
+              - digest: sha256:bc82240cf99ac21f667c1e8a765b93d14a341fa621729b803fab406e1008fbee
+                tags: [build-204]
+                size: 112197632
+                last_pushed: '2026-11-19T08:30:00Z'
+    namespaces:
+      - id: 101
+        name: production
+        cluster:
+          id: 11
+          name: demo-west
+          apps_custom_base_domain: demo-west.darkube.app
+      - id: 202
+        name: staging
+        cluster:
+          id: 12
+          name: demo-east
+      - id: 203
+        name: preview
+        cluster:
+          id: 12
+          name: demo-east
+      - id: 204
+        name: production
+        cluster:
+          id: 12
+          name: demo-east
+    apps:
+      - id: app-api-prod
+        name: api
+        namespace:
+          id: 101
+          name: production
+          cluster:
+            id: 11
+            name: demo-west
+            apps_custom_base_domain: demo-west.darkube.app
+        state:
+          type: healthy
+          text: healthy (2/2)
+          description: All replicas are ready
+        replicas: 2
+        creation_method: docker_image
+        build_method: gitlabci
+        image_repo: registry.example.test/demo/api
+        image_tag: v1.8.2
+        ram_limit: 1000M
+        cpu_request: 500m
+        plan:
+          id: plan-dynamic-demo
+          name: Dynamic
+          code_name: dynamic
+          plan_type: app
+          cost_type: dynamic
+          show_in_create_app: true
+          detail:
+            ram_limit: 1000
+            cpu_request: 500
+        disk_size_in_gi: 10
+        custom_config:
+          hpa:
+            enabled: true
+            minReplicas: 2
+            maxReplicas: 6
+            targetCPUUtilizationPercentage: 70
+        custom_domain_address: api.demo.example.test
+        custom_subdomain_addr: api-prod
+        external_hosts:
+          - api.public.demo.example.test
+          - api-alt.public.demo.example.test
+        service:
+          type: LoadBalancer
+          ports:
+            http:
+              containerPort: 8080
+              servicePort: 80
+              nodePort: 30421
+              protocol: TCP
+            metrics:
+              containerPort: 9090
+              servicePort: 9090
+              nodePort: 30422
+              protocol: TCP
+          internal_address: api.production.demo.svc
+          external_address: app-api-prod.hsvc.example.test
+          external_ip: 192.0.2.42
+        readiness_probe_path: /healthz
+        command: /app/server
+        args: --port 8080
+        envs:
+          - name: LOG_LEVEL
+            value: info
+          - name: PUBLIC_BASE_URL
+            value: https://api.demo.example.test
+          - name: WORKER_COUNT
+            value: "4"
+        secret_envs:
+          - DATABASE_PASSWORD
+          - DEMO_API_TOKEN
+        pods:
+          - name: api-7f8d9c6b4-2k9p7
+            containers: [main, metrics]
+          - name: api-7f8d9c6b4-q4m2x
+            containers: [main, metrics]
+        usage:
+          cpu_cores: 0.37
+          ram_bytes: 536870912
+          disk_bytes: 4294967296
+        history:
+          cpu:
+            - pod: api-7f8d9c6b4-2k9p7
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 0.21}
+                - {time: '2026-11-19T10:07:00Z', value: 0.34}
+                - {time: '2026-11-19T10:14:00Z', value: 0.37}
+            - pod: api-7f8d9c6b4-q4m2x
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 0.17}
+                - {time: '2026-11-19T10:07:00Z', value: 0.26}
+                - {time: '2026-11-19T10:14:00Z', value: 0.29}
+          ram:
+            - pod: api-7f8d9c6b4-2k9p7
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 402653184}
+                - {time: '2026-11-19T10:07:00Z', value: 469762048}
+                - {time: '2026-11-19T10:14:00Z', value: 536870912}
+        logs:
+          - timestamp: '2026-11-19T10:14:01Z'
+            pod: api-7f8d9c6b4-2k9p7
+            container: main
+            text: 'INFO GET /healthz 200 3ms'
+          - timestamp: '2026-11-19T10:14:03Z'
+            pod: api-7f8d9c6b4-2k9p7
+            container: main
+            text: 'INFO GET /api/orders 200 42ms'
+          - timestamp: '2026-11-19T10:14:05Z'
+            pod: api-7f8d9c6b4-2k9p7
+            container: main
+            text: 'WARN database slow query 812ms'
+          - timestamp: '2026-11-19T10:14:08Z'
+            pod: api-7f8d9c6b4-q4m2x
+            container: main
+            text: 'INFO POST /api/orders 201 88ms'
+      - id: app-worker-prod
+        name: worker
+        namespace:
+          id: 101
+          name: production
+          cluster:
+            id: 11
+            name: demo-west
+            apps_custom_base_domain: demo-west.darkube.app
+        state:
+          type: not_ready
+          text: not ready (1/2)
+          description: One replica is not ready
+        replicas: 2
+        creation_method: git_repo_url
+        build_method: webhook
+        git_repo_url: https://git.example.test/demo/worker
+        git_branch_name: main
+        git_provider_type: gitlab
+        git_build_dockerfile: Dockerfile
+        git_build_context: .
+        builder: dockerfile
+        autodeploy_on_git_push: true
+        git_build_args:
+          NODE_ENV: production
+          API_URL: https://api.example.test
+        image_repo: registry.example.test/demo/worker
+        image_tag: build-204
+      - id: app-api-staging
+        name: api
+        namespace:
+          id: 202
+          name: staging
+          cluster:
+            id: 12
+            name: demo-east
+            apps_custom_base_domain: demo-east.darkube.app
+        state:
+          type: healthy
+          text: healthy (1/1)
+          description: All replicas are ready
+        replicas: 1
+        creation_method: docker_image
+        image_repo: registry.example.test/demo/api
+        image_tag: v1.8.1
+        custom_domain_address: api.staging.demo.example.test
+        custom_subdomain_addr: api-staging
+        service:
+          type: ClusterIP
+          ports:
+            http:
+              containerPort: 8080
+              servicePort: 8080
+              protocol: TCP
+          internal_address: api.staging.demo.svc
+  - name: rahacloud
+    databases: []
+    namespaces:
+      - id: 301
+        name: research
+        cluster:
+          id: 21
+          name: demo-north
+      - id: 302
+        name: experiments
+        cluster:
+          id: 22
+          name: demo-north
+      - id: 303
+        name: scratch
+        cluster:
+          id: 22
+          name: demo-north
+    apps:
+      - id: app-notebook
+        name: notebook
+        namespace:
+          id: 301
+          name: research
+          cluster:
+            id: 21
+            name: demo-north
+        state:
+          type: healthy
+          text: healthy (1/1)
+          description: All replicas are ready
+        replicas: 1
+        creation_method: docker_image
+        image_repo: registry.example.test/labs/notebook
+        image_tag: latest
+        usage:
+          cpu_cores: 1.42
+          ram_bytes: 3221225472
+          disk_bytes: 17179869184
+        history:
+          cpu:
+            - pod: notebook-5d8f6c7b9-x2m4n
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 0.72}
+                - {time: '2026-11-19T10:07:00Z', value: 1.18}
+                - {time: '2026-11-19T10:14:00Z', value: 1.42}
+          ram:
+            - pod: notebook-5d8f6c7b9-x2m4n
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 2147483648}
+                - {time: '2026-11-19T10:07:00Z', value: 2684354560}
+                - {time: '2026-11-19T10:14:00Z', value: 3221225472}
+        pods:
+          - name: notebook-5d8f6c7b9-x2m4n
+            containers: [jupyter]
+        logs:
+          - timestamp: '2026-11-19T10:14:01Z'
+            pod: notebook-5d8f6c7b9-x2m4n
+            container: jupyter
+            text: '[I 10:14:01.123 ServerApp] Kernel started: python3'
+          - timestamp: '2026-11-19T10:14:05Z'
+            pod: notebook-5d8f6c7b9-x2m4n
+            container: jupyter
+            text: '[W 10:14:05.778 ServerApp] Notebook save delayed while storage is busy'
+      - id: app-api-labs
+        name: api
+        namespace:
+          id: 302
+          name: experiments
+          cluster:
+            id: 22
+            name: demo-north
+        state:
+          type: degraded
+          text: degraded (1/2)
+          description: One replica is warming up
+        replicas: 2
+        creation_method: docker_image
+        image_repo: registry.example.test/labs/api
+        image_tag: canary

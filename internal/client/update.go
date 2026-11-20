@@ -189,7 +189,7 @@ func SecretEnvNames(app map[string]any) []string {
 func SetEnvVars(app map[string]any, envs []EnvVar) {
 	out := make([]any, 0, len(envs))
 	for _, e := range envs {
-		out = append(out, map[string]any{"name": e.Name, "value": e.Value})
+		out = append(out, map[string]any{fieldName: e.Name, jsonValueField: e.Value})
 	}
 	app["envs"] = out
 }

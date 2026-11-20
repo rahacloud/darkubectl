@@ -40,6 +40,8 @@ func TestMCPClassify(t *testing.T) {
 		{"set env my-api A=b", accessWrite},
 		{"exec app my-api -- ls -l", accessWrite},
 		{"terminal my-api", accessBlocked},
+		{"tui", accessBlocked},
+		{"tui --allow-writes", accessBlocked},
 		{"tunnel connect", accessBlocked},
 		{"config use-tenant acme", accessBlocked},
 		{"config view", accessRead},
@@ -131,6 +133,9 @@ func TestMCPCheck(t *testing.T) {
 	}
 	if err := rw.check([]string{"terminal", "x"}); err == nil {
 		t.Error("terminal must stay refused even with --allow-writes")
+	}
+	if err := rw.check([]string{"tui"}); err == nil {
+		t.Error("tui must stay refused even with --allow-writes")
 	}
 	if err := rw.check(nil); err == nil {
 		t.Error("empty args must be refused")

@@ -56,3 +56,10 @@ func (c *Client) CheckDNS(ctx context.Context, hosts []string) (map[string]bool,
 	}
 	return out, nil
 }
+
+// SSLCertificateRecords returns DNS challenge CNAME names and targets.
+func (c *Client) SSLCertificateRecords(ctx context.Context, appID string, hosts []string) (map[string]string, error) {
+	out := map[string]string{}
+	err := c.postJSON(ctx, appsPathV1+url.PathEscape(appID)+"/ssl_certificate_records/", map[string]any{"external_hosts": hosts}, &out)
+	return out, err
+}

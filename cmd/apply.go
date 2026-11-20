@@ -403,7 +403,7 @@ func mergePorts(existing map[string]any, ports map[string]client.Port) map[strin
 		}
 		protocol := p.Protocol
 		if protocol == "" {
-			protocol = "TCP"
+			protocol = defaultPortProtocolTCP
 		}
 		entry["containerPort"] = p.ContainerPort
 		entry["servicePort"] = servicePort

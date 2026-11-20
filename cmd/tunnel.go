@@ -202,7 +202,7 @@ func tunnelUpAction(ctx context.Context, cmd *cli.Command) error {
 		Replicas:       1,
 		SvcType:        "ClusterIP",
 		Ports: map[string]client.Port{
-			"main": {ContainerPort: chiselPort, ServicePort: chiselPort, Protocol: "TCP"},
+			"main": {ContainerPort: chiselPort, ServicePort: chiselPort, Protocol: defaultPortProtocolTCP},
 		},
 		SecretEnvs: []client.EnvVar{{Name: "AUTH", Value: auth}},
 	}); err != nil {

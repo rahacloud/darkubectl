@@ -41,10 +41,13 @@ func TestAppReplicaPresenceFromJSON(t *testing.T) {
 	}
 }
 
-func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
+func TestAppSummaryFieldsDecodeWithoutLeakingTUIFields(t *testing.T) {
 	t.Parallel()
 	data := []byte(`{
         "disk":{"size_in_Gi":10},"external_hosts":["example.test"],
+		"custom_subdomain_addr":"api-prod",
+		"namespace":{"id":12,"name":"production","cluster":{"id":4,"name":"west","apps_custom_base_domain":"demo-west.darkube.app"}},
+		"plan":{"id":"plan-1","cluster":{"id":5,"name":"plan-cluster","apps_custom_base_domain":"plan.darkube.app"}},
 		"svc":{"type":"LoadBalancer",
         "ports":{"http":{"containerPort":8080,"servicePort":80,"nodePort":30421,"protocol":"TCP"}},
         "internalAddress":"api.prod.svc","externalIP":"192.0.2.42"},
@@ -55,6 +58,22 @@ func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 	if err := json.Unmarshal(data, &app); err != nil {
 		t.Fatal(err)
 	}
+	assertAppTUIDomainFields(t, app)
+	assertAppServiceFields(t, app)
+	assertAppRuntimeFields(t, app)
+	assertAppStructuredOutputCompatibility(t, app)
+}
+
+func assertAppTUIDomainFields(t *testing.T, app client.App) {
+	t.Helper()
+	if app.CustomSubdomainAddr != "api-prod" || app.Namespace.Cluster.AppsCustomBaseDomain != "demo-west.darkube.app" ||
+		app.Plan == nil || app.Plan.Cluster == nil || app.Plan.Cluster.AppsCustomBaseDomain != "plan.darkube.app" {
+		t.Fatalf("TUI domain fields were not decoded: app=%+v plan=%+v", app, app.Plan)
+	}
+}
+
+func assertAppServiceFields(t *testing.T, app client.App) {
+	t.Helper()
 	if app.Disk == nil || app.Disk.SizeInGi != 10 || !reflect.DeepEqual(app.ExternalHosts, []string{"example.test"}) {
 		t.Fatalf("disk or external hosts missing: %+v", app)
 	}
@@ -65,6 +84,10 @@ func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 		app.Service.ExternalIP != "192.0.2.42" {
 		t.Fatalf("service projection = %+v", app.Service)
 	}
+}
+
+func assertAppRuntimeFields(t *testing.T, app client.App) {
+	t.Helper()
 	if app.ReadinessProbePath != "/healthz" ||
 		app.Command != "/app/server" ||
 		app.Args != "--port 8080" ||
@@ -73,7 +96,14 @@ func TestAppSummaryFieldsDecodeWithoutInputValues(t *testing.T) {
 		app.CustomConfig.Container.ReadinessProbe.HTTPGet.Path != "/ready" {
 		t.Fatalf("runtime settings projection is incomplete: %+v", app)
 	}
+}
 
+func TestUnknownAppInputsAreIgnored(t *testing.T) {
+	t.Parallel()
+	var app client.App
+	if err := json.Unmarshal([]byte(`{"id":"api","inputs":[{"name":"PUBLIC_BASE_URL","value":"private-value"}]}`), &app); err != nil {
+		t.Fatal(err)
+	}
 	assertAppStructuredOutputCompatibility(t, app)
 }
 
@@ -94,6 +124,9 @@ func assertAppStructuredOutputCompatibility(t *testing.T, app client.App) {
 			"command\"",
 			"custom_config",
 			"inputs",
+			"private-value",
+			"custom_subdomain_addr",
+			"apps_custom_base_domain",
 			"readiness_probe_path",
 			"ReplicasPresent", "disk", "external_hosts", "externalhosts", "defaultoutgoingip"} {
 			if strings.Contains(string(output), omitted) {
@@ -228,6 +261,8 @@ func TestOptionalDetailsDoNotBreakList(t *testing.T) {
 		`{"custom_config":[]}`,
 		`{"svc":{"ports":[]}}`,
 		`{"command":[],"args":{},"readiness_probe_path":42}`,
+		`{"build_method":[],"git_repo_url":42,"autodeploy_on_git_push":"not-a-bool"}`,
+		`{"custom_subdomain_addr":[],"namespace":{"cluster":{"apps_custom_base_domain":42}}}`,
 	}
 	for _, value := range cases {
 		var app client.App
@@ -240,12 +275,14 @@ func TestOptionalDetailsDoNotBreakList(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"count":2,"next":null,"results":[`+
-			`{"id":"bad","svc":{"ports":[]}},`+
-			`{"id":"good","svc":{"internalAddress":"ok"}}]}`)
+			`{"id":"bad","svc":{"ports":[]},"build_method":[],"git_repo_url":42,"autodeploy_on_git_push":"invalid"},`+
+			`{"id":"good","svc":{"internalAddress":"ok"},"build_method":"git_repo_url","git_repo_url":"https://example.test/repo"}]}`)
 	}))
 	defer server.Close()
 	apps, err := client.New(server.URL, client.APIKey("test"), "org").ListApps(context.Background())
-	if err != nil || len(apps) != 2 || apps[0].Service != nil || apps[1].Service == nil || apps[1].Service.InternalAddress != "ok" {
+	if err != nil || len(apps) != 2 || apps[0].Service != nil || apps[0].BuildMethod != "" || apps[0].GitRepoURL != "" ||
+		apps[0].GitAutodeploy != nil || apps[1].Service == nil || apps[1].Service.InternalAddress != "ok" ||
+		apps[1].BuildMethod != "git_repo_url" || apps[1].GitRepoURL != "https://example.test/repo" {
 		t.Fatalf("apps=%+v err=%v", apps, err)
 	}
 }

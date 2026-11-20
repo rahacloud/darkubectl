@@ -10,9 +10,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/rahacloud/darkubectl/internal/output"
+	"github.com/rahacloud/darkubectl/internal/tui/theme"
 )
 
 const (
+	keyEscape    = "esc"
 	headerHeight = 2 // title line + blank line
 	footerHeight = 1 // hints or search input
 
@@ -64,10 +66,10 @@ func RunDescribe(title string, rows []output.Row) error {
 		plainLines:   plain,
 		styles:       styles,
 		search:       search,
-		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(output.ColorAccent),
-		hintStyle:    lipgloss.NewStyle().Foreground(output.ColorMuted).Faint(true),
-		matchStyle:   lipgloss.NewStyle().Background(output.ColorMatchBG).Foreground(output.ColorMatchFG),
-		currentStyle: lipgloss.NewStyle().Background(output.ColorCurrentBG).Foreground(output.ColorCurrentFG),
+		titleStyle:   lipgloss.NewStyle().Bold(true).Foreground(theme.ColorAccent),
+		hintStyle:    lipgloss.NewStyle().Foreground(theme.ColorMuted),
+		matchStyle:   lipgloss.NewStyle().Background(theme.ColorMatchBG).Foreground(theme.ColorMatchFG),
+		currentStyle: lipgloss.NewStyle().Background(theme.ColorCurrentBG).Foreground(theme.ColorCurrentFG),
 	}
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -111,7 +113,7 @@ func (m *model) resize(msg tea.WindowSizeMsg) {
 // handleKey processes navigation keys; the bool reports whether it consumed the key.
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
-	case "q", "esc", "ctrl+c":
+	case "q", keyEscape, "ctrl+c":
 		return tea.Quit, true
 	case "/":
 		m.searching = true
@@ -136,7 +138,7 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 
 func (m *model) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc":
+	case keyEscape:
 		m.searching = false
 		m.query = ""
 		m.matches = nil
