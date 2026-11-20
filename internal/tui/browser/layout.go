@@ -641,8 +641,13 @@ func (m *browser) contextFooterLine(left string) string {
 
 func (m *browser) appendFooterActionHint(left string) string {
 	label := labelActions
+	available := len(m.actionMenuItems()) > 0
 	if m.detail && m.activeAppView == appViewBuilds && m.selectedApp().BuildMethod == buildModeWebhook {
 		label = hintBuildActions
+		available = m.actionIsMock() || m.allowWrites
+	}
+	if !available {
+		return left
 	}
 	return left + paint(" · ", browserBorder, false) + paint("a", browserBranch, true) + " " + paint(label, browserMuted, false)
 }
@@ -816,7 +821,7 @@ func (m *browser) appViewFooterHints() []keyHint {
 		return nil
 	}
 	hints = appendUniqueKeyHints(hints, keyHint{hintViews, "previous / next view"})
-	if m.selectedAppActive() {
+	if m.selectedAppActive() && len(m.actionMenuItems()) > 0 {
 		hints = appendUniqueKeyHints(hints, keyHint{"a", "actions"})
 	}
 	return hints
@@ -1029,7 +1034,7 @@ func (m *browser) defaultKeyHints(forHelp bool) []keyHint {
 			{"Home/End", "first / last"}, {"g/G", "first / last"}, {hintPageScroll, hintScrollDetails},
 			{hintEscape, "back / clear"}, {"n", "namespace scope"}, {"/", "fuzzy filter"}, {"s", hintSort},
 		}
-		if m.selectedAppActive() {
+		if m.selectedAppActive() && len(m.actionMenuItems()) > 0 {
 			hints = append(hints, keyHint{"a", "app actions"})
 		}
 		return hints
@@ -1056,7 +1061,7 @@ func (m *browser) defaultKeyHints(forHelp bool) []keyHint {
 		{hintTab, "cycle"}, {"↵", "open"}, {"n", "scope"}, {"/", hintFilter},
 		{"s", hintSort}, {"r", hintRefresh}, {"?", hintHelp}, {"q", hintQuit},
 	}
-	if m.selectedAppActive() {
+	if m.selectedAppActive() && len(m.actionMenuItems()) > 0 {
 		hints = append(hints[:5], append([]keyHint{{"a", "actions"}}, hints[5:]...)...)
 	}
 	return hints

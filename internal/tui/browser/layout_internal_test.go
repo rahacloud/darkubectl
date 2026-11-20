@@ -122,3 +122,33 @@ func TestResizePreservesFilterAndSelection(t *testing.T) {
 		t.Fatal("resizing back should resume the same filter and selection")
 	}
 }
+
+func TestFooterHidesActionsHintWhenNoActionsAvailable(t *testing.T) {
+	t.Parallel()
+	m := &browser{width: 120, height: 24, mode: connectionLabelLive}
+	applyAppsResult(m, []client.App{{
+		ID: "app-1", Name: "api", Namespace: client.Namespace{ID: 1, Name: "prod"},
+	}}, nil)
+	if len(m.actionMenuItems()) != 0 {
+		t.Fatal("precondition: read-only live mode exposes no action menu items")
+	}
+
+	footer := ansi.Strip(m.footerLine())
+	if strings.Contains(footer, "actions") {
+		t.Errorf("apps page footer = %q, want no actions hint while writes are disabled", footer)
+	}
+
+	m.detail = true
+	m.activeAppView = appViewSummary
+	footer = ansi.Strip(m.footerLine())
+	if strings.Contains(footer, "actions") {
+		t.Errorf("app tab footer = %q, want no actions hint while writes are disabled", footer)
+	}
+
+	m.help = true
+	for _, hint := range m.keyHints(true) {
+		if hint.key == "a" {
+			t.Errorf("help hints include %q %q while writes are disabled", hint.key, hint.action)
+		}
+	}
+}
