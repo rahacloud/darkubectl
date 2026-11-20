@@ -269,7 +269,6 @@ type mockProfileApp struct {
 	ReadinessProbePath  string                  `yaml:"readiness_probe_path"`
 	Command             string                  `yaml:"command"`
 	Args                string                  `yaml:"args"`
-	Inputs              []string                `yaml:"inputs"`
 	RAMLimit            string                  `yaml:"ram_limit"`
 	CPURequest          string                  `yaml:"cpu_request"`
 	DiskSizeInGi        int                     `yaml:"disk_size_in_gi"`
@@ -645,7 +644,6 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 			ReadinessProbePath:  app.ReadinessProbePath,
 			Command:             app.Command,
 			Args:                app.Args,
-			Inputs:              append([]string(nil), app.Inputs...),
 			ImageRepo:           app.ImageRepo,
 			ImageTag:            app.ImageTag,
 			RAMLimit:            app.RAMLimit,

@@ -115,14 +115,14 @@ func TestSummaryShowsOptionalServiceAndRuntimeFields(t *testing.T) {
 				"metrics": {ContainerPort: 9090, ServicePort: 9091, Protocol: "TCP"},
 			},
 		},
-		ReadinessProbePath: "/healthz", Command: "/app/server", Args: "--port 8080", Inputs: []string{"PUBLIC_BASE_URL"},
+		ReadinessProbePath: "/healthz", Command: "/app/server", Args: "--port 8080",
 	}
 	m := &browser{tenant: "demo", detail: true, width: 160, height: 40, apps: []client.App{app}}
 	got := ansi.Strip(strings.Join(m.summaryPaneLines(), "\n"))
 	for _, want := range []string{
 		"Service", "LoadBalancer", "Port Service", "Internal Address", "api.prod.svc:80", "External IP", "192.0.2.42",
 		"Readiness Probe", "HTTP GET /healthz",
-		"Command", "/app/server --port 8080", "Inputs", "PUBLIC_BASE_URL",
+		"Command", "/app/server --port 8080",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary missing %q: %s", want, got)

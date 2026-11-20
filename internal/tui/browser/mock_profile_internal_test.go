@@ -30,8 +30,7 @@ func assertDemoAppProjection(t *testing.T, app client.App) {
 	}
 	if app.Namespace.Name != "production" || app.State.Text != "healthy (2/2)" || !app.ReplicasPresent || app.Service == nil ||
 		app.Service.InternalAddress != "api.production.demo.svc" || app.Service.Ports["http"].NodePort != 30421 ||
-		app.ReadinessProbePath != "/healthz" || app.Command != "/app/server" || app.Args != "--port 8080" ||
-		!reflect.DeepEqual(app.Inputs, []string{"LOG_LEVEL", "PUBLIC_BASE_URL"}) {
+		app.ReadinessProbePath != "/healthz" || app.Command != "/app/server" || app.Args != "--port 8080" {
 		t.Fatalf("unexpected app projection: %+v", app)
 	}
 }

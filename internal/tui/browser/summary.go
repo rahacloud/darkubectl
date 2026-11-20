@@ -83,7 +83,6 @@ func (m *browser) summaryPaneLines() []string {
 		"", sectionHeading("Runtime"),
 		summaryField("Readiness Probe", displayValue(readinessProbeDisplay(a))),
 		summaryField("Command", displayValue(appCommandDisplay(a))),
-		summaryField("Inputs", displayValue(strings.Join(a.Inputs, ", "))),
 		"", sectionHeading("Deployment"),
 		summaryField("Image", displayValue(a.Image())),
 		summaryField("Deployment type", deploymentTypeValue(a)),

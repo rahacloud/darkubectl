@@ -204,9 +204,6 @@ tenants:
         readiness_probe_path: /healthz
         command: /app/server
         args: --port 8080
-        inputs:
-          - LOG_LEVEL
-          - PUBLIC_BASE_URL
         envs:
           - name: LOG_LEVEL
             value: info
