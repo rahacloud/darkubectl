@@ -2,12 +2,58 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rahacloud/darkubectl/internal/client"
+	"gopkg.in/yaml.v3"
 )
+
+func TestDatabaseDetailStructuredOutputOmitsPasswordButDecodesIt(t *testing.T) {
+	t.Parallel()
+
+	const vaultReference = "REPLACE_PASSWORD"
+	connection := func() *client.DatabaseConnection {
+		return &client.DatabaseConnection{Username: "db-user", Password: vaultReference, Database: "app", Host: "db.internal", Port: 5432}
+	}
+	detail := client.DatabaseDetail{
+		Connection: connection(), PrivateConnection: connection(), StandbyConnection: connection(), PrivateStandbyConnection: connection(),
+		Connections: client.DatabaseConnections{
+			Master:  client.DatabaseConnectionSet{External: connection(), Private: connection()},
+			Standby: client.DatabaseConnectionSet{External: connection(), Private: connection()},
+		},
+	}
+
+	jsonOutput, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(jsonOutput), vaultReference) || strings.Contains(string(jsonOutput), `"password"`) {
+		t.Fatalf("JSON output exposed database password: %s", jsonOutput)
+	}
+
+	yamlOutput, err := yaml.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(yamlOutput), vaultReference) || strings.Contains(string(yamlOutput), "password:") {
+		t.Fatalf("YAML output exposed database password: %s", yamlOutput)
+	}
+
+	const apiResponse = `{"connection":{"username":"db-user","password":"vault-ref","database":"app","host":"db.internal","port":5432},` +
+		`"connections":{"master":{"external":{"username":"db-user","password":"nested-vault-ref"}}}}`
+	var decoded client.DatabaseDetail
+	if err := json.Unmarshal([]byte(apiResponse), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Connection == nil || decoded.Connection.Password != "vault-ref" ||
+		decoded.Connections.Master.External == nil || decoded.Connections.Master.External.Password != "nested-vault-ref" {
+		t.Fatalf("API password references were not decoded: %+v", decoded)
+	}
+}
 
 // The PVC list wraps its rows in pvc_list; the database and service lists are
 // bare arrays under their own service prefixes.

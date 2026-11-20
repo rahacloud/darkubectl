@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 )
 
@@ -62,6 +63,32 @@ type DatabaseConnection struct {
 	Database string `json:"database" yaml:"database"`
 	Host     string `json:"host"     yaml:"host"`
 	Port     int    `json:"port"     yaml:"port"`
+}
+
+type databaseConnectionOutput struct {
+	Username string `json:"username" yaml:"username"`
+	Database string `json:"database" yaml:"database"`
+	Host     string `json:"host"     yaml:"host"`
+	Port     int    `json:"port"     yaml:"port"`
+}
+
+func (c DatabaseConnection) output() databaseConnectionOutput {
+	return databaseConnectionOutput{
+		Username: c.Username,
+		Database: c.Database,
+		Host:     c.Host,
+		Port:     c.Port,
+	}
+}
+
+// MarshalJSON omits the Vault reference held in Password from structured output.
+func (c DatabaseConnection) MarshalJSON() ([]byte, error) {
+	return json.Marshal(c.output())
+}
+
+// MarshalYAML omits the Vault reference held in Password from structured output.
+func (c DatabaseConnection) MarshalYAML() (any, error) {
+	return c.output(), nil
 }
 
 // DatabaseConnectionSet holds the external and private connection details.
