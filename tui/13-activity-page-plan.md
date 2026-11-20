@@ -17,7 +17,7 @@ Activity replaces the Apps tree and details while keeping the Tenant and Pages r
 │ ▱ Tickets      │ │   ● Firing  ▲ Warning  Nov 19 10:35 Memory │ Severity  ✖ Critical       │
 │ ▤ DB           │ │                               │ Instance  billing-api       │
 │ ◇ Registry     │ │                               │ Condition CPU > 90%         │
-│ ¤ Billing      │ │                               │ Started   Nov 19, 10:30     │
+│                │ │                               │ Started   Nov 19, 10:30     │
 │                │ │                               │ Description                 │
 │                │ │                               │ CPU exceeded threshold.     │
 ╰────────────────╯ ╰───────────────────────────────┴─────────────────────────────╯
@@ -34,7 +34,7 @@ Activity replaces the Apps tree and details while keeping the Tenant and Pages r
 │ ▱ Tickets      │ │     Nov 19, 10:30 · platform  │ Platform maintenance        │
 │ ▤ DB           │ │   ✓ Read    Usage report      │ Nov 19, 09:00 · platform    │
 │ ◇ Registry     │ │     Nov 19, 09:00 · billing   │                              │
-│ ¤ Billing      │ │                               │ Maintenance begins tonight. │
+│                │ │                               │ Maintenance begins tonight. │
 ╰────────────────╯ ╰───────────────────────────────┴─────────────────────────────╯
  1/2 rail · 3 notifications · 4 details  h/l tabs · f status · s sort · / filter · r refresh
 ```

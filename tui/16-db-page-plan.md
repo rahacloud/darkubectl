@@ -16,7 +16,7 @@ Keep the Tenant and Pages rail. The DB workspace lists managed databases in the 
 │ ▱ Tickets     │ │   ▤ cache-db   ▲           │ │ Detail     Healthy                │
 │ ▤ DB          │ │     Redis 7 · 1 node        │ │ Role       Primary                │
 │ ◇ Registry    │ │   ▤ archive-db ?           │ │ Plan       standard               │
-│ ¤ Billing     │ │     PostgreSQL 14 · 1 node  │ │ Managed    Yes                    │
+│               │ │     PostgreSQL 14 · 1 node  │ │ Managed    Yes                    │
 │               │ │                             │ │                                   │
 │               │ │                             │ │ NODES · 3                         │
 │               │ │                             │ │ ● orders-0   1000m  2 GB  30 GB  │

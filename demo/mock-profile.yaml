@@ -1,6 +1,6 @@
 version: 1
 tenants:
-  - name: demo-acme
+  - name: hamravesh
     databases:
       - id: db-orders
         name: orders-db
@@ -222,6 +222,45 @@ tenants:
             containers: [main, metrics]
           - name: api-7f8d9c6b4-q4m2x
             containers: [main, metrics]
+        usage:
+          cpu_cores: 0.37
+          ram_bytes: 536870912
+          disk_bytes: 4294967296
+        history:
+          cpu:
+            - pod: api-7f8d9c6b4-2k9p7
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 0.21}
+                - {time: '2026-11-19T10:07:00Z', value: 0.34}
+                - {time: '2026-11-19T10:14:00Z', value: 0.37}
+            - pod: api-7f8d9c6b4-q4m2x
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 0.17}
+                - {time: '2026-11-19T10:07:00Z', value: 0.26}
+                - {time: '2026-11-19T10:14:00Z', value: 0.29}
+          ram:
+            - pod: api-7f8d9c6b4-2k9p7
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 402653184}
+                - {time: '2026-11-19T10:07:00Z', value: 469762048}
+                - {time: '2026-11-19T10:14:00Z', value: 536870912}
+        logs:
+          - timestamp: '2026-11-19T10:14:01Z'
+            pod: api-7f8d9c6b4-2k9p7
+            container: main
+            text: 'INFO GET /healthz 200 3ms'
+          - timestamp: '2026-11-19T10:14:03Z'
+            pod: api-7f8d9c6b4-2k9p7
+            container: main
+            text: 'INFO GET /api/orders 200 42ms'
+          - timestamp: '2026-11-19T10:14:05Z'
+            pod: api-7f8d9c6b4-2k9p7
+            container: main
+            text: 'WARN database slow query 812ms'
+          - timestamp: '2026-11-19T10:14:08Z'
+            pod: api-7f8d9c6b4-q4m2x
+            container: main
+            text: 'INFO POST /api/orders 201 88ms'
       - id: app-worker-prod
         name: worker
         namespace:
@@ -277,7 +316,7 @@ tenants:
               servicePort: 8080
               protocol: TCP
           internal_address: api.staging.demo.svc
-  - name: demo-labs
+  - name: rahacloud
     databases: []
     namespaces:
       - id: 301
@@ -312,6 +351,35 @@ tenants:
         creation_method: docker_image
         image_repo: registry.example.test/labs/notebook
         image_tag: latest
+        usage:
+          cpu_cores: 1.42
+          ram_bytes: 3221225472
+          disk_bytes: 17179869184
+        history:
+          cpu:
+            - pod: notebook-5d8f6c7b9-x2m4n
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 0.72}
+                - {time: '2026-11-19T10:07:00Z', value: 1.18}
+                - {time: '2026-11-19T10:14:00Z', value: 1.42}
+          ram:
+            - pod: notebook-5d8f6c7b9-x2m4n
+              values:
+                - {time: '2026-11-19T10:00:00Z', value: 2147483648}
+                - {time: '2026-11-19T10:07:00Z', value: 2684354560}
+                - {time: '2026-11-19T10:14:00Z', value: 3221225472}
+        pods:
+          - name: notebook-5d8f6c7b9-x2m4n
+            containers: [jupyter]
+        logs:
+          - timestamp: '2026-11-19T10:14:01Z'
+            pod: notebook-5d8f6c7b9-x2m4n
+            container: jupyter
+            text: '[I 10:14:01.123 ServerApp] Kernel started: python3'
+          - timestamp: '2026-11-19T10:14:05Z'
+            pod: notebook-5d8f6c7b9-x2m4n
+            container: jupyter
+            text: '[W 10:14:05.778 ServerApp] Notebook save delayed while storage is busy'
       - id: app-api-labs
         name: api
         namespace:
