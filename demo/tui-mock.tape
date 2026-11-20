@@ -9,19 +9,19 @@ Set FontSize 16
 Set Width 1440
 Set Height 900
 Set Padding 24
-Set Theme "Catppuccin Mocha"
+Set Theme { "name": "Darkubectl Purple", "black": "#171322", "red": "#FB7185", "green": "#4ADE80", "yellow": "#FBBF24", "blue": "#A78BFA", "magenta": "#B9A3FF", "cyan": "#9D9AD8", "white": "#E6E4EF", "brightBlack": "#3B354E", "brightRed": "#FDA4AF", "brightGreen": "#86EFAC", "brightYellow": "#FCD34D", "brightBlue": "#C4B5FD", "brightMagenta": "#DDD6FE", "brightCyan": "#C4B5FD", "brightWhite": "#FFFFFF", "background": "#100D18", "foreground": "#E6E4EF", "selection": "#37216A", "cursor": "#C4B5FD" }
 Set TypingSpeed 55ms
 Set PlaybackSpeed 1
 Set Margin 16
-Set MarginFill "#161B22"
+Set MarginFill "#100D18"
 Set BorderRadius 10
 Env TERM "xterm-256color"
 Env COLORTERM "truecolor"
 
 Hide
-Type "unset NO_COLOR; export TERM=xterm-256color COLORTERM=truecolor; clear" Enter
-Type "go build -o /tmp/darkubectl-mock . && /tmp/darkubectl-mock tui --mock-file demo/mock-profile.yaml" Enter
-Sleep 3s
+Type "unset NO_COLOR; export TERM=xterm-256color COLORTERM=truecolor; go build -o /tmp/darkubectl-mock . && clear && exec /tmp/darkubectl-mock tui --mock-file demo/mock-profile.yaml" Enter
+Wait+Screen@2m /hamravesh/
+Sleep 1s
 Show
 
 # Show available app actions, then inspect every detail view for the API app.
