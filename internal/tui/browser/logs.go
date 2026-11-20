@@ -21,6 +21,20 @@ import (
 )
 
 const (
+	logTargetPanelHorizontalInset = 6
+	logTargetPanelVerticalInset   = 14
+)
+
+const (
+	cycleLogPodValue2         = 2
+	formatLogPayloadValue2    = 2
+	formatLogfmtPayloadValue2 = 2
+	logPaneWidthValue2        = 2
+	logTargetModalValue2      = 2
+	logTargetModalValue8      = 8
+)
+
+const (
 	logDefaultTailSize = 100
 	logMinTailSize     = 50
 	logMaxTailSize     = 1000
@@ -92,14 +106,14 @@ func preferredLogContainer(pod appstate.Pod) string {
 		}
 	}
 	for _, container := range pod.Containers {
-		if container.Name == "main" {
+		if container.Name == defaultNameMain {
 			return container.Name
 		}
 	}
 	if len(pod.Containers) > 0 {
 		return pod.Containers[0].Name
 	}
-	return "main"
+	return defaultNameMain
 }
 
 func podHasContainer(pod appstate.Pod, name string) bool {
@@ -108,7 +122,7 @@ func podHasContainer(pod appstate.Pod, name string) bool {
 			return true
 		}
 	}
-	return name == "main" && len(pod.Containers) == 0
+	return name == defaultNameMain && len(pod.Containers) == 0
 }
 
 func (m *browser) selectedLogPod() (string, bool) {
@@ -140,7 +154,7 @@ func (m *browser) chooseLogTarget() tea.Cmd {
 }
 
 func (m *browser) cycleLogPod(delta int) tea.Cmd {
-	if len(m.podList) < 2 {
+	if len(m.podList) < cycleLogPodValue2 {
 		return nil
 	}
 	index := 0
@@ -239,13 +253,13 @@ func (m *browser) copyLogs() tea.Cmd {
 	}
 }
 
-func (m *browser) handleLogsCopied(msg logCopyResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleLogsCopied(msg logCopyResult) tea.Model {
 	if msg.err != nil {
-		m.logCopyStatus = "Clipboard unavailable"
-		return m, nil
+		m.logCopyStatus = messageClipboardUnavailable
+		return m
 	}
 	m.logCopyStatus = fmt.Sprintf("Copied %d entries", msg.count)
-	return m, nil
+	return m
 }
 
 func logClipboardText(entries []client.LogEntry, utc bool) string {
@@ -446,47 +460,71 @@ func (m *browser) logMatches() []int {
 }
 
 func (m *browser) logsPaneLines() []string {
-	lines := []string{}
 	if m.logPod == "" {
-		lines = append(lines, summaryField("Target", "waiting for pod snapshot"))
-		switch m.podsState.status {
-		case requestLoading, requestRefreshing:
-			lines = append(lines, summaryField("Pods", m.loadingMessage("loading…")))
-		case requestFailed, requestUnavailable:
-			message := "pod snapshot unavailable"
-			if m.podsState.err != nil {
-				message += " · " + safeText(m.podsState.err.Error())
-			}
-			lines = append(lines, paint(message+" · press r to retry", browserNumber, false))
-		case requestEmpty:
-			lines = append(lines, summaryField("Pods", "none reported for this app"))
-		default:
-			if m.logNotice != "" {
-				lines = append(lines, paint(safeText(m.logNotice), browserMuted, false))
-			}
-		}
-		return lines
+		return m.logTargetLines()
 	}
-	lines = append(lines, m.logMetadataLines()...)
+	lines := m.logMetadataLines()
 	if m.logCopyStatus != "" {
 		lines[len(lines)-1] += "  ·  " + paint(safeText(m.logCopyStatus), browserMuted, false)
 	}
-	if m.logSearchEditing {
-		lines = append(lines, "Search: "+safeText(m.logSearch)+"█")
-	} else if m.logSearch != "" {
-		matches := m.logMatches()
-		matchNumber := min(m.logMatch+1, max(1, len(matches)))
-		lines = append(lines, fmt.Sprintf("Search: %s   Match %d/%d", safeText(m.logSearch), matchNumber, len(matches)))
-	}
+	lines = m.appendLogSearchStatus(lines)
 	if m.logNotice != "" {
 		lines = append(lines, paint(safeText(m.logNotice), browserNumber, false))
 	}
-	if m.logState.status == requestUnavailable || m.logState.status == requestFailed || m.logState.status == requestStale {
-		if m.logState.err != nil {
-			lines = append(lines, paint(safeText(m.logState.err.Error()), browserNumber, false))
+	lines = m.appendLogRequestError(lines)
+	lines = m.appendLogEmptyState(lines)
+	lines = m.appendLogEntryLines(lines)
+	if m.logNewEntries > 0 {
+		lines = append(lines, paint(fmt.Sprintf("%d new entries", m.logNewEntries), browserBranch, true))
+	}
+	return lines
+}
+
+func (m *browser) logTargetLines() []string {
+	lines := []string{summaryField("Target", "waiting for pod snapshot")}
+	switch m.podsState.status {
+	case requestLoading, requestRefreshing:
+		lines = append(lines, summaryField("Pods", m.loadingMessage("loading…")))
+	case requestFailed, requestUnavailable:
+		message := "pod snapshot unavailable"
+		if m.podsState.err != nil {
+			message += " · " + safeText(m.podsState.err.Error())
+		}
+		lines = append(lines, paint(message+" · press r to retry", browserNumber, false))
+	case requestEmpty:
+		lines = append(lines, summaryField("Pods", "none reported for this app"))
+	default:
+		if m.logNotice != "" {
+			lines = append(lines, paint(safeText(m.logNotice), browserMuted, false))
 		}
 	}
-	lines = m.appendLogEmptyState(lines)
+	return lines
+}
+
+func (m *browser) appendLogSearchStatus(lines []string) []string {
+	if m.logSearchEditing {
+		return append(lines, "Search: "+safeText(m.logSearch)+"█")
+	}
+	if m.logSearch == "" {
+		return lines
+	}
+	matches := m.logMatches()
+	matchNumber := min(m.logMatch+1, max(1, len(matches)))
+	return append(lines, fmt.Sprintf("Search: %s   Match %d/%d", safeText(m.logSearch), matchNumber, len(matches)))
+}
+
+func (m *browser) appendLogRequestError(lines []string) []string {
+	status := m.logState.status
+	if status != requestUnavailable && status != requestFailed && status != requestStale {
+		return lines
+	}
+	if m.logState.err == nil {
+		return lines
+	}
+	return append(lines, paint(safeText(m.logState.err.Error()), browserNumber, false))
+}
+
+func (m *browser) appendLogEntryLines(lines []string) []string {
 	for _, entry := range m.logEntries {
 		level, parts := formatLogPayload(strings.ReplaceAll(entry.Text, "\r", ""))
 		stamp := ansi.Truncate(formatLogTimestamp(entry.Timestamp, m.logUTC), logTimestampWidth, "…")
@@ -506,9 +544,6 @@ func (m *browser) logsPaneLines() []string {
 				}
 			}
 		}
-	}
-	if m.logNewEntries > 0 {
-		lines = append(lines, paint(fmt.Sprintf("%d new entries", m.logNewEntries), browserBranch, true))
 	}
 	return lines
 }
@@ -546,7 +581,7 @@ func (m *browser) logMetadataLines() []string {
 		logField("CONTAINER", safeText(m.logContainer), browserValue)),
 		packLogFields(m.logPaneWidth(),
 			logField("MODE", mode, modeColor), logField("FOLLOW", follow, followColor),
-			logField("TAIL", fmt.Sprintf("%d", m.currentLogTail()), browserValue),
+			logField("TAIL", strconv.Itoa(m.currentLogTail()), browserValue),
 			logField("TIME", logClockLabel(m.logUTC), browserAccent),
 			logField("WRAP", wrap, wrapColor))...)
 }
@@ -567,7 +602,7 @@ func (m *browser) appendLogEmptyState(lines []string) []string {
 
 func (m *browser) logPaneWidth() int {
 	if m.logMaximized {
-		return max(1, m.width-2)
+		return max(1, m.width-logPaneWidthValue2)
 	}
 	_, width, _ := m.paneWidths()
 	return max(1, width-logPanePadding)
@@ -581,7 +616,7 @@ func formatLogTimestamp(value string, utc bool) string {
 	if utc {
 		return stamp.UTC().Format("2006-01-02 15:04:05.000Z")
 	}
-	return stamp.Local().Format("2006-01-02 15:04:05.000 MST")
+	return formatLocalWallTime(stamp, "2006-01-02 15:04:05.000 MST")
 }
 
 func logClockLabel(utc bool) string {
@@ -605,7 +640,7 @@ func formatLogPayload(value string) (string, []string) {
 		_ = json.Unmarshal(raw, &nested)
 	}
 	for key, raw := range root {
-		if key != "@timestamp" && key != "timestamp" && key != "log" {
+		if key != "@timestamp" && key != labelTimestamp && key != "log" {
 			fields[key] = raw
 		}
 	}
@@ -617,7 +652,7 @@ func formatLogPayload(value string) (string, []string) {
 	level := takeLogField(fields, "level", "severity", "log.level")
 	logger := takeLogField(fields, "logger", "logger_name", "name")
 	message := takeLogField(fields, "message", "msg", "event")
-	lines := make([]string, 0, len(fields)+2)
+	lines := make([]string, 0, len(fields)+formatLogPayloadValue2)
 	if level != "" || logger != "" {
 		lines = append(lines, strings.TrimSpace(strings.ToUpper(level)+"  "+logger))
 	}
@@ -650,14 +685,15 @@ func formatLogfmtPayload(value string) (string, []string, bool) {
 		return "", nil, false
 	}
 
-	lines := make([]string, 0, len(fields)+2)
+	lines := make([]string, 0, len(fields)+formatLogfmtPayloadValue2)
 	if level != "" || caller != "" {
 		lines = append(lines, strings.TrimSpace(strings.ToUpper(level)+"  "+caller))
 	}
 	if message != "" {
 		lines = append(lines, message)
 	}
-	for _, key := range []string{"level", "severity", "msg", "message", "event", "caller", "logger", "logger_name", "ts", "timestamp", "time"} {
+	for _, key := range []string{"level", "severity", "msg", "message", "event", "caller", "logger", "logger_name", "ts", "timestamp",
+		"time"} {
 		delete(fields, key)
 	}
 	keys := make([]string, 0, len(fields))
@@ -674,60 +710,77 @@ func formatLogfmtPayload(value string) (string, []string, bool) {
 func parseLogfmtFields(value string) (map[string]string, bool) {
 	fields := make(map[string]string)
 	for i := 0; i < len(value); {
-		for i < len(value) && (value[i] == ' ' || value[i] == '\t' || value[i] == '\r' || value[i] == '\n') {
-			i++
-		}
+		i = skipLogfmtWhitespace(value, i)
 		if i == len(value) {
 			break
 		}
-		keyStart := i
-		for i < len(value) && value[i] != '=' && value[i] != ' ' && value[i] != '\t' && value[i] != '\r' && value[i] != '\n' {
-			i++
-		}
-		if i == keyStart || i == len(value) || value[i] != '=' {
+		key, next, ok := parseLogfmtKey(value, i)
+		if !ok {
 			return nil, false
 		}
-		key := value[keyStart:i]
-		i++
-		if i < len(value) && value[i] == '"' {
-			start := i
-			i++
-			escaped := false
-			for i < len(value) {
-				if escaped {
-					escaped = false
-					i++
-					continue
-				}
-				if value[i] == '\\' {
-					escaped = true
-					i++
-					continue
-				}
-				if value[i] == '"' {
-					i++
-					break
-				}
-				i++
-			}
-			quoted := value[start:i]
-			decoded, err := strconv.Unquote(quoted)
-			if err != nil {
-				return nil, false
-			}
-			fields[key] = decoded
-			if i < len(value) && value[i] != ' ' && value[i] != '\t' && value[i] != '\r' && value[i] != '\n' {
-				return nil, false
-			}
-			continue
+		parsed, next, ok := parseLogfmtValue(value, next)
+		if !ok {
+			return nil, false
 		}
-		start := i
-		for i < len(value) && value[i] != ' ' && value[i] != '\t' && value[i] != '\r' && value[i] != '\n' {
-			i++
-		}
-		fields[key] = value[start:i]
+		fields[key] = parsed
+		i = next
 	}
 	return fields, len(fields) > 0
+}
+
+func skipLogfmtWhitespace(value string, index int) int {
+	for index < len(value) && isLogfmtWhitespace(value[index]) {
+		index++
+	}
+	return index
+}
+
+func isLogfmtWhitespace(char byte) bool {
+	return char == ' ' || char == '\t' || char == '\r' || char == '\n'
+}
+
+func parseLogfmtKey(value string, start int) (string, int, bool) {
+	index := start
+	for index < len(value) && value[index] != '=' && !isLogfmtWhitespace(value[index]) {
+		index++
+	}
+	if index == start || index == len(value) || value[index] != '=' {
+		return "", start, false
+	}
+	return value[start:index], index + 1, true
+}
+
+func parseLogfmtValue(value string, start int) (string, int, bool) {
+	if start < len(value) && value[start] == '"' {
+		return parseQuotedLogfmtValue(value, start)
+	}
+	index := start
+	for index < len(value) && !isLogfmtWhitespace(value[index]) {
+		index++
+	}
+	return value[start:index], index, true
+}
+
+func parseQuotedLogfmtValue(value string, start int) (string, int, bool) {
+	index := start + 1
+	escaped := false
+	for index < len(value) {
+		char := value[index]
+		index++
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		if char == '"' {
+			decoded, err := strconv.Unquote(value[start:index])
+			return decoded, index, err == nil && (index == len(value) || isLogfmtWhitespace(value[index]))
+		}
+	}
+	return "", start, false
 }
 
 func firstLogfmtField(fields map[string]string, keys ...string) string {
@@ -909,8 +962,7 @@ func packLogFields(width int, fields ...string) []string {
 			line = candidate
 		}
 		if ansi.StringWidth(line) > width {
-			line = ansi.Truncate(line, width, "…")
-			lines = append(lines, line)
+			lines = append(lines, ansi.Truncate(line, width, "…"))
 			line = ""
 		}
 	}
@@ -925,11 +977,11 @@ func (m *browser) logTargetModal(lines []string) []string {
 		return lines
 	}
 	panelWidth := min(logPickerMaxWidth, m.width-logModalMargin)
-	innerWidth := max(2, panelWidth-6)
+	innerWidth := max(logTargetModalValue2, panelWidth-logTargetPanelHorizontalInset)
 	gap := 3
-	podWidth := max(1, (innerWidth-gap)/2)
+	podWidth := max(1, (innerWidth-gap)/logTargetModalValue2)
 	containerWidth := max(1, innerWidth-podWidth-gap)
-	capacity := max(1, min(8, m.height-14))
+	capacity := max(1, min(logTargetModalValue8, m.height-logTargetPanelVerticalInset))
 	podStart := max(0, min(m.logPodCursor-capacity+1, len(m.podList)-capacity))
 	podEnd := min(len(m.podList), podStart+capacity)
 	containers := []string{"main · CLI default"}
@@ -956,32 +1008,18 @@ func (m *browser) logTargetModal(lines []string) []string {
 		paint(strings.Repeat("─", innerWidth), browserBorder, false),
 		pickerColumns(leftHeader, rightHeader, podWidth, containerWidth, gap),
 	}
-	for row := 0; row < capacity; row++ {
+	for row := range capacity {
 		podIndex, containerIndex := podStart+row, containerStart+row
-		podLine, containerLine := "", ""
-		if podIndex < podEnd {
-			pod := m.podList[podIndex]
-			status := pod.State
-			if status == "" {
-				status = pod.Phase
-			}
-			if status == "" {
-				status = logUnknownState
-			}
-			podLine = safeText(pod.Name) + " · " + safeText(status)
-			podLine = pickerRow(podLine, podWidth, podIndex == m.logPodCursor && m.logPickerColumn == 0)
-		}
-		if containerIndex < containerEnd {
-			containerLine = pickerRow(containers[containerIndex], containerWidth,
-				containerIndex == m.logContainerCursor && m.logPickerColumn == 1)
-		}
+		podLine := m.logTargetPodLine(podIndex, podEnd, podWidth)
+		containerLine := m.logTargetContainerLine(containerIndex, containerEnd, containers, containerWidth)
 		content = append(content, pickerColumns(podLine, containerLine, podWidth, containerWidth, gap))
 	}
 	if podStart > 0 || podEnd < len(m.podList) {
 		content = append(content, paint(fmt.Sprintf("Pods %d–%d of %d", podStart+1, podEnd, len(m.podList)), browserMuted, false))
 	}
 	if containerStart > 0 || containerEnd < len(containers) {
-		content = append(content, paint(fmt.Sprintf("Containers %d–%d of %d", containerStart+1, containerEnd, len(containers)), browserMuted, false))
+		content = append(content, paint(fmt.Sprintf("Containers %d–%d of %d", containerStart+1, containerEnd, len(containers)),
+			browserMuted, false))
 	}
 	panel := tenantPanelStyle().Width(panelWidth).Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
@@ -996,6 +1034,29 @@ func (m *browser) logTargetModal(lines []string) []string {
 		lines[y] = ansi.Cut(base, 0, startX) + line + ansi.Cut(base, startX+panelWidth, m.width)
 	}
 	return lines
+}
+
+func (m *browser) logTargetPodLine(index, end, width int) string {
+	if index >= end {
+		return ""
+	}
+	pod := m.podList[index]
+	status := pod.State
+	if status == "" {
+		status = pod.Phase
+	}
+	if status == "" {
+		status = logUnknownState
+	}
+	line := safeText(pod.Name) + " · " + safeText(status)
+	return pickerRow(line, width, index == m.logPodCursor && m.logPickerColumn == 0)
+}
+
+func (m *browser) logTargetContainerLine(index, end int, containers []string, width int) string {
+	if index >= end {
+		return ""
+	}
+	return pickerRow(containers[index], width, index == m.logContainerCursor && m.logPickerColumn == 1)
 }
 
 func pickerColumns(left, right string, leftWidth, rightWidth, gap int) string {

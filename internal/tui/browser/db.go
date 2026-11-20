@@ -16,6 +16,22 @@ import (
 	"github.com/rahacloud/darkubectl/internal/client"
 )
 
+const (
+	databaseConnectionLinesValue4 = 4
+	handleDatabaseMouseValue2     = 2
+)
+
+const (
+	databaseCPUValue1000           = 1000
+	databaseConnectionLinesValue18 = 18
+	databasePaneLinesValue2        = 2
+	handleDatabaseKeyValue8        = 8
+	databaseRowNameStatusGap       = 2
+	databaseRowMetaIndent          = 3
+	handleDatabaseMouseValue3      = 3
+	handleDatabaseMouseValue4      = 4
+)
+
 type databasesResult struct {
 	meta      requestMeta
 	databases []client.Database
@@ -23,14 +39,15 @@ type databasesResult struct {
 }
 
 func (m *browser) loadDatabases(force bool) tea.Cmd {
-	if m.page != pageDB || (!force && (m.databaseState.active() || m.databaseState.status == requestReady || m.databaseState.status == requestEmpty || m.databaseState.status == requestUnavailable)) {
+	if m.page != pageDB || (!force && (m.databaseState.active() || m.databaseState.status == requestReady ||
+		m.databaseState.status == requestEmpty || m.databaseState.status == requestUnavailable)) {
 		return nil
 	}
 	meta, ctx := m.startRequest(requestDatabases, m.tenant, "", m.tenantGeneration)
 	m.databaseState.begin(meta, m.requestTime())
 	if m.listDatabases == nil {
 		m.finishRequest(requestDatabases, meta)
-		m.databaseState.unavailable(fmt.Errorf("database listing is unavailable"))
+		m.databaseState.unavailable(errDatabaseListingIsUnavailable)
 		return nil
 	}
 	return func() tea.Msg {
@@ -85,7 +102,7 @@ func (m *browser) loadSelectedDatabaseDetail(force bool) tea.Cmd {
 	}
 	if m.getDatabase == nil {
 		m.databaseDetailTarget = db.ID
-		m.databaseDetailState.unavailable(fmt.Errorf("database connection details are unavailable"))
+		m.databaseDetailState.unavailable(errDatabaseConnectionDetailsAreUnavailable)
 		return nil
 	}
 	meta, ctx := m.startRequest(requestDatabaseDetail, m.tenant, db.ID, m.tenantGeneration)
@@ -98,23 +115,24 @@ func (m *browser) loadSelectedDatabaseDetail(force bool) tea.Cmd {
 	}
 }
 
-func (m *browser) handleDatabaseDetailResult(msg databaseDetailResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleDatabaseDetailResult(msg databaseDetailResult) tea.Model {
 	m.finishRequest(requestDatabaseDetail, msg.meta)
 	db := m.selectedDatabase()
-	if !m.databaseDetailState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration || db == nil || db.ID != msg.meta.appID {
-		return m, nil
+	if !m.databaseDetailState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration ||
+		db == nil || db.ID != msg.meta.appID {
+		return m
 	}
 	if msg.err != nil || msg.detail == nil {
 		if msg.err == nil {
-			msg.err = fmt.Errorf("empty database detail response")
+			msg.err = errEmptyDatabaseDetailResponse
 		}
 		m.databaseDetailState.fail(msg.err)
 		m.databaseDetail = nil
-		return m, nil
+		return m
 	}
 	m.databaseDetail = msg.detail
 	m.databaseDetailState.succeed(false, m.requestTime())
-	return m, nil
+	return m
 }
 
 func (m *browser) cancelDatabaseDetailRequests() {
@@ -179,7 +197,8 @@ func (m *browser) sortDatabases() {
 	}
 	sort.SliceStable(m.databases, func(i, j int) bool {
 		cmp := lessValue(m.databases[i], m.databases[j])
-		if m.databaseSortDescending && cmp != 0 && strings.TrimSpace(databaseSortValue(m.databases[i], m.databaseSortBy)) != "" && strings.TrimSpace(databaseSortValue(m.databases[j], m.databaseSortBy)) != "" {
+		if m.databaseSortDescending && cmp != 0 && strings.TrimSpace(databaseSortValue(m.databases[i], m.databaseSortBy)) != "" &&
+			strings.TrimSpace(databaseSortValue(m.databases[j], m.databaseSortBy)) != "" {
 			return cmp > 0
 		}
 		return cmp < 0
@@ -239,7 +258,8 @@ func (m *browser) databaseIdentity(db client.Database) string {
 			return "id:" + db.ID
 		}
 	}
-	return fmt.Sprintf("fields:%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s", db.Name, db.Engine, db.Version, db.Plan, db.Status.Role, db.NamespaceID, db.ClusterID, db.Status.Status, db.Status.Detail)
+	return fmt.Sprintf("fields:%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s", db.Name, db.Engine, db.Version, db.Plan,
+		db.Status.Role, db.NamespaceID, db.ClusterID, db.Status.Status, db.Status.Detail)
 }
 
 func (m *browser) selectedDatabase() *client.Database {
@@ -257,47 +277,61 @@ func (m *browser) selectedDatabase() *client.Database {
 
 func (m *browser) databasePaneLines(height int) []string {
 	rows := m.visibleDatabases()
+	if len(m.databases) == 0 {
+		return fitPaneLines(m.emptyDatabasePaneLines(), height)
+	}
+	if len(rows) == 0 {
+		return fitPaneLines(m.filteredDatabasePaneLines(), height)
+	}
 	lines := []string{}
-	if m.databaseState.active() && len(m.databases) == 0 {
-		lines = append(lines, m.loadingMessage("Managed databases"))
-	} else if m.databaseState.err != nil && len(m.databases) == 0 {
-		lines = append(lines, paint("Could not load databases: "+safeText(m.databaseState.err.Error()), browserDanger, false), paint("Press r to retry", browserMuted, false))
-	} else if m.databaseState.status == requestUnavailable {
-		lines = append(lines, paint("Database listing is unavailable in this mode.", browserMuted, false))
-	} else if len(m.databases) == 0 {
-		label := "No managed databases in this tenant."
-		if strings.HasPrefix(m.mode, "MOCK") {
-			label = "No managed databases in this mock profile."
+	if m.databaseState.active() {
+		lines = append(lines, paint("Refreshing databases "+m.spinnerGlyph(), browserBranch, true))
+	}
+	if m.databaseState.err != nil {
+		lines = append(lines, paint("Stale · refresh failed: "+safeText(m.databaseState.err.Error()), browserNumber, false))
+	}
+	for i, db := range rows {
+		statusGlyph, statusColor := databaseStatusGlyph(db.Status.Status)
+		name := "▤ " + safeText(db.Name)
+		line := name + strings.Repeat(" ", max(1,
+			m.paneWidthsInt()-ansi.StringWidth(name)-databaseRowNameStatusGap)) + paint(statusGlyph, statusColor, true)
+		meta := safeText(strings.TrimSpace(db.Engine+" "+db.Version)) + fmt.Sprintf(" · %d nodes", db.NumNodes)
+		if i == m.databaseCursor {
+			line = selectedRowStyle().Width(m.paneWidthsInt()).Render(line)
 		}
-		lines = append(lines, paint(label, browserMuted, false))
-	} else if len(rows) == 0 {
-		if m.databaseState.err != nil {
-			lines = append(lines, paint("Stale · refresh failed: "+safeText(m.databaseState.err.Error()), browserNumber, false))
-		}
-		lines = append(lines, paint("No databases match this filter.", browserMuted, false))
-	} else {
-		if m.databaseState.active() {
-			lines = append(lines, paint("Refreshing databases "+m.spinnerGlyph(), browserBranch, true))
-		}
-		if m.databaseState.err != nil {
-			lines = append(lines, paint("Stale · refresh failed: "+safeText(m.databaseState.err.Error()), browserNumber, false))
-		}
-		for i, db := range rows {
-			statusGlyph, statusColor := databaseStatusGlyph(db.Status.Status)
-			name := "▤ " + safeText(db.Name)
-			line := name + strings.Repeat(" ", max(1, m.paneWidthsInt()-ansi.StringWidth(name)-2)) + paint(statusGlyph, statusColor, true)
-			meta := safeText(strings.TrimSpace(db.Engine+" "+db.Version)) + fmt.Sprintf(" · %d nodes", db.NumNodes)
-			if i == m.databaseCursor {
-				line = selectedRowStyle().Width(m.paneWidthsInt()).Render(line)
-			}
-			lines = append(lines, line, paint("   "+ansi.Truncate(meta, max(1, m.paneWidthsInt()-3), "…"), browserMuted, false))
-		}
+		lines = append(lines, line, paint("   "+ansi.Truncate(meta, max(1, m.paneWidthsInt()-databaseRowMetaIndent), "…"), browserMuted, false))
 	}
 	if len(lines) > height {
-		start := max(0, min(m.databaseCursor*2, len(lines)-height))
+		start := max(0, min(m.databaseCursor*databasePaneLinesValue2, len(lines)-height))
 		lines = lines[start:min(len(lines), start+height)]
 	}
 	return fitPaneLines(lines, height)
+}
+
+func (m *browser) emptyDatabasePaneLines() []string {
+	if m.databaseState.active() {
+		return []string{m.loadingMessage("Managed databases")}
+	}
+	if m.databaseState.err != nil {
+		return []string{paint("Could not load databases: "+safeText(m.databaseState.err.Error()), browserDanger, false),
+			paint("Press r to retry", browserMuted, false)}
+	}
+	if m.databaseState.status == requestUnavailable {
+		return []string{paint("Database listing is unavailable in this mode.", browserMuted, false)}
+	}
+	label := "No managed databases in this tenant."
+	if strings.HasPrefix(m.mode, "MOCK") {
+		label = "No managed databases in this mock profile."
+	}
+	return []string{paint(label, browserMuted, false)}
+}
+
+func (m *browser) filteredDatabasePaneLines() []string {
+	lines := []string{}
+	if m.databaseState.err != nil {
+		lines = append(lines, paint("Stale · refresh failed: "+safeText(m.databaseState.err.Error()), browserNumber, false))
+	}
+	return append(lines, paint("No databases match this filter.", browserMuted, false))
 }
 
 func databaseStatusGlyph(value string) (string, color.Color) {
@@ -306,7 +340,7 @@ func databaseStatusGlyph(value string) (string, color.Color) {
 		return "●", browserSuccess
 	case "failed", "error", "unhealthy", "crashed":
 		return "✖", browserDanger
-	case "pending", "creating", "updating", "restarting", "warning", "degraded":
+	case "pending", "creating", "updating", "restarting", statusWarning, "degraded":
 		return "▲", browserNumber
 	default:
 		return "?", browserMuted
@@ -326,7 +360,8 @@ func (m *browser) databaseDetailLines(height int) []string {
 		lines = append(lines, paint("Refreshing snapshot "+m.spinnerGlyph(), browserBranch, true), "")
 	}
 	if m.databaseState.err != nil {
-		lines = append(lines, paint("Stale · refresh failed: "+safeText(m.databaseState.err.Error()), browserNumber, false), staleRequestTime("Databases", m.databaseState), "")
+		lines = append(lines, paint("Stale · refresh failed: "+safeText(m.databaseState.err.Error()), browserNumber, false),
+			staleRequestTime("Databases", m.databaseState), "")
 	}
 	lines = append(lines, paint("▤ "+safeText(db.Name), browserAccent, true), "")
 	add := func(key, value string) {
@@ -337,7 +372,8 @@ func (m *browser) databaseDetailLines(height int) []string {
 	}
 	add("Engine", strings.TrimSpace(db.Engine+" "+db.Version))
 	glyph, color := databaseStatusGlyph(db.Status.Status)
-	lines = append(lines, paint(fmt.Sprintf("%-13s", "Status"), browserMuted, false)+paint(glyph+" "+emptyValue(db.Status.Status), color, true))
+	lines = append(lines, paint(fmt.Sprintf("%-13s", "Status"), browserMuted, false)+paint(glyph+" "+emptyValue(db.Status.Status),
+		color, true))
 	add("Detail", db.Status.Detail)
 	add("Role", db.Status.Role)
 	add("Plan", db.Plan)
@@ -349,13 +385,13 @@ func (m *browser) databaseDetailLines(height int) []string {
 	for _, node := range db.Nodes {
 		ng, nc := databaseStatusGlyph(node.Status)
 		lines = append(lines, paint(ng+" "+safeText(emptyValue(node.Name)), nc, true))
-		lines = append(lines, paint(fmt.Sprintf("  CPU %-8s RAM %-8s Disk %-8s", databaseCPU(node.CPU), databaseRAM(node.RAM), databaseDisk(node.Disk)), browserMuted, false))
+		lines = append(lines, paint(fmt.Sprintf("  CPU %-8s RAM %-8s Disk %-8s", databaseCPU(node.CPU), databaseRAM(node.RAM),
+			databaseDisk(node.Disk)), browserMuted, false))
 	}
 	lines = append(lines, "")
 	add("Database ID", db.ID)
-	add("Namespace ID", fmt.Sprint(db.NamespaceID))
-	add("Cluster ID", fmt.Sprint(db.ClusterID))
-	lines = append(lines, "")
+	add("Namespace ID", strconv.Itoa(db.NamespaceID))
+	add("Cluster ID", strconv.Itoa(db.ClusterID))
 	lines = append(lines, m.databaseConnectionLines()...)
 	if len(lines) > height {
 		start := max(0, min(m.databaseScroll, len(lines)-height))
@@ -366,7 +402,7 @@ func (m *browser) databaseDetailLines(height int) []string {
 
 func (m *browser) databaseConnectionLines() []string {
 	_, detailWidth, _ := m.paneWidths()
-	width := max(18, detailWidth-4)
+	width := max(databaseConnectionLinesValue18, detailWidth-databaseConnectionLinesValue4)
 	lines := []string{paint("CONNECTION", browserAccent, true)}
 	if databaseHasStandby(m.databaseDetail) {
 		role := "Master"
@@ -399,9 +435,7 @@ func (m *browser) databaseConnectionLines() []string {
 		lines = append(lines, paint("Password:", browserMuted, false)+"Retrieve it in Console (TOTP required).")
 		lines = append(lines, paint("Please go to:", browserMuted, false))
 		link := lipgloss.NewStyle().Underline(true).Hyperlink(consoleURL).Render(consoleURL)
-		for _, part := range wrapRegistryText(link, width) {
-			lines = append(lines, part)
-		}
+		lines = append(lines, wrapRegistryText(link, width)...)
 	}
 	if external != nil {
 		lines = append(lines, paint("External connection string:", browserMuted, false))
@@ -430,20 +464,15 @@ func (m *browser) databaseConnectionsForRole() (*client.DatabaseConnection, *cli
 	if !databaseConnectionPresent(internal) {
 		internal = nil
 	}
+	externalFallback, internalFallback := m.databaseDetail.StandbyConnection, m.databaseDetail.PrivateStandbyConnection
 	if m.databaseConnectionRole == dbConnectionMaster {
-		if external == nil && databaseConnectionPresent(m.databaseDetail.Connection) {
-			external = m.databaseDetail.Connection
-		}
-		if internal == nil && databaseConnectionPresent(m.databaseDetail.PrivateConnection) {
-			internal = m.databaseDetail.PrivateConnection
-		}
-	} else {
-		if external == nil && databaseConnectionPresent(m.databaseDetail.StandbyConnection) {
-			external = m.databaseDetail.StandbyConnection
-		}
-		if internal == nil && databaseConnectionPresent(m.databaseDetail.PrivateStandbyConnection) {
-			internal = m.databaseDetail.PrivateStandbyConnection
-		}
+		externalFallback, internalFallback = m.databaseDetail.Connection, m.databaseDetail.PrivateConnection
+	}
+	if external == nil && databaseConnectionPresent(externalFallback) {
+		external = externalFallback
+	}
+	if internal == nil && databaseConnectionPresent(internalFallback) {
+		internal = internalFallback
 	}
 	return external, internal
 }
@@ -466,21 +495,24 @@ func appendDatabaseConnectionFields(lines []string, connection *client.DatabaseC
 }
 
 func databaseConnectionPresent(connection *client.DatabaseConnection) bool {
-	return connection != nil && (connection.Host != "" || connection.Username != "" || connection.Password != "" || connection.Database != "" || connection.Port != 0)
+	return connection != nil && (connection.Host != "" || connection.Username != "" || connection.Password != "" ||
+		connection.Database != "" || connection.Port != 0)
 }
 
 func databaseHasStandby(detail *client.DatabaseDetail) bool {
 	if detail == nil {
 		return false
 	}
-	return databaseConnectionPresent(detail.Connections.Standby.External) || databaseConnectionPresent(detail.Connections.Standby.Private) || databaseConnectionPresent(detail.StandbyConnection) || databaseConnectionPresent(detail.PrivateStandbyConnection)
+	return databaseConnectionPresent(detail.Connections.Standby.External) ||
+		databaseConnectionPresent(detail.Connections.Standby.Private) || databaseConnectionPresent(detail.StandbyConnection) ||
+		databaseConnectionPresent(detail.PrivateStandbyConnection)
 }
 
 func databaseConnectionURI(db *client.Database, connection *client.DatabaseConnection, replacePassword bool) string {
 	if connection == nil {
 		return ""
 	}
-	scheme := "database"
+	scheme := databaseScheme
 	if db != nil {
 		switch strings.ToLower(db.Engine) {
 		case "postgres", "postgresql":
@@ -537,13 +569,13 @@ func (m *browser) copyDatabaseConnection() tea.Cmd {
 
 func emptyValue(value string) string {
 	if strings.TrimSpace(value) == "" {
-		return "Unknown"
+		return logUnknownState
 	}
 	return value
 }
 func databaseCPU(value int) string {
 	if value%1000 == 0 {
-		return fmt.Sprintf("%d cores", value/1000)
+		return fmt.Sprintf("%d cores", value/databaseCPUValue1000)
 	}
 	return fmt.Sprintf("%dm", value)
 }
@@ -553,26 +585,10 @@ func databaseDisk(value int) string { return fmt.Sprintf("%d GB", value) }
 func (m *browser) handleDatabaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.databaseFilterEditing {
-		switch key {
-		case "enter":
-			m.databaseFilterEditing = false
-		case "esc":
-			m.databaseFilter = m.databaseFilterBefore
-			m.databaseFilterEditing = false
-		case "backspace":
-			r := []rune(m.databaseFilter)
-			if len(r) > 0 {
-				m.databaseFilter = string(r[:len(r)-1])
-			}
-		case "ctrl+u":
-			m.databaseFilter = ""
-		default:
-			if msg.Text != "" {
-				m.databaseFilter += safeText(msg.Text)
-			}
-		}
-		m.databaseCursor = 0
-		return m, m.updateDatabaseSelection()
+		return m.handleDatabaseFilterEdit(msg)
+	}
+	if cmd, handled := m.handleDatabaseScrollKey(key); handled {
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	switch key {
@@ -582,68 +598,31 @@ func (m *browser) handleDatabaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.databaseFilterBefore = m.databaseFilter
 		m.databaseFilterEditing = true
 		return m, nil
-	case "up", "k":
-		if m.detail {
-			m.databaseScroll = max(0, m.databaseScroll-1)
-		} else {
-			cmd = m.moveDatabaseSelection(-1)
-		}
-	case "down", "j":
-		if m.detail {
-			m.databaseScroll++
-		} else {
-			cmd = m.moveDatabaseSelection(1)
-		}
-	case "home", "g":
-		if m.detail {
-			m.databaseScroll = 0
-		} else {
-			m.databaseCursor = 0
-			cmd = m.updateDatabaseSelection()
-		}
-	case "end", "G":
-		if m.detail {
-			m.databaseScroll = len(m.databaseDetailLines(m.height))
-		} else {
-			m.databaseCursor = max(0, len(m.visibleDatabases())-1)
-			cmd = m.updateDatabaseSelection()
-		}
-	case "pgup":
-		if m.detail {
-			m.databaseScroll = max(0, m.databaseScroll-max(1, m.height-8))
-		} else {
-			cmd = m.moveDatabaseSelection(-max(1, m.height-8))
-		}
-	case "pgdown":
-		if m.detail {
-			m.databaseScroll += max(1, m.height-8)
-		} else {
-			cmd = m.moveDatabaseSelection(max(1, m.height-8))
-		}
 	case "s":
 		m.sorting = true
 		m.sortChoice = int(m.databaseSortBy)
 		m.sortDescending = m.databaseSortDescending
-	case "esc":
-		if m.detail {
+	case browserKeyEscape:
+		switch {
+		case m.detail:
 			m.detail = false
-		} else if m.databaseFilter != "" {
+		case m.databaseFilter != "":
 			m.databaseFilter = ""
 			m.databaseCursor = 0
 			cmd = m.updateDatabaseSelection()
-		} else {
+		default:
 			m.page = pageApps
 			m.contextFocused = false
 			m.resetDatabaseDetail()
 		}
-	case "enter":
+	case keyEnter:
 		m.detail = !m.detail
 		m.databaseScroll = 0
-	case "left", "h":
+	case keyLeft, "h":
 		if m.detail {
 			m.detail = false
 		}
-	case "right", "l":
+	case keyRight, "l":
 		if !m.detail {
 			m.detail = true
 			m.databaseScroll = 0
@@ -664,6 +643,80 @@ func (m *browser) handleDatabaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *browser) handleDatabaseFilterEdit(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEnter:
+		m.databaseFilterEditing = false
+	case browserKeyEscape:
+		m.databaseFilter = m.databaseFilterBefore
+		m.databaseFilterEditing = false
+	case keyBackspace:
+		runes := []rune(m.databaseFilter)
+		if len(runes) > 0 {
+			m.databaseFilter = string(runes[:len(runes)-1])
+		}
+	case keyCtrlU:
+		m.databaseFilter = ""
+	default:
+		if msg.Text != "" {
+			m.databaseFilter += safeText(msg.Text)
+		}
+	}
+	m.databaseCursor = 0
+	return m, m.updateDatabaseSelection()
+}
+
+func (m *browser) handleDatabaseScrollKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "up", "k":
+		if m.detail {
+			m.databaseScroll = max(0, m.databaseScroll-1)
+			return nil, true
+		}
+		return m.moveDatabaseSelection(-1), true
+	case keyDown, "j":
+		if m.detail {
+			m.databaseScroll++
+			return nil, true
+		}
+		return m.moveDatabaseSelection(1), true
+	case inputKeyHome, "g":
+		if m.detail {
+			m.databaseScroll = 0
+			return nil, true
+		}
+		m.databaseCursor = 0
+		return m.updateDatabaseSelection(), true
+	case inputKeyEnd, "G":
+		if m.detail {
+			m.databaseScroll = len(m.databaseDetailLines(m.height))
+		} else {
+			m.databaseCursor = max(0, len(m.visibleDatabases())-1)
+		}
+		return nil, true
+	case inputKeyPgUp, inputKeyPgDown:
+		return m.handleDatabasePageScroll(key), true
+	default:
+		return nil, false
+	}
+}
+
+func (m *browser) handleDatabasePageScroll(key string) tea.Cmd {
+	step := max(1, m.height-handleDatabaseKeyValue8)
+	if m.detail {
+		if key == inputKeyPgUp {
+			m.databaseScroll = max(0, m.databaseScroll-step)
+		} else {
+			m.databaseScroll += step
+		}
+		return nil
+	}
+	if key == inputKeyPgUp {
+		step = -step
+	}
+	return m.moveDatabaseSelection(step)
+}
+
 func (m *browser) handleDatabaseMouse(msg tea.MouseClickMsg) tea.Cmd {
 	bodyY := m.browserBodyY()
 	if msg.Y < bodyY {
@@ -672,7 +725,7 @@ func (m *browser) handleDatabaseMouse(msg tea.MouseClickMsg) tea.Cmd {
 	appsWidth, summaryWidth, contextWidth := m.paneWidths()
 	if msg.X < contextWidth+2 {
 		bodyHeight := max(1, m.height-bodyY-browserFooterHeight-1)
-		tenantHeight := max(4, (bodyHeight-1)/2)
+		tenantHeight := max(handleDatabaseMouseValue4, (bodyHeight-1)/handleDatabaseMouseValue2)
 		if msg.Y >= bodyY+tenantHeight+1 {
 			row := msg.Y - (bodyY + tenantHeight + 1) + 1
 			if row >= 1 && row <= 6 {
@@ -687,11 +740,11 @@ func (m *browser) handleDatabaseMouse(msg tea.MouseClickMsg) tea.Cmd {
 	if m.width < 100 && m.detail {
 		return nil
 	}
-	listLeft := contextWidth + 3
-	listRight := listLeft + appsWidth + 2
+	listLeft := contextWidth + handleDatabaseMouseValue3
+	listRight := listLeft + appsWidth + handleDatabaseMouseValue2
 	if msg.X >= listLeft && msg.X < listRight {
 		rows := m.visibleDatabases()
-		row := (msg.Y - bodyY - 1) / 2
+		row := (msg.Y - bodyY - 1) / handleDatabaseMouseValue2
 		if row >= 0 && row < len(rows) {
 			m.databaseCursor = row
 			m.contextFocused = false

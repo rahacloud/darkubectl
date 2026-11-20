@@ -18,6 +18,19 @@ import (
 )
 
 const (
+	boundedBuildErrorValue512    = 512
+	boundedErrorTextValue512     = 512
+	buildArgsValue2              = 2
+	buildDetailStickyLinesValue7 = 7
+	buildListPrefixLinesValue2   = 2
+	buildsPaneLinesValue2        = 2
+	buildsPaneLinesValue5        = 5
+	cicdDarkubeInfoValue7        = 7
+	moveBuildSelectionValue2     = 2
+	moveBuildSelectionValue6     = 6
+)
+
+const (
 	buildsLimit      = 30
 	buildOutputLimit = 2 << 20
 )
@@ -31,7 +44,7 @@ func (m *browser) loadSelectedBuilds() tea.Cmd {
 		return nil
 	}
 	if m.listBuilds == nil {
-		m.buildsState.unavailable(fmt.Errorf("build history is not available in this mode"))
+		m.buildsState.unavailable(errBuildHistoryIsNotAvailableInThis)
 		return nil
 	}
 	meta, ctx := m.startRequest(requestBuilds, m.tenant, app.ID, m.selectionGeneration)
@@ -58,7 +71,7 @@ func (m *browser) openSelectedBuild() tea.Cmd {
 	}
 	m.buildSelectedID = b.ID
 	if m.getBuild == nil {
-		m.buildDetailState.unavailable(fmt.Errorf("build output is not available in this mode"))
+		m.buildDetailState.unavailable(errBuildOutputIsNotAvailableInThis)
 		return nil
 	}
 	meta, ctx := m.startRequest(requestBuild, m.tenant, m.selectedDetailTarget(), m.selectionGeneration)
@@ -81,34 +94,15 @@ func (m *browser) buildsPaneLines() []string {
 	if m.buildNotice != "" {
 		notices = append(notices, paint(safeText(m.buildNotice), browserMuted, false))
 	}
-	if app.BuildMethod == "" {
-		if m.detailState.active() {
-			return []string{m.loadingMessage("Checking app build support…")}
-		}
-		return append(notices, sectionHeading("? Deployment type unknown"), "The deployment method could not be determined.")
-	}
-	if app.BuildMethod != client.BuildMethodWebhook && app.BuildMethod != client.BuildMethodGitlabCI {
-		return append(notices, sectionHeading("? Deployment type unknown"), summaryField("Method", safeText(app.BuildMethod)))
+	if app.BuildMethod == "" || app.BuildMethod != client.BuildMethodWebhook && app.BuildMethod != client.BuildMethodGitlabCI {
+		return m.unsupportedBuildLines(app, notices)
 	}
 	m.ensureCICDSettings()
 	if m.cicdReview {
 		return m.cicdSettingsReviewLines()
 	}
 	if m.cicdSettingsDraft.BuildMethod == client.BuildMethodGitlabCI {
-		lines := append(notices, sectionHeading("⚙ Custom CI/CD"), summaryField("Deployment type", "Custom CI/CD"), summaryField("App ID", app.ID), m.deployTokenLine())
-		if m.cicdLoading {
-			lines = append(lines, m.loadingMessage("Loading deploy token…"))
-		}
-		if m.cicdNotice != "" {
-			lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
-		}
-		if m.cicdSettingsChanged() {
-			lines = append(lines, paint("Deployment type change staged · press s to review", browserAccent, false))
-		}
-		if m.cicdSettingsNotice != "" {
-			lines = append(lines, paint(safeText(m.cicdSettingsNotice), browserMuted, false))
-		}
-		return lines
+		return m.customBuildLines(app, notices)
 	}
 	if m.buildDetail != nil {
 		return m.buildDetailLines()
@@ -125,6 +119,46 @@ func (m *browser) buildsPaneLines() []string {
 	m.cicdCursorLine = len(lines) + settingsRowLine
 	lines = append(lines, info...)
 	lines = append(lines, "", sectionHeading("History"))
+	lines = m.appendBuildStatusLines(lines)
+	if m.buildsState.status == requestEmpty || (m.buildsState.status == requestReady && len(m.builds) == 0) {
+		return append(lines, "No builds have been recorded for this app.")
+	}
+	if len(m.builds) == 0 {
+		return append(lines, "No build data loaded. Press r to refresh.")
+	}
+	return m.appendBuildRows(lines, m.builds)
+}
+
+func (m *browser) unsupportedBuildLines(app client.App, notices []string) []string {
+	if app.BuildMethod == "" {
+		if m.detailState.active() {
+			return []string{m.loadingMessage("Checking app build support…")}
+		}
+		return append(notices, sectionHeading("? Deployment type unknown"), "The deployment method could not be determined.")
+	}
+	return append(notices, sectionHeading("? Deployment type unknown"), summaryField("Method", safeText(app.BuildMethod)))
+}
+
+func (m *browser) customBuildLines(app client.App, notices []string) []string {
+	lines := notices
+	lines = append(lines, sectionHeading("⚙ Custom CI/CD"), summaryField("Deployment type", "Custom CI/CD"), summaryField("App ID",
+		app.ID), m.deployTokenLine())
+	if m.cicdLoading {
+		lines = append(lines, m.loadingMessage("Loading deploy token…"))
+	}
+	if m.cicdNotice != "" {
+		lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
+	}
+	if m.cicdSettingsChanged() {
+		lines = append(lines, paint("Deployment type change staged · press s to review", browserAccent, false))
+	}
+	if m.cicdSettingsNotice != "" {
+		lines = append(lines, paint(safeText(m.cicdSettingsNotice), browserMuted, false))
+	}
+	return lines
+}
+
+func (m *browser) appendBuildStatusLines(lines []string) []string {
 	if m.buildsState.status == requestLoading {
 		lines = append(lines, m.loadingMessage("Loading builds…"))
 	}
@@ -147,19 +181,18 @@ func (m *browser) buildsPaneLines() []string {
 	if m.buildDetailState.err != nil && m.buildDetail == nil {
 		lines = append(lines, paint("Could not load selected build: "+boundedErrorText(m.buildDetailState.err), browserNumber, false))
 	}
-	if m.buildsState.status == requestEmpty || (m.buildsState.status == requestReady && len(m.builds) == 0) {
-		return append(lines, "No builds have been recorded for this app.")
-	}
-	if len(m.builds) == 0 {
-		return append(lines, "No build data loaded. Press r to refresh.")
-	}
-	for i, b := range m.builds {
+	return lines
+}
+
+func (m *browser) appendBuildRows(lines []string, builds []client.Build) []string {
+	for i, b := range builds {
 		glyph, tint := buildStatusStyle(b.Status)
 		_, width, _ := m.paneWidths()
 		if m.appViewMaximized() {
-			width = m.width - 2
+			width = m.width - buildsPaneLinesValue2
 		}
-		message := ansi.Truncate(strings.ReplaceAll(buildText(b.CommitMessage, "(no commit message)"), "\n", " "), max(1, width-5), "…")
+		message := ansi.Truncate(strings.ReplaceAll(buildText(b.CommitMessage, "(no commit message)"), "\n", " "), max(1,
+			width-buildsPaneLinesValue5), "…")
 		first := glyph + "  " + message
 		if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
 			first = glyph + " [" + buildText(b.Status, "unknown") + "]  " + message
@@ -183,7 +216,7 @@ func (m *browser) buildsPaneLines() []string {
 }
 
 func (m *browser) buildListPrefixLines() int {
-	n := len(m.cicdDarkubeInfo(m.selectedApp())) + 2
+	n := len(m.cicdDarkubeInfo(m.selectedApp())) + buildListPrefixLinesValue2
 	if m.buildActionNotice != "" {
 		n++
 	}
@@ -209,38 +242,64 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	m.ensureCICDSettings()
 	settings := m.cicdSettingsDraft
 	value := func(s string) string { return buildText(s, "—") }
-	fields := []struct{ name, value string }{{"Repository", redactRepoURL(settings.RepoURL)}, {"Branch", settings.Branch}, {"Dockerfile path", settings.Dockerfile}, {"Build context", settings.Context}, {"Workdir", settings.Workdir}}
-	lines := []string{sectionHeading("↻ Darkube · Settings"), summaryField("Deployment type", "Darkube"), summaryField("App ID", app.ID), m.deployTokenLine()}
+	fields := []cicdDisplayField{{"Repository", redactRepoURL(settings.RepoURL)}, {"Branch", settings.Branch}, {"Dockerfile path",
+		settings.Dockerfile}, {"Build context", settings.Context}, {"Workdir", settings.Workdir}}
+	lines := []string{sectionHeading("↻ Darkube · Settings"), summaryField("Deployment type", "Darkube"), summaryField("App ID",
+		app.ID), m.deployTokenLine()}
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
 	if m.cicdNotice != "" {
 		lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
 	}
+	lines = append(lines, m.cicdDarkubeSettingsLines(fields, value)...)
+	auto := m.cicdAutodeployDisplay(settings.Autodeploy)
+	lines = append(lines, m.cicdSettingLine(cicdDarkubeInfoValue7, "Auto deploy", auto), "", sectionHeading("Build arguments"))
+	lines = append(lines, m.cicdDarkubeArgumentLines(settings.Args)...)
+	if m.cicdSettingsChanged() {
+		lines = append(lines, "", paint(fmt.Sprintf("%d staged setting change(s)", m.cicdSettingsChangeCount()), browserAccent, false))
+	}
+	if m.cicdSettingsNotice != "" {
+		lines = append(lines, paint(safeText(m.cicdSettingsNotice), browserMuted, false))
+	}
+	return lines
+}
+
+type cicdDisplayField struct{ name, value string }
+
+func (m *browser) cicdDarkubeSettingsLines(fields []cicdDisplayField, format func(string) string) []string {
+	editIndices := []int{0, 1, 4, 5, 6}
+	lines := make([]string, 0, len(fields))
 	for i, field := range fields {
-		v := value(field.value)
-		editIndex := []int{0, 1, 4, 5, 6}[i]
+		value := format(field.value)
+		editIndex := editIndices[i]
 		if m.cicdEditing && m.cicdEditField == editIndex {
-			v = m.cicdEditValue + "▏"
+			value = m.cicdEditValue + "▏"
 			if i == 0 {
-				v = redactRepoURL(v)
+				value = redactRepoURL(value)
 			}
 		}
-		lines = append(lines, m.cicdSettingLine(editIndex, field.name, v))
+		lines = append(lines, m.cicdSettingLine(editIndex, field.name, value))
 	}
-	auto := "—"
-	if settings.Autodeploy != nil {
-		if *settings.Autodeploy {
-			auto = "On push"
-		} else {
-			auto = "Off"
+	return lines
+}
+
+func (m *browser) cicdAutodeployDisplay(value *bool) string {
+	display := "—"
+	if value != nil {
+		display = "Off"
+		if *value {
+			display = "On push"
 		}
 	}
 	if m.cicdEditing && m.cicdEditField == 7 {
-		auto = m.cicdEditValue + "▏"
+		return m.cicdEditValue + "▏"
 	}
-	lines = append(lines, m.cicdSettingLine(7, "Auto deploy", auto), "", sectionHeading("Build arguments"))
-	args := settings.Args
+	return display
+}
+
+func (m *browser) cicdDarkubeArgumentLines(args []client.GitBuildArg) []string {
+	lines := []string{}
 	if len(args) == 0 {
 		lines = append(lines, m.cicdSettingLine(cicdSettingsFields, "No build arguments", ""))
 	}
@@ -256,20 +315,13 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	}
 	addValue := ""
 	if m.cicdEditing && m.cicdEditAdding {
+		addValue = "••••••••▏"
 		if m.cicdEditKey == "" {
 			addValue = m.cicdEditValue + "▏"
-		} else {
-			addValue = "••••••••▏"
 		}
 	}
 	if m.allowWrites {
 		lines = append(lines, m.cicdSettingLine(cicdSettingsFields+len(args), "+ Add build argument", addValue))
-	}
-	if m.cicdSettingsChanged() {
-		lines = append(lines, "", paint(fmt.Sprintf("%d staged setting change(s)", m.cicdSettingsChangeCount()), browserAccent, false))
-	}
-	if m.cicdSettingsNotice != "" {
-		lines = append(lines, paint(safeText(m.cicdSettingsNotice), browserMuted, false))
 	}
 	return lines
 }
@@ -378,9 +430,9 @@ func buildArgs(raw json.RawMessage) []buildArg {
 		for _, item := range v {
 			switch x := item.(type) {
 			case string:
-				parts := strings.SplitN(x, "=", 2)
+				parts := strings.SplitN(x, "=", buildArgsValue2)
 				value := ""
-				if len(parts) == 2 {
+				if len(parts) == buildArgsValue2 {
 					value = parts[1]
 				}
 				args = append(args, buildArg{safeText(parts[0]), value})
@@ -474,13 +526,14 @@ func buildDetailStickyLines(lines []string) int {
 	for i, line := range lines {
 		if ansi.Strip(line) == "Build output" {
 			sticky := i + 1
-			for sticky < len(lines) && (strings.HasPrefix(ansi.Strip(lines[sticky]), "Search:") || strings.Contains(ansi.Strip(lines[sticky]), "Copied ") || ansi.Strip(lines[sticky]) == "Copying build output…") {
+			for sticky < len(lines) && (strings.HasPrefix(ansi.Strip(lines[sticky]), "Search:") ||
+				strings.Contains(ansi.Strip(lines[sticky]), "Copied ") || ansi.Strip(lines[sticky]) == "Copying build output…") {
 				sticky++
 			}
 			return sticky
 		}
 	}
-	return 7
+	return buildDetailStickyLinesValue7
 }
 
 func sanitizeBuildOutput(value string) string {
@@ -511,7 +564,7 @@ func boundedBuildError(value any) string {
 		return ""
 	}
 	text = safeText(ansi.Strip(text))
-	if len(text) > 512 {
+	if len(text) > boundedBuildErrorValue512 {
 		text = text[:512] + "…"
 	}
 	return text
@@ -522,8 +575,8 @@ func boundedErrorText(err error) string {
 		return "unknown error"
 	}
 	text := safeText(ansi.Strip(err.Error()))
-	if len(text) > 512 {
-		text = text[:512] + "…"
+	if len(text) > boundedErrorTextValue512 {
+		text = text[:boundedErrorTextValue512] + "…"
 	}
 	return text
 }
@@ -539,7 +592,7 @@ func buildTime(v string) string {
 		return "—"
 	}
 	if t, e := time.Parse(time.RFC3339Nano, v); e == nil {
-		return t.Local().Format("Jan 02 15:04")
+		return formatLocalWallTime(t, "Jan 02 15:04")
 	}
 	return safeText(v)
 }
@@ -586,8 +639,8 @@ func (m *browser) moveBuildSelection(delta int) {
 	}
 	m.buildListCursor = max(0, min(len(m.builds)-1, m.buildListCursor+delta))
 	m.buildSelectedID = m.builds[m.buildListCursor].ID
-	visible := max(1, m.height/2-6)
-	line := m.buildListPrefixLines() + m.buildListCursor*2
+	visible := max(1, m.height/2-moveBuildSelectionValue6)
+	line := m.buildListPrefixLines() + m.buildListCursor*moveBuildSelectionValue2
 	if line < m.summaryScroll {
 		m.summaryScroll = line
 	}
@@ -648,7 +701,7 @@ func (m *browser) moveBuildMatch(delta int) {
 			outputStart++
 		}
 	}
-	m.summaryScroll = max(0, outputStart+matches[m.buildMatch]-buildDetailStickyLines(allLines))
+	m.buildScroll = max(0, outputStart+matches[m.buildMatch]-buildDetailStickyLines(allLines))
 	m.buildCopyStatus = fmt.Sprintf("Match %d of %d", m.buildMatch+1, len(matches))
 }
 
@@ -678,7 +731,8 @@ func (m *browser) selectedBuildInProgress() bool {
 	if m.buildDetail != nil && m.buildDetail.ID == m.buildSelectedID {
 		return m.buildDetail.InProgress()
 	}
-	return m.buildListCursor >= 0 && m.buildListCursor < len(m.builds) && m.builds[m.buildListCursor].ID == m.buildSelectedID && m.builds[m.buildListCursor].InProgress()
+	return m.buildListCursor >= 0 && m.buildListCursor < len(m.builds) && m.builds[m.buildListCursor].ID == m.buildSelectedID &&
+		m.builds[m.buildListCursor].InProgress()
 }
 
 func (m *browser) openBuildActionMenu() {
@@ -712,23 +766,22 @@ func (m *browser) openBuildActionMenu() {
 	m.buildActionNotice = ""
 }
 
-func (m *browser) handleBuildActionMenuKey(msg tea.KeyPressMsg) tea.Cmd {
+func (m *browser) handleBuildActionMenuKey(msg tea.KeyPressMsg) {
 	items := m.buildActionItems()
 	if len(items) == 0 {
 		m.buildActionMenu = false
-		return nil
+		return
 	}
 	switch msg.String() {
-	case "esc", "q":
+	case browserKeyEscape, "q":
 		m.buildActionMenu = false
 	case "up", "k":
 		m.buildActionCursor = (m.buildActionCursor + len(items) - 1) % len(items)
-	case "down", "j":
+	case keyDown, "j":
 		m.buildActionCursor = (m.buildActionCursor + 1) % len(items)
-	case "enter":
+	case keyEnter:
 		m.beginBuildActionConfirmation(items[m.buildActionCursor])
 	}
-	return nil
 }
 
 func (m *browser) beginBuildActionConfirmation(action buildAction) {
@@ -750,16 +803,16 @@ func (m *browser) beginBuildActionConfirmation(action buildAction) {
 
 func (m *browser) handleBuildConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "n":
+	case browserKeyEscape, "n":
 		m.buildConfirm = buildActionNone
 		return nil
-	case "left", "h", "shift+tab", "backtab":
+	case keyLeft, "h", inputKeyShiftTab, inputKeyBacktab:
 		m.buildConfirmButton = 0
-	case "right", "l", "tab":
+	case keyRight, "l", inputKeyTab:
 		m.buildConfirmButton = 1
 	case "y":
 		m.buildConfirmButton = 1
-	case "enter":
+	case keyEnter:
 		if m.buildConfirmButton == 1 {
 			return m.submitBuildAction()
 		}
@@ -781,57 +834,87 @@ func (m *browser) submitBuildAction() tea.Cmd {
 	getApp, listBuilds, latest, retry, stop := m.getApp, m.listBuilds, m.buildLatest, m.retryBuild, m.stopBuild
 	mock := m.actionIsMock()
 	return func() tea.Msg {
-		ctx := m.ctx
-		if ctx == nil {
-			ctx = context.Background()
+		return runBuildAction(m.ctx, tenant, appID, buildID, act, mock, getApp, listBuilds, latest, retry, stop)
+	}
+}
+
+func runBuildAction(ctx context.Context, tenant, appID string, buildID client.BuildID, action buildAction, mock bool,
+	getApp func(context.Context, string, string) (*client.App, error),
+	listBuilds func(context.Context, string, string, int) ([]client.Build, error),
+	latest func(context.Context, string, string) error,
+	retry func(context.Context, string, client.BuildID) (*client.Build, error),
+	stop func(context.Context, string, client.BuildID) error,
+) buildActionResult {
+	result := buildActionResult{tenant: tenant, appID: appID, buildID: buildID, action: action, mock: mock}
+	if err := verifyBuildActionTarget(ctx, tenant, appID, buildID, action, mock, getApp, listBuilds); err != nil {
+		result.err = err
+		return result
+	}
+	result.retryID, result.err = executeBuildAction(ctx, tenant, appID, buildID, action, latest, retry, stop)
+	return result
+}
+
+func verifyBuildActionTarget(ctx context.Context, tenant, appID string, buildID client.BuildID, action buildAction, mock bool,
+	getApp func(context.Context, string, string) (*client.App, error),
+	listBuilds func(context.Context, string, string, int) ([]client.Build, error),
+) error {
+	if mock {
+		return nil
+	}
+	if getApp == nil || listBuilds == nil {
+		return errCouldNotVerifyAppAndBuildTarget
+	}
+	app, err := getApp(ctx, tenant, appID)
+	if err != nil {
+		return fmt.Errorf("target verification failed: %w", err)
+	}
+	if app == nil || app.ID != appID || app.BuildMethod != client.BuildMethodWebhook {
+		return errSelectedAppIsNoLongerAVerified
+	}
+	if action == buildActionLatest {
+		return nil
+	}
+	rows, err := listBuilds(ctx, tenant, appID, buildsLimit)
+	if err != nil {
+		return fmt.Errorf("build ownership verification failed: %w", err)
+	}
+	verified := findBuild(rows, buildID)
+	if verified == nil {
+		return errBuildIsNoLongerInThisApp
+	}
+	if action == buildActionStop && !verified.InProgress() {
+		return errBuildIsNoLongerRunningStopWas
+	}
+	return nil
+}
+
+func findBuild(builds []client.Build, id client.BuildID) *client.Build {
+	for i := range builds {
+		if builds[i].ID == id {
+			return &builds[i]
 		}
-		var err error
-		var retryID client.BuildID
-		if !mock {
-			if getApp == nil || listBuilds == nil {
-				return buildActionResult{tenant: tenant, appID: appID, buildID: buildID, action: act, err: fmt.Errorf("could not verify app and build target")}
-			}
-			app, e := getApp(ctx, tenant, appID)
-			if e != nil {
-				err = fmt.Errorf("target verification failed: %w", e)
-			} else if app == nil || app.ID != appID || app.BuildMethod != client.BuildMethodWebhook {
-				err = fmt.Errorf("selected app is no longer a verified Darkube build target")
-			}
-			if err == nil && act != buildActionLatest {
-				rows, e := listBuilds(ctx, tenant, appID, buildsLimit)
-				if e != nil {
-					err = fmt.Errorf("build ownership verification failed: %w", e)
-				} else {
-					var verified *client.Build
-					for i := range rows {
-						if rows[i].ID == buildID {
-							verified = &rows[i]
-							break
-						}
-					}
-					if verified == nil {
-						err = fmt.Errorf("build is no longer in this app's recent build list")
-					} else if act == buildActionStop && !verified.InProgress() {
-						err = fmt.Errorf("build is no longer running; stop was not submitted")
-					}
-				}
-			}
+	}
+	return nil
+}
+
+func executeBuildAction(ctx context.Context, tenant, appID string, buildID client.BuildID, action buildAction,
+	latest func(context.Context, string, string) error,
+	retry func(context.Context, string, client.BuildID) (*client.Build, error),
+	stop func(context.Context, string, client.BuildID) error,
+) (client.BuildID, error) {
+	switch action {
+	case buildActionLatest:
+		return "", latest(ctx, tenant, appID)
+	case buildActionRetry:
+		build, err := retry(ctx, tenant, buildID)
+		if build == nil {
+			return "", err
 		}
-		if err == nil {
-			switch act {
-			case buildActionLatest:
-				err = latest(ctx, tenant, appID)
-			case buildActionRetry:
-				var b *client.Build
-				b, err = retry(ctx, tenant, buildID)
-				if b != nil {
-					retryID = b.ID
-				}
-			case buildActionStop:
-				err = stop(ctx, tenant, buildID)
-			}
-		}
-		return buildActionResult{tenant: tenant, appID: appID, buildID: buildID, action: act, retryID: retryID, mock: mock, err: err}
+		return build.ID, err
+	case buildActionStop:
+		return "", stop(ctx, tenant, buildID)
+	default:
+		return "", nil
 	}
 }
 
@@ -879,6 +962,8 @@ func buildActionAccepted(action buildAction) string {
 		return "Accepted · retry submitted; completion is not yet observed"
 	case buildActionStop:
 		return "Accepted · stop submitted; final state is not yet observed"
+	case buildActionNone:
+		return "Accepted"
 	}
 	return "Accepted"
 }

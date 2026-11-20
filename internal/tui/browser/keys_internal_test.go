@@ -1,9 +1,10 @@
 package browser
 
 import (
+	"testing"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"testing"
 )
 
 func TestPrintableFilterInputDoesNotTriggerGlobalKeys(t *testing.T) {

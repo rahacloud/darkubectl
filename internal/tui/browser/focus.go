@@ -2,6 +2,16 @@ package browser
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const (
+	activatePageRowValue2 = 2
+	activatePageRowValue4 = 4
+	activatePageRowValue5 = 5
+	focusPaneValue2       = 2
+	focusPaneValue3       = 3
+	pageTicketsContextRow = 3
 )
 
 func (m *browser) cycleFocus(reverse bool) tea.Cmd {
@@ -19,23 +29,24 @@ func (m *browser) cycleFocus(reverse bool) tea.Cmd {
 			}
 			m.contextFocused = false
 			m.detail = true
-			if m.page == pageActivity || m.page == pageDB || m.page == pageRegistry {
-				return nil
-			}
-			return m.loadSelectedSummary()
+			return m.loadFocusedSummary()
 		case m.detail:
 			m.detail = false
 		default:
-			if m.page == pageActivity {
+			switch m.page {
+			case pageActivity:
 				m.contextFocused = true
 				m.contextRow = 2
-			} else if m.page == pageDB {
+			case pageTickets:
+				m.contextFocused = true
+				m.contextRow = 3
+			case pageDB:
 				m.contextFocused = true
 				m.contextRow = 4
-			} else if m.page == pageRegistry {
+			case pageRegistry:
 				m.contextFocused = true
 				m.contextRow = 5
-			} else {
+			default:
 				m.contextFocused = true
 				m.contextRow = 1
 			}
@@ -61,10 +72,7 @@ func (m *browser) cycleFocus(reverse bool) tea.Cmd {
 		m.contextRow = 0
 	default:
 		m.detail = true
-		if m.page == pageActivity || m.page == pageDB || m.page == pageRegistry {
-			return nil
-		}
-		return m.loadSelectedSummary()
+		return m.loadFocusedSummary()
 	}
 	return nil
 }
@@ -79,28 +87,35 @@ func (m *browser) focusPane(index int) tea.Cmd {
 		m.detail = false
 	case 1:
 		m.contextFocused = true
-		if m.page == pageActivity {
+		switch m.page {
+		case pageActivity:
 			m.contextRow = 2
-		} else if m.page == pageDB {
+		case pageTickets:
+			m.contextRow = 3
+		case pageDB:
 			m.contextRow = 4
-		} else if m.page == pageRegistry {
+		case pageRegistry:
 			m.contextRow = 5
-		} else {
+		default:
 			m.contextRow = 1
 		}
 		m.detail = false
-	case 2:
+	case focusPaneValue2:
 		m.contextFocused = false
 		m.detail = false
-	case 3:
+	case focusPaneValue3:
 		m.contextFocused = false
 		m.detail = true
-		if m.page == pageActivity || m.page == pageDB || m.page == pageRegistry {
-			return nil
-		}
-		return m.loadSelectedSummary()
+		return m.loadFocusedSummary()
 	}
 	return nil
+}
+
+func (m *browser) loadFocusedSummary() tea.Cmd {
+	if m.page == pageActivity || m.page == pageTickets || m.page == pageDB || m.page == pageRegistry {
+		return nil
+	}
+	return m.loadSelectedSummary()
 }
 
 func (m *browser) activatePageRow(row int) tea.Cmd {
@@ -110,9 +125,10 @@ func (m *browser) activatePageRow(row int) tea.Cmd {
 			m.resetDatabaseDetail()
 		}
 		m.page = pageApps
+		m.contextFocused = true
 		m.detail = false
 		return nil
-	case 2:
+	case activatePageRowValue2:
 		if m.page == pageDB {
 			m.resetDatabaseDetail()
 		}
@@ -123,18 +139,29 @@ func (m *browser) activatePageRow(row int) tea.Cmd {
 			m.activityScroll = 0
 		}
 		return m.loadActivityFeed(false)
-	case 4:
+	case pageTicketsContextRow:
+		m.page = pageTickets
+		m.contextFocused = true
+		m.contextRow = pageTicketsContextRow
+		m.selectingTenant = false
+		m.detail = false
+		m.ticketStatus = client.TicketStatusAll
+		m.ticketMine = true
+		return m.loadTickets(false)
+	case activatePageRowValue4:
 		m.page = pageDB
-		m.contextFocused = false
+		m.contextFocused = true
+		m.contextRow = activatePageRowValue4
 		m.selectingTenant = false
 		m.detail = false
 		return tea.Batch(m.loadDatabases(false), m.loadSelectedDatabaseDetail(false))
-	case 5:
+	case activatePageRowValue5:
 		if m.page == pageDB {
 			m.resetDatabaseDetail()
 		}
 		m.page = pageRegistry
-		m.contextFocused = false
+		m.contextFocused = true
+		m.contextRow = activatePageRowValue5
 		m.selectingTenant = false
 		m.detail = false
 		m.registryNotice = ""
@@ -187,7 +214,7 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	for i := range m.tenants {
 		m.tenants[i].status = ""
 		if m.tenants[i].name == name {
-			m.tenants[i].status = "current"
+			m.tenants[i].status = labelCurrent
 		}
 	}
 	if name == m.tenant {
@@ -196,6 +223,12 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 		return nil
 	}
 	m.tenant = name
+	m.resetTenantContext()
+	cmd := m.load()
+	return m.loadTenantPage(cmd)
+}
+
+func (m *browser) resetTenantContext() {
 	m.cancelRequests(true)
 	m.registryState.reset()
 	m.registries = nil
@@ -205,6 +238,14 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.registryRows = nil
 	m.registryCursor = 0
 	m.cancelRequest(requestKey{kind: requestDatabases})
+	m.cancelRequest(requestKey{kind: requestTickets})
+	m.cancelRequest(requestKey{kind: requestTicketThread})
+	m.ticketState.reset()
+	m.ticketDetailState.reset()
+	m.ticketRows = nil
+	m.ticketComments = nil
+	m.ticketDetail = nil
+	m.ticketSelection = ""
 	m.databaseState.reset()
 	m.databases = nil
 	m.databaseCursor = 0
@@ -243,7 +284,9 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	m.namespaceState.reset()
 	m.namespaceFallback = false
 	m.selectingNamespace = false
-	cmd := m.load()
+}
+
+func (m *browser) loadTenantPage(cmd tea.Cmd) tea.Cmd {
 	if m.page == pageActivity && m.activityTab == activityAlerts {
 		return tea.Batch(cmd, m.loadActivityFeed(true))
 	}
@@ -252,6 +295,9 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 	}
 	if m.page == pageDB {
 		return tea.Batch(cmd, m.loadDatabases(true))
+	}
+	if m.page == pageTickets {
+		return m.loadTickets(true)
 	}
 	return cmd
 }

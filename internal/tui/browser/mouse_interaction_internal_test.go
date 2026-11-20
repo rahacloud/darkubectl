@@ -8,6 +8,7 @@ import (
 )
 
 func TestMouseClickSelectsBorderViewTab(t *testing.T) {
+	t.Parallel()
 	m := &browser{
 		width: 120, height: 30, detail: true, activeAppView: appViewSummary,
 		apps: []client.App{{ID: "app-1"}}, selected: 0,

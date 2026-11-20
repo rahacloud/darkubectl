@@ -1,11 +1,12 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"fmt"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func TestTenantPaneSwitchesOnCursorMovementWithoutEnter(t *testing.T) {
@@ -16,14 +17,15 @@ func TestTenantPaneSwitchesOnCursorMovementWithoutEnter(t *testing.T) {
 	}}
 	m := newMockBrowser(profile)
 	if cmd := m.Init(); cmd != nil {
-		for _, batched := range cmd().(tea.BatchMsg) {
+		for _, batched := range requireMessage[tea.BatchMsg](t, cmd()) {
 			m.Update(batched())
 		}
 	}
 	m.focusPane(0)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.tenant != "beta" || m.tenantCursor != 1 || !m.contextFocused || !m.selectingTenant || cmd == nil {
-		t.Fatalf("moving to next tenant should switch immediately and retain focus: tenant=%q cursor=%d focus=%v selecting=%v cmd=%v", m.tenant, m.tenantCursor, m.contextFocused, m.selectingTenant, cmd != nil)
+		t.Fatalf("moving to next tenant should switch immediately and retain focus: tenant=%q cursor=%d focus=%v selecting=%v cmd=%v",
+			m.tenant, m.tenantCursor, m.contextFocused, m.selectingTenant, cmd != nil)
 	}
 	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.tenant != "alpha" || m.tenantCursor != 0 || cmd == nil {
@@ -79,6 +81,39 @@ func TestPageKeysMoveThroughTheAppsTree(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	if m.selected != 0 {
 		t.Fatalf("PageUp should return to the first app, selected index is %d", m.selected)
+	}
+}
+
+func TestPageMenuKeepsFocusAndWrapsWithoutEnteringTenantPane(t *testing.T) {
+	t.Parallel()
+	m := &browser{page: pageApps, contextFocused: true, contextRow: 1}
+	m.handleKeyPress(tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.page != pageRegistry || !m.contextFocused || m.contextRow != 5 {
+		t.Fatalf("Up from Apps should wrap within Pages: page=%v focused=%t row=%d", m.page, m.contextFocused, m.contextRow)
+	}
+	m.handleKeyPress(tea.KeyPressMsg{Code: '2', Text: "2"})
+	if !m.contextFocused || m.contextRow != 5 {
+		t.Fatalf("pane 2 shortcut did not focus Pages: focused=%t row=%d", m.contextFocused, m.contextRow)
+	}
+	m.handleKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.page != pageApps || !m.contextFocused || m.contextRow != 1 {
+		t.Fatalf("Down from Registry should wrap to Apps and retain focus: page=%v focused=%t row=%d", m.page, m.contextFocused, m.contextRow)
+	}
+}
+
+func TestTenantPaneHasNoCaretAndHighlightsOnlyWhenFocused(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := &browser{width: 120, tenant: "alpha", tenantCursor: 0, contextRow: 1,
+		tenants: []tenantOption{{name: "alpha"}, {name: "beta"}}}
+	active := m.tenantPaneLines(2)[0]
+	if strings.Contains(active, "›") {
+		t.Fatalf("tenant pane should not show a caret: %q", active)
+	}
+	m.contextFocused = true
+	m.contextRow = 0
+	focused := m.tenantPaneLines(2)[0]
+	if strings.Contains(focused, "›") || active == focused {
+		t.Fatalf("tenant selection should match Pages focus styling: active=%q focused=%q", active, focused)
 	}
 }
 

@@ -1,40 +1,29 @@
 package browser
 
 import (
-	"charm.land/lipgloss/v2"
 	"encoding/json"
 	"fmt"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"math"
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"charm.land/lipgloss/v2"
+	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const (
+	appDomainsValue3     = 3
+	formatCoresValue1000 = 1000
 )
 
 func (m *browser) summaryPaneLines() []string {
-	if m.activeAppView == appViewUsage {
-		return m.resourcesPaneLines()
-	}
-	if m.activeAppView == appViewScaling {
-		return m.scalingPaneLines()
-	}
-	if m.activeAppView == appViewLogs {
-		return m.logsPaneLines()
-	}
-	if m.activeAppView == appViewBuilds {
-		return m.buildsPaneLines()
-	}
-	if m.activeAppView == appViewEnv {
-		return m.envPaneLines()
-	}
-	if m.activeAppView == appViewDomains {
-		return m.domainsPaneLines()
-	}
-	if m.activeAppView == appViewPorts {
-		return m.portsPaneLines()
+	if lines := m.appViewLines(); lines != nil {
+		return lines
 	}
 	if m.namespaceSelected || !m.selectedAppVisible() {
 		return []string{summaryField("App", "not selected")}
@@ -55,7 +44,7 @@ func (m *browser) summaryPaneLines() []string {
 	}
 	replicas := "-"
 	if a.ReplicasPresent {
-		replicas = fmt.Sprintf("%d", a.Replicas)
+		replicas = strconv.Itoa(a.Replicas)
 	}
 	lines = append(lines,
 		summaryField("Tenant", displayValue(m.tenant)),
@@ -66,30 +55,12 @@ func (m *browser) summaryPaneLines() []string {
 		summaryField("State", paint(stateGlyph+" "+safeText(appState(a)), stateColor, true)),
 		summaryField("Description", displayValue(a.State.Description)),
 		summaryField("Replicas", replicas),
-		"", sectionHeading("Resources"))
-	lines = append(lines,
+		"", sectionHeading("Resources"),
 		resourceField("", "CPU", resourceLimit(a, "cpu")),
 		resourceField("", "RAM", resourceLimit(a, "ram")),
 		resourceField("", "Disk", resourceLimit(a, "disk")),
 		"", sectionHeading("Networking"))
-	serviceType, internalAddress, externalIP := "-", "-", "-"
-	servicePort := "-"
-	if a.Service != nil {
-		serviceType = displayValue(a.Service.Type)
-		if strings.TrimSpace(a.Service.InternalAddress) != "" {
-			internalAddress = internalAddressDisplay(a.Service.InternalAddress, a.Service.Ports)
-		}
-		externalIP = displayValue(a.Service.ExternalIP)
-		if port, ok := primaryServicePort(a.Service.Ports); ok {
-			portNumber := port.ServicePort
-			if portNumber == 0 {
-				portNumber = port.ContainerPort
-			}
-			if portNumber > 0 {
-				servicePort = fmt.Sprintf("%d", portNumber)
-			}
-		}
-	}
+	serviceType, servicePort, internalAddress, externalIP := serviceSummary(a)
 	lines = append(lines,
 		summaryField("Service", serviceType),
 		summaryField("Port Service", servicePort),
@@ -103,7 +74,7 @@ func (m *browser) summaryPaneLines() []string {
 		for i, host := range domains {
 			label := ""
 			if i == 0 {
-				label = "Domains"
+				label = labelDomains
 			}
 			lines = append(lines, summaryLabel(label)+domainLink(host))
 		}
@@ -123,6 +94,61 @@ func (m *browser) summaryPaneLines() []string {
 	return lines
 }
 
+func serviceSummary(app client.App) (string, string, string, string) {
+	serviceType, servicePort, internalAddress, externalIP := "-", "-", "-", "-"
+	if app.Service == nil {
+		return serviceType, servicePort, internalAddress, externalIP
+	}
+	serviceType = displayValue(app.Service.Type)
+	internalAddress = serviceInternalAddress(app.Service)
+	externalIP = displayValue(app.Service.ExternalIP)
+	servicePort = servicePortDisplay(app.Service)
+	return serviceType, servicePort, internalAddress, externalIP
+}
+
+func serviceInternalAddress(service *client.AppService) string {
+	if strings.TrimSpace(service.InternalAddress) == "" {
+		return "-"
+	}
+	return internalAddressDisplay(service.InternalAddress, service.Ports)
+}
+
+func servicePortDisplay(service *client.AppService) string {
+	port, ok := primaryServicePort(service.Ports)
+	if !ok {
+		return "-"
+	}
+	portNumber := port.ServicePort
+	if portNumber == 0 {
+		portNumber = port.ContainerPort
+	}
+	if portNumber == 0 {
+		return "-"
+	}
+	return strconv.Itoa(portNumber)
+}
+
+func (m *browser) appViewLines() []string {
+	switch m.activeAppView {
+	case appViewUsage:
+		return m.resourcesPaneLines()
+	case appViewScaling:
+		return m.scalingPaneLines()
+	case appViewLogs:
+		return m.logsPaneLines()
+	case appViewBuilds:
+		return m.buildsPaneLines()
+	case appViewEnv:
+		return m.envPaneLines()
+	case appViewDomains:
+		return m.domainsPaneLines()
+	case appViewPorts:
+		return m.portsPaneLines()
+	default:
+		return nil
+	}
+}
+
 func deploymentTypeValue(app client.App) string {
 	switch app.BuildMethod {
 	case client.BuildMethodWebhook:
@@ -134,8 +160,8 @@ func deploymentTypeValue(app client.App) string {
 }
 
 func appDomains(app client.App) []string {
-	domains := make([]string, 0, len(app.ExternalHosts)+3)
-	seen := make(map[string]struct{}, len(app.ExternalHosts)+3)
+	domains := make([]string, 0, len(app.ExternalHosts)+appDomainsValue3)
+	seen := make(map[string]struct{}, len(app.ExternalHosts)+appDomainsValue3)
 	hosts := append([]string{app.CustomDomainAddress}, app.ExternalHosts...)
 	if app.Service != nil {
 		hosts = append(hosts, app.Service.ExternalAddress)
@@ -147,7 +173,7 @@ func appDomains(app client.App) []string {
 		}
 		if app.Service != nil && strings.HasSuffix(strings.ToLower(domain), ".hsvc.ir") {
 			if port, ok := primaryServicePort(app.Service.Ports); ok && port.ServicePort > 0 {
-				domain = net.JoinHostPort(domain, fmt.Sprint(port.ServicePort))
+				domain = net.JoinHostPort(domain, strconv.Itoa(port.ServicePort))
 			}
 		}
 		key := strings.ToLower(domain)
@@ -171,7 +197,7 @@ func internalAddressDisplay(address string, ports map[string]client.Port) string
 			servicePort = port.ContainerPort
 		}
 		if servicePort > 0 {
-			return safeText(net.JoinHostPort(address, fmt.Sprint(servicePort)))
+			return safeText(net.JoinHostPort(address, strconv.Itoa(servicePort)))
 		}
 	}
 	return safeText(address)
@@ -203,23 +229,28 @@ func appCommandDisplay(app client.App) string {
 }
 
 func readinessProbeDisplay(app client.App) string {
-	if app.CustomConfig != nil && app.CustomConfig.Container != nil && app.CustomConfig.Container.ReadinessProbe != nil {
-		probe := app.CustomConfig.Container.ReadinessProbe
-		if probe.Exec != nil && len(probe.Exec.Command) > 0 {
-			return "exec: " + strings.Join(probe.Exec.Command, " ")
-		}
-		if probe.HTTPGet != nil {
-			value := "HTTP GET " + displayValue(probe.HTTPGet.Path)
-			if port := jsonScalar(probe.HTTPGet.Port); port != "" {
-				value += ":" + port
-			}
-			return value
-		}
-		if probe.TCPSocket != nil {
-			return "TCP " + jsonScalar(probe.TCPSocket.Port)
-		}
+	if app.CustomConfig == nil || app.CustomConfig.Container == nil || app.CustomConfig.Container.ReadinessProbe == nil {
+		return readinessPathDisplay(app.ReadinessProbePath)
 	}
-	if path := strings.TrimSpace(app.ReadinessProbePath); path != "" {
+	probe := app.CustomConfig.Container.ReadinessProbe
+	if probe.Exec != nil && len(probe.Exec.Command) > 0 {
+		return "exec: " + strings.Join(probe.Exec.Command, " ")
+	}
+	if probe.HTTPGet != nil {
+		value := "HTTP GET " + displayValue(probe.HTTPGet.Path)
+		if port := jsonScalar(probe.HTTPGet.Port); port != "" {
+			value += ":" + port
+		}
+		return value
+	}
+	if probe.TCPSocket != nil {
+		return "TCP " + jsonScalar(probe.TCPSocket.Port)
+	}
+	return readinessPathDisplay(app.ReadinessProbePath)
+}
+
+func readinessPathDisplay(path string) string {
+	if path = strings.TrimSpace(path); path != "" {
 		return "HTTP GET " + safeText(path)
 	}
 	return ""
@@ -251,7 +282,7 @@ func staleRequestTime(label string, state requestState) string {
 	if state.lastSuccessAt.IsZero() {
 		return summaryField(label+" updated", "no successful snapshot")
 	}
-	when := state.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
+	when := formatLocalWallTime(state.lastSuccessAt, "Jan 2, 3:04 PM MST")
 	return summaryField(label+" updated", when)
 }
 
@@ -271,7 +302,7 @@ func displayValue(value string) string {
 }
 
 func formatCores(cores float64) string {
-	return fmt.Sprintf("%dm", int(math.Round(cores*1000)))
+	return fmt.Sprintf("%dm", int(math.Round(cores*formatCoresValue1000)))
 }
 
 func formatBytes(bytes float64) string {
@@ -349,7 +380,7 @@ func formatLocalTime(value string) string {
 	if err != nil {
 		return fallbackText(value)
 	}
-	return parsed.Local().Format("Jan 2, 2006 · 3:04 PM MST")
+	return formatLocalWallTime(parsed, "Jan 2, 2006 · 3:04 PM MST")
 }
 
 func appState(a client.App) string {

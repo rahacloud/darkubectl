@@ -1,3 +1,4 @@
+// Package browser implements the interactive Darkube browser.
 package browser
 
 import (
@@ -92,16 +93,16 @@ func (m *browser) handleActionMenuKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	switch msg.String() {
-	case "ctrl+c":
+	case inputKeyCtrlC:
 		return tea.Quit
-	case "esc", "q":
+	case browserKeyEscape, "q":
 		m.actionMenu = false
 		m.actionMenuMessage = ""
 	case "up", "k":
 		m.moveActionCursor(-1, items)
-	case "down", "j":
+	case keyDown, "j":
 		m.moveActionCursor(1, items)
-	case "enter":
+	case keyEnter:
 		return m.beginActionConfirmation(items[m.actionCursor])
 	case "r":
 		if m.actionAvailable(appActionRestart) {
@@ -149,33 +150,33 @@ func (m *browser) beginActionConfirmation(action appAction) tea.Cmd {
 }
 
 func (m *browser) handleActionConfirmationKey(msg tea.KeyPressMsg) tea.Cmd {
-	if msg.String() == "ctrl+c" {
+	if msg.String() == inputKeyCtrlC {
 		return tea.Quit
 	}
-	if msg.String() == "esc" {
+	if msg.String() == browserKeyEscape {
 		m.cancelActionConfirmation()
 		return nil
 	}
 	if m.confirmAction == appActionDelete {
 		switch msg.String() {
-		case "tab", "right":
+		case inputKeyTab, keyRight:
 			m.confirmButton = 1
 			return nil
-		case "shift+tab", "backtab", "left":
+		case inputKeyShiftTab, inputKeyBacktab, keyLeft:
 			m.confirmButton = 0
 			return nil
-		case "backspace", "ctrl+h":
+		case keyBackspace, keyCtrlH:
 			runes := []rune(m.confirmName)
 			if len(runes) > 0 {
 				m.confirmName = string(runes[:len(runes)-1])
 			}
 			m.confirmError = ""
 			return nil
-		case "ctrl+u":
+		case keyCtrlU:
 			m.confirmName = ""
 			m.confirmError = ""
 			return nil
-		case "enter":
+		case keyEnter:
 			if m.confirmButton == 0 {
 				m.cancelActionConfirmation()
 				return nil
@@ -193,11 +194,11 @@ func (m *browser) handleActionConfirmationKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.submitConfirmedAction()
 	case "n":
 		m.cancelActionConfirmation()
-	case "tab", "right":
+	case inputKeyTab, keyRight:
 		m.confirmButton = 1
-	case "shift+tab", "backtab", "left":
+	case inputKeyShiftTab, inputKeyBacktab, keyLeft:
 		m.confirmButton = 0
-	case "enter":
+	case keyEnter:
 		if m.confirmButton == 1 {
 			return m.submitConfirmedAction()
 		}
@@ -231,11 +232,11 @@ func (m *browser) submitConfirmedAction() tea.Cmd {
 			return result
 		}
 		if !m.allowWrites {
-			result.err = fmt.Errorf("write actions are disabled; relaunch with --allow-writes")
+			result.err = errWriteActionsAreDisabledRelaunchWithAllow
 			return result
 		}
 		if m.getApp == nil {
-			result.err = fmt.Errorf("cannot verify the selected app before the action")
+			result.err = errCannotVerifyTheSelectedAppBeforeThe
 			return result
 		}
 		current, err := m.getApp(m.ctx, tenant, id)
@@ -244,24 +245,24 @@ func (m *browser) submitConfirmedAction() tea.Cmd {
 			return result
 		}
 		if current == nil || current.ID != id || current.Name != name {
-			result.err = fmt.Errorf("the selected app changed; refresh the app list and try again")
+			result.err = errTheSelectedAppChangedRefreshTheApp
 			return result
 		}
 		switch action {
 		case appActionRestart:
 			if m.restartApp == nil {
-				result.err = fmt.Errorf("app restart is unavailable")
+				result.err = errAppRestartIsUnavailable
 			} else {
 				result.err = m.restartApp(tenant, id)
 			}
 		case appActionDelete:
 			if m.deleteApp == nil {
-				result.err = fmt.Errorf("app deletion is unavailable")
+				result.err = errAppDeletionIsUnavailable
 			} else {
 				result.err = m.deleteApp(tenant, id)
 			}
 		default:
-			result.err = fmt.Errorf("unknown app action")
+			result.err = errUnknownAppAction
 		}
 		return result
 	}

@@ -1,11 +1,12 @@
 package browser
 
 import (
+	"strings"
+	"testing"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"strings"
-	"testing"
 )
 
 func TestActionMenuHintsMatchVimShortcuts(t *testing.T) {
@@ -37,14 +38,14 @@ func TestActionModalsFitNarrowAndWidePanels(t *testing.T) {
 		m := &browser{width: width, height: 24, mode: "MOCK PROFILE · OFFLINE", actionMenu: true}
 		applyAppsResult(m, []client.App{{ID: "app-1", Name: "api"}}, nil)
 		panelWidth := min(72, width-4)
-		for _, line := range strings.Split(m.actionMenuPanel(), "\n") {
+		for line := range strings.SplitSeq(m.actionMenuPanel(), "\n") {
 			if got := ansi.StringWidth(line); got > panelWidth {
 				t.Errorf("action menu line width %d exceeds panel width %d at terminal %d", got, panelWidth, width)
 			}
 		}
 		m.actionMenu = false
 		m.confirmAction = appActionDelete
-		content, _, _, _ := m.actionConfirmationContent()
+		content := m.actionConfirmationContent().content
 		innerWidth := panelWidth - 6
 		for _, line := range content {
 			if got := ansi.StringWidth(line); got > innerWidth {

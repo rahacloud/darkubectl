@@ -2,6 +2,8 @@ package browser
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -9,6 +11,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
 	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const (
+	handleEnvKeyValue8  = 8
+	envDiffHeadingCount = 1
+	envDiffSummaryLines = 2
 )
 
 const (
@@ -38,7 +46,7 @@ type envRevealResult struct {
 func (m *browser) loadEnv() tea.Cmd {
 	id := m.selectedDetailTarget()
 	if id == "" || m.environment == nil {
-		m.envState.unavailable(fmt.Errorf("environment variables are unavailable"))
+		m.envState.unavailable(errEnvironmentVariablesAreUnavailable)
 		return nil
 	}
 	meta, ctx := m.startRequest(requestEnv, m.tenant, id, m.selectionGeneration)
@@ -49,14 +57,15 @@ func (m *browser) loadEnv() tea.Cmd {
 	}
 }
 
-func (m *browser) handleEnvResult(msg envResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleEnvResult(msg envResult) tea.Model {
 	m.finishRequest(requestEnv, msg.meta)
-	if !m.envState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || msg.meta.appID != m.selectedDetailTarget() {
-		return m, nil
+	if !m.envState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration ||
+		msg.meta.appID != m.selectedDetailTarget() {
+		return m
 	}
 	if msg.err != nil {
-		m.envState.fail(fmt.Errorf("environment request failed"))
-		return m, nil
+		m.envState.fail(errEnvironmentRequestFailed)
+		return m
 	}
 	m.envPlain, m.envSecretNames = append([]client.EnvVar(nil), msg.plain...), append([]string(nil), msg.secrets...)
 	sort.Slice(m.envPlain, func(i, j int) bool { return m.envPlain[i].Name < m.envPlain[j].Name })
@@ -69,7 +78,7 @@ func (m *browser) handleEnvResult(msg envResult) (tea.Model, tea.Cmd) {
 	m.envMessage = ""
 	m.envCursor = min(m.envCursor, max(0, len(m.envPlain)+len(m.envSecretNames)-1))
 	m.envState.succeed(len(m.envPlain)+len(m.envSecretNames) == 0, m.requestTime())
-	return m, nil
+	return m
 }
 
 func (m *browser) envPaneLines() []string {
@@ -78,8 +87,10 @@ func (m *browser) envPaneLines() []string {
 	}
 	m.envCursorLine = 0
 	if m.envConfirm {
-		lines := []string{sectionHeading("Review changes")}
-		lines = append(lines, m.envDiffLines()...)
+		diff := m.envDiffLines()
+		lines := make([]string, 0, envDiffHeadingCount+len(diff)+envDiffSummaryLines)
+		lines = append(lines, sectionHeading("Review changes"))
+		lines = append(lines, diff...)
 		lines = append(lines, "", summaryField("Apply", "save changes and restart app pods?"))
 		return lines
 	}
@@ -121,7 +132,8 @@ func (m *browser) envPaneLines() []string {
 		if m.envEditMode == envEditSecret && selected {
 			value = maskedInput(m.envEditValue) + "█"
 		}
-		lines = append(lines, envRow(fmt.Sprintf("%s %s %s", cursorGlyph(selected), envChangeMarker(m, name, true), summaryField(safeText(name), value)), selected))
+		lines = append(lines, envRow(fmt.Sprintf("%s %s %s", cursorGlyph(selected), envChangeMarker(m, name, true),
+			summaryField(safeText(name), value)), selected))
 	}
 	if m.envHasChanges() {
 		lines = append(lines, "", paint(fmt.Sprintf("%d staged change(s)", m.envChangeCount()), browserAccent, false))
@@ -129,20 +141,21 @@ func (m *browser) envPaneLines() []string {
 	if m.envMessage != "" {
 		lines = append(lines, "", paint(safeText(m.envMessage), browserMuted, false))
 	}
-	if m.envEditMode == envEditPlain || m.envEditMode == envEditSecret || m.envEditMode == envAddPlain || m.envEditMode == envAddSecret {
-		if m.envEditMode == envAddPlain || m.envEditMode == envAddSecret {
-			if m.envEditName == "" {
-				lines = append(lines, "", "Variable name: "+safeText(m.envEditValue)+"█")
-			} else {
-				value := safeText(m.envEditValue)
-				if m.envEditMode == envEditSecret || m.envEditMode == envAddSecret {
-					value = maskedInput(m.envEditValue)
-				}
-				lines = append(lines, "", value+"█")
-			}
-		}
+	return m.appendEnvEditPrompt(lines)
+}
+
+func (m *browser) appendEnvEditPrompt(lines []string) []string {
+	if m.envEditMode != envAddPlain && m.envEditMode != envAddSecret {
+		return lines
 	}
-	return lines
+	if m.envEditName == "" {
+		return append(lines, "", "Variable name: "+safeText(m.envEditValue)+"█")
+	}
+	value := safeText(m.envEditValue)
+	if m.envEditMode == envEditSecret || m.envEditMode == envAddSecret {
+		value = maskedInput(m.envEditValue)
+	}
+	return append(lines, "", value+"█")
 }
 
 func maskedInput(value string) string { return strings.Repeat("•", utf8.RuneCountInString(value)) }
@@ -190,12 +203,7 @@ func envChangeMarker(m *browser, name string, secret bool) string {
 }
 
 func containsEnvName(names []string, name string) bool {
-	for _, candidate := range names {
-		if candidate == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, name)
 }
 
 func (m *browser) envDesiredPlain() []client.EnvVar {
@@ -312,38 +320,47 @@ func (m *browser) envDiffLines() []string {
 		hadOld := containsEnvName(m.envOriginalSecretNames, name)
 		hasNew := containsEnvName(currentSecrets, name)
 		_, valueChanged := m.envSecretValues[name]
-		if hadOld && !hasNew {
+		switch {
+		case hadOld && !hasNew:
 			lines = append(lines, paint("− "+safeText(name), browserNumber, false))
-		} else if !hadOld && hasNew {
+		case !hadOld && hasNew:
 			lines = append(lines, paint("+ "+safeText(name)+" = ••••••••", browserAccent, false))
-		} else if valueChanged && hasNew {
+		case valueChanged && hasNew:
 			lines = append(lines, paint("~ "+safeText(name)+" = ••••••••", browserAccent, false))
 		}
 	}
 	return lines
 }
 
-func (m *browser) selectedEnv() (secret bool, index int, name, value string, ok bool) {
+type envSelection struct {
+	secret bool
+	index  int
+	name   string
+	value  string
+	ok     bool
+}
+
+func (m *browser) selectedEnv() envSelection {
 	if m.envCursor < 0 || m.envCursor >= len(m.envPlain)+len(m.envSecretNames) {
-		return
+		return envSelection{}
 	}
 	if m.envCursor < len(m.envPlain) {
 		e := m.envPlain[m.envCursor]
-		return false, m.envCursor, e.Name, e.Value, true
+		return envSelection{index: m.envCursor, name: e.Name, value: e.Value, ok: true}
 	}
 	i := m.envCursor - len(m.envPlain)
-	return true, i, m.envSecretNames[i], "", true
+	return envSelection{secret: true, index: i, name: m.envSecretNames[i], ok: true}
 }
 
 func (m *browser) selectedEnvDeleted() bool {
-	secret, _, name, _, ok := m.selectedEnv()
-	if !ok {
+	selection := m.selectedEnv()
+	if !selection.ok {
 		return false
 	}
-	if secret {
-		return m.envDeletedSecrets[name]
+	if selection.secret {
+		return m.envDeletedSecrets[selection.name]
 	}
-	return m.envDeletedPlain[name]
+	return m.envDeletedPlain[selection.name]
 }
 
 func (m *browser) discardEnvChanges() {
@@ -356,7 +373,7 @@ func (m *browser) discardEnvChanges() {
 	m.envEditName, m.envEditValue = "", ""
 	m.envConfirm = false
 	m.envRevealName, m.envRevealValue = "", ""
-	m.envMessage = "Staged changes discarded"
+	m.envMessage = messageChangesDiscarded
 	m.envCursor = min(m.envCursor, max(0, len(m.envPlain)+len(m.envSecretNames)-1))
 }
 
@@ -365,128 +382,76 @@ func (m *browser) handleEnvKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if m.envConfirm {
-		switch msg.String() {
-		case "y", "enter":
-			m.envConfirm = false
-			return m.commitEnvChanges()
-		case "n", "esc":
-			m.envConfirm = false
-			m.envMessage = "Save cancelled · staged changes remain"
-		case "up", "k":
-			m.summaryScroll = max(0, m.summaryScroll-1)
-		case "down", "j":
-			m.summaryScroll++
-		case "pgup":
-			m.summaryScroll = max(0, m.summaryScroll-max(1, m.height-8))
-		case "pgdown":
-			m.summaryScroll += max(1, m.height-8)
-		}
-		return nil
+		return m.handleEnvConfirmKey(msg.String())
 	}
 	if m.envEditMode != envEditNone {
-		switch msg.String() {
-		case "esc":
-			m.envEditMode = envEditNone
-			m.envEditValue = ""
-			m.envEditName = ""
-		case "ctrl+u":
-			m.envEditValue = ""
-		case "backspace", "ctrl+h":
-			if len(m.envEditValue) > 0 {
-				r := []rune(m.envEditValue)
-				m.envEditValue = string(r[:len(r)-1])
-			}
-		case "enter":
-			return m.submitEnvEdit()
-		default:
-			if msg.Text != "" {
-				m.envEditValue += msg.Text
-			}
-		}
-		return nil
+		return m.handleEnvEditingKey(msg)
 	}
-	secret, _, _, _, ok := m.selectedEnv()
+	return m.handleEnvBrowseKey(msg)
+}
+
+func (m *browser) handleEnvConfirmKey(key string) tea.Cmd {
+	switch key {
+	case "y", keyEnter:
+		m.envConfirm = false
+		return m.commitEnvChanges()
+	case "n", browserKeyEscape:
+		m.envConfirm = false
+		m.envMessage = messageSaveCancelled
+	case "up", "k":
+		m.summaryScroll = max(0, m.summaryScroll-1)
+	case keyDown, "j":
+		m.summaryScroll++
+	case inputKeyPgUp:
+		m.summaryScroll = max(0, m.summaryScroll-max(1, m.height-handleEnvKeyValue8))
+	case inputKeyPgDown:
+		m.summaryScroll += max(1, m.height-handleEnvKeyValue8)
+	}
+	return nil
+}
+
+func (m *browser) handleEnvEditingKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case browserKeyEscape:
+		m.envEditMode = envEditNone
+		m.envEditValue = ""
+		m.envEditName = ""
+	case keyCtrlU:
+		m.envEditValue = ""
+	case keyBackspace, keyCtrlH:
+		if len(m.envEditValue) > 0 {
+			r := []rune(m.envEditValue)
+			m.envEditValue = string(r[:len(r)-1])
+		}
+	case keyEnter:
+		return m.submitEnvEdit()
+	default:
+		if msg.Text != "" {
+			m.envEditValue += msg.Text
+		}
+	}
+	return nil
+}
+
+func (m *browser) handleEnvBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
+	selection := m.selectedEnv()
+	secret, ok := selection.secret, selection.ok
 	previous := m.envCursor
 	switch msg.String() {
 	case "up":
 		m.envCursor = max(0, m.envCursor-1)
-	case "down", "j":
+	case keyDown, "j":
 		m.envCursor = min(max(0, len(m.envPlain)+len(m.envSecretNames)-1), m.envCursor+1)
-	case "left", "right", "tab":
-		if msg.String() == "left" {
+	case keyLeft, "right", inputKeyTab:
+		if msg.String() == keyLeft {
 			m.envCursor = 0
 		} else if len(m.envPlain) > 0 {
 			m.envCursor = len(m.envPlain)
 		}
-	case "e":
-		if ok && m.allowWrites && !m.selectedEnvDeleted() {
-			m.envEditName, m.envEditValue = func() (string, string) { _, _, n, v, _ := m.selectedEnv(); return n, v }()
-			if secret {
-				m.envEditMode = envEditSecret
-				m.envEditValue = ""
-				m.envRevealName, m.envRevealValue = "", ""
-			} else {
-				m.envEditMode = envEditPlain
-			}
+	default:
+		if cmd := m.handleEnvActionKey(msg.String(), secret, ok); cmd != nil {
+			return cmd
 		}
-	case "+":
-		if m.allowWrites {
-			m.envEditMode = envAddPlain
-			m.envEditName = ""
-			m.envEditValue = ""
-		}
-	case "A":
-		if m.allowWrites {
-			m.envEditMode = envAddSecret
-			m.envEditName = ""
-			m.envEditValue = ""
-		}
-	case "d":
-		if ok && m.allowWrites {
-			return m.deleteSelectedEnv()
-		}
-	case "s":
-		if m.allowWrites {
-			if m.envHasChanges() {
-				m.envConfirm = true
-				m.envMessage = ""
-			} else {
-				m.envMessage = "No staged changes"
-			}
-		}
-	case "x":
-		if m.allowWrites && m.envHasChanges() {
-			m.discardEnvChanges()
-		}
-	case "y":
-		if ok {
-			if secret {
-				return m.copySelectedSecret()
-			}
-			return m.copySelectedPlain()
-		}
-	case "v":
-		if ok && secret {
-			if m.envRevealName == func() string { _, _, n, _, _ := m.selectedEnv(); return n }() {
-				m.envRevealName = ""
-				m.envRevealValue = ""
-			} else {
-				return m.revealSelectedSecret()
-			}
-		}
-	case "r":
-		if m.envHasChanges() {
-			m.envMessage = "Save or discard staged changes before refreshing"
-			return nil
-		}
-		m.envMessage = ""
-		return m.loadEnv()
-	case "m":
-		m.envMaximized = !m.envMaximized
-	case "pgup":
-		m.summaryScroll = max(0, m.summaryScroll-max(1, m.height-8))
-	case "pgdown":
-		m.summaryScroll += max(1, m.height-8)
 	}
 	if previous != m.envCursor && m.envRevealName != "" {
 		m.envRevealName = ""
@@ -495,64 +460,105 @@ func (m *browser) handleEnvKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *browser) submitEnvEdit() tea.Cmd {
-	mode, name, value := m.envEditMode, strings.TrimSpace(m.envEditName), m.envEditValue
-	if mode == envAddPlain || mode == envAddSecret {
-		if name == "" {
-			m.envEditName = value
-			m.envEditValue = ""
+func (m *browser) handleEnvActionKey(key string, secret, selected bool) tea.Cmd {
+	switch key {
+	case "e", "+", "A", "d", "s", "x":
+		return m.handleEnvWriteAction(key, secret, selected)
+	case "y", "v":
+		return m.handleEnvClipboardAction(key, secret, selected)
+	case "r":
+		if m.envHasChanges() {
+			m.envMessage = messageSaveOrDiscardBeforeRefresh
 			return nil
 		}
-		value = m.envEditValue
+		m.envMessage = ""
+		return m.loadEnv()
+	case "m":
+		m.envMaximized = !m.envMaximized
+	case inputKeyPgUp:
+		m.summaryScroll = max(0, m.summaryScroll-max(1, m.height-handleEnvKeyValue8))
+	case inputKeyPgDown:
+		m.summaryScroll += max(1, m.height-handleEnvKeyValue8)
 	}
-	if name == "" {
-		m.envMessage = "Variable name cannot be empty"
+	return nil
+}
+
+func (m *browser) handleEnvWriteAction(key string, secret, selected bool) tea.Cmd {
+	switch key {
+	case "e":
+		if selected && m.allowWrites && !m.selectedEnvDeleted() {
+			selection := m.selectedEnv()
+			name, value := selection.name, selection.value
+			m.envEditName, m.envEditValue = name, value
+			if secret {
+				m.envEditMode, m.envEditValue = envEditSecret, ""
+				m.envRevealName, m.envRevealValue = "", ""
+			} else {
+				m.envEditMode = envEditPlain
+			}
+		}
+	case "+", "A":
+		if m.allowWrites {
+			if key == "+" {
+				m.envEditMode = envAddPlain
+			} else {
+				m.envEditMode = envAddSecret
+			}
+			m.envEditName, m.envEditValue = "", ""
+		}
+	case "d":
+		if selected && m.allowWrites {
+			return m.deleteSelectedEnv()
+		}
+	case "s":
+		if m.allowWrites {
+			if m.envHasChanges() {
+				m.envConfirm = true
+				m.envMessage = ""
+			} else {
+				m.envMessage = messageNoStagedChanges
+			}
+		}
+	case "x":
+		if m.allowWrites && m.envHasChanges() {
+			m.discardEnvChanges()
+		}
+	}
+	return nil
+}
+
+func (m *browser) handleEnvClipboardAction(key string, secret, selected bool) tea.Cmd {
+	if !selected {
 		return nil
 	}
-	if (mode == envAddPlain || mode == envAddSecret) && m.envNameExists(name) {
-		m.envMessage = "Variable name already exists"
+	if key == "y" {
+		if secret {
+			return m.copySelectedSecret()
+		}
+		return m.copySelectedPlain()
+	}
+	if !secret {
 		return nil
 	}
-	if mode == envEditPlain || mode == envAddPlain {
-		found := false
-		for i := range m.envPlain {
-			if m.envPlain[i].Name == name {
-				m.envPlain[i].Value = value
-				found = true
-				break
-			}
-		}
-		if !found {
-			m.envPlain = append(m.envPlain, client.EnvVar{Name: name, Value: value})
-		}
-		sort.Slice(m.envPlain, func(i, j int) bool { return m.envPlain[i].Name < m.envPlain[j].Name })
-		m.envCursor = 0
-		for i := range m.envPlain {
-			if m.envPlain[i].Name == name {
-				m.envCursor = i
-				break
-			}
-		}
-	} else if mode == envEditSecret || mode == envAddSecret {
-		found := containsEnvName(m.envSecretNames, name)
-		if !found {
-			m.envSecretNames = append(m.envSecretNames, name)
-			sort.Strings(m.envSecretNames)
-		}
-		if m.envSecretValues == nil {
-			m.envSecretValues = make(map[string]string)
-		}
-		m.envSecretValues[name] = value
-		if m.envRevealName == name {
-			m.envRevealName, m.envRevealValue = "", ""
-		}
-		m.envCursor = len(m.envPlain)
-		for i, secretName := range m.envSecretNames {
-			if secretName == name {
-				m.envCursor += i
-				break
-			}
-		}
+	name := m.selectedEnv().name
+	if m.envRevealName == name {
+		m.envRevealName, m.envRevealValue = "", ""
+		return nil
+	}
+	return m.revealSelectedSecret()
+}
+
+func (m *browser) submitEnvEdit() tea.Cmd {
+	mode, name, value := m.envEditMode, strings.TrimSpace(m.envEditName), m.envEditValue
+	name, value, ready := m.prepareEnvEdit(mode, name, value)
+	if !ready {
+		return nil
+	}
+	switch mode {
+	case envEditPlain, envAddPlain:
+		m.applyPlainEnvEdit(name, value)
+	case envEditSecret, envAddSecret:
+		m.applySecretEnvEdit(name, value)
 	}
 	m.envEditMode = envEditNone
 	m.envEditName, m.envEditValue = "", ""
@@ -560,41 +566,117 @@ func (m *browser) submitEnvEdit() tea.Cmd {
 	return nil
 }
 
+func (m *browser) prepareEnvEdit(mode uint8, name, value string) (string, string, bool) {
+	if mode == envAddPlain || mode == envAddSecret {
+		if name == "" {
+			m.envEditName = value
+			m.envEditValue = ""
+			return name, value, false
+		}
+		value = m.envEditValue
+	}
+	if name == "" {
+		m.envMessage = "Variable name cannot be empty"
+		return name, value, false
+	}
+	if (mode == envAddPlain || mode == envAddSecret) && m.envNameExists(name) {
+		m.envMessage = "Variable name already exists"
+		return name, value, false
+	}
+	return name, value, true
+}
+
+func (m *browser) applyPlainEnvEdit(name, value string) {
+	found := false
+	for i := range m.envPlain {
+		if m.envPlain[i].Name == name {
+			m.envPlain[i].Value = value
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.envPlain = append(m.envPlain, client.EnvVar{Name: name, Value: value})
+	}
+	sort.Slice(m.envPlain, func(i, j int) bool { return m.envPlain[i].Name < m.envPlain[j].Name })
+	m.envCursor = 0
+	for i := range m.envPlain {
+		if m.envPlain[i].Name == name {
+			m.envCursor = i
+			break
+		}
+	}
+}
+
+func (m *browser) applySecretEnvEdit(name, value string) {
+	if !containsEnvName(m.envSecretNames, name) {
+		m.envSecretNames = append(m.envSecretNames, name)
+		sort.Strings(m.envSecretNames)
+	}
+	if m.envSecretValues == nil {
+		m.envSecretValues = make(map[string]string)
+	}
+	m.envSecretValues[name] = value
+	if m.envRevealName == name {
+		m.envRevealName, m.envRevealValue = "", ""
+	}
+	m.envCursor = len(m.envPlain)
+	for i, secretName := range m.envSecretNames {
+		if secretName == name {
+			m.envCursor += i
+			break
+		}
+	}
+}
+
 func (m *browser) deleteSelectedEnv() tea.Cmd {
-	secret, _, name, _, ok := m.selectedEnv()
+	selection := m.selectedEnv()
+	secret, name, ok := selection.secret, selection.name, selection.ok
 	if !ok {
 		return nil
 	}
-	if !secret {
-		if !containsEnvName(envNames(m.envOriginalPlain), name) {
-			m.envPlain = removePlainEnv(m.envPlain, name)
-		} else if m.envDeletedPlain[name] {
-			delete(m.envDeletedPlain, name)
-		} else {
-			if m.envDeletedPlain == nil {
-				m.envDeletedPlain = make(map[string]bool)
-			}
-			m.envDeletedPlain[name] = true
-		}
+	if secret {
+		m.deleteSelectedSecretEnv(name)
 	} else {
-		if m.envRevealName == name {
-			m.envRevealName, m.envRevealValue = "", ""
-		}
-		if !containsEnvName(m.envOriginalSecretNames, name) {
-			m.envSecretNames = removeSecretEnv(m.envSecretNames, name)
-			delete(m.envSecretValues, name)
-		} else if m.envDeletedSecrets[name] {
-			delete(m.envDeletedSecrets, name)
-		} else {
-			if m.envDeletedSecrets == nil {
-				m.envDeletedSecrets = make(map[string]bool)
-			}
-			m.envDeletedSecrets[name] = true
-		}
+		m.deleteSelectedPlainEnv(name)
 	}
 	m.envMessage = ""
 	m.envCursor = min(m.envCursor, max(0, len(m.envPlain)+len(m.envSecretNames)-1))
 	return nil
+}
+
+func (m *browser) deleteSelectedPlainEnv(name string) {
+	if !containsEnvName(envNames(m.envOriginalPlain), name) {
+		m.envPlain = removePlainEnv(m.envPlain, name)
+		return
+	}
+	if m.envDeletedPlain[name] {
+		delete(m.envDeletedPlain, name)
+		return
+	}
+	if m.envDeletedPlain == nil {
+		m.envDeletedPlain = make(map[string]bool)
+	}
+	m.envDeletedPlain[name] = true
+}
+
+func (m *browser) deleteSelectedSecretEnv(name string) {
+	if m.envRevealName == name {
+		m.envRevealName, m.envRevealValue = "", ""
+	}
+	if !containsEnvName(m.envOriginalSecretNames, name) {
+		m.envSecretNames = removeSecretEnv(m.envSecretNames, name)
+		delete(m.envSecretValues, name)
+		return
+	}
+	if m.envDeletedSecrets[name] {
+		delete(m.envDeletedSecrets, name)
+		return
+	}
+	if m.envDeletedSecrets == nil {
+		m.envDeletedSecrets = make(map[string]bool)
+	}
+	m.envDeletedSecrets[name] = true
 }
 
 func (m *browser) envNameExists(name string) bool {
@@ -603,12 +685,7 @@ func (m *browser) envNameExists(name string) bool {
 			return true
 		}
 	}
-	for _, envName := range m.envSecretNames {
-		if envName == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.envSecretNames, name)
 }
 
 func removePlainEnv(envs []client.EnvVar, name string) []client.EnvVar {
@@ -639,9 +716,7 @@ func (m *browser) commitEnvChanges() tea.Cmd {
 	plain := append([]client.EnvVar(nil), m.envDesiredPlain()...)
 	secretNames := append([]string(nil), m.envDesiredSecrets()...)
 	secretValues := make(map[string]string, len(m.envSecretValues))
-	for name, value := range m.envSecretValues {
-		secretValues[name] = value
-	}
+	maps.Copy(secretValues, m.envSecretValues)
 	plainChanged := !samePlainEnv(plain, m.envOriginalPlain)
 	secretChanged := len(secretNames) != len(m.envOriginalSecretNames) || len(secretValues) > 0
 	if !plainChanged && !secretChanged {
@@ -713,7 +788,7 @@ func (m *browser) clearPendingEnv() {
 }
 
 func (m *browser) copySelectedSecret() tea.Cmd {
-	_, _, name, _, _ := m.selectedEnv()
+	name := m.selectedEnv().name
 	if value, staged := m.envSecretValues[name]; staged {
 		return func() tea.Msg { return envCopyResult{err: clipboard.WriteAll(value)} }
 	}
@@ -730,12 +805,11 @@ func (m *browser) copySelectedSecret() tea.Cmd {
 			for _, e := range values {
 				if e.Name == name {
 					err = clipboard.WriteAll(e.Value)
-					found = true
 					break
 				}
 			}
 			if !found {
-				err = fmt.Errorf("secret not found")
+				err = errSecretNotFound
 			}
 		}
 		return envCopyResult{err: err}
@@ -743,12 +817,12 @@ func (m *browser) copySelectedSecret() tea.Cmd {
 }
 
 func (m *browser) copySelectedPlain() tea.Cmd {
-	_, _, _, value, _ := m.selectedEnv()
+	value := m.selectedEnv().value
 	return func() tea.Msg { return envCopyResult{err: clipboard.WriteAll(value)} }
 }
 
 func (m *browser) revealSelectedSecret() tea.Cmd {
-	_, _, name, _, _ := m.selectedEnv()
+	name := m.selectedEnv().name
 	if value, staged := m.envSecretValues[name]; staged {
 		m.envRevealName, m.envRevealValue = name, value
 		m.envMessage = "Staged secret visible"
@@ -768,7 +842,6 @@ func (m *browser) revealSelectedSecret() tea.Cmd {
 					return envRevealResult{appID: id, name: name, value: e.Value}
 				}
 			}
-			err = fmt.Errorf("secret not found")
 		}
 		return envRevealResult{appID: id, name: name, err: err}
 	}
@@ -798,31 +871,31 @@ func (m *browser) handleEnvWrite(msg envWriteResult) (tea.Model, tea.Cmd) {
 	m.envState.reset()
 	return m, m.loadEnv()
 }
-func (m *browser) handleEnvCopy(msg envCopyResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleEnvCopy(msg envCopyResult) tea.Model {
 	if msg.err != nil {
 		m.envMessage = "Copy failed · check clipboard access"
 	} else {
 		m.envMessage = "Value copied to clipboard"
 	}
-	return m, nil
+	return m
 }
 
-func (m *browser) handleEnvReveal(msg envRevealResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleEnvReveal(msg envRevealResult) tea.Model {
 	if msg.appID != m.selectedDetailTarget() {
-		return m, nil
+		return m
 	}
 	if msg.err != nil {
 		m.envMessage = "Could not read selected secret"
-		return m, nil
+		return m
 	}
-	_, _, name, _, ok := m.selectedEnv()
-	if !ok || name != msg.name {
-		return m, nil
+	selection := m.selectedEnv()
+	if !selection.ok || selection.name != msg.name {
+		return m
 	}
 	if value, staged := m.envSecretValues[msg.name]; staged {
 		msg.value = value
 	}
 	m.envRevealName, m.envRevealValue = msg.name, msg.value
 	m.envMessage = "Secret visible"
-	return m, nil
+	return m
 }

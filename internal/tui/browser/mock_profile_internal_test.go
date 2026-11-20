@@ -15,16 +15,29 @@ func TestLoadDemoMockProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.Tenant != "demo-acme" || len(profile.Apps) != 3 {
+	if profile.Tenant != "hamravesh" || len(profile.Apps) != 3 {
 		t.Fatalf("unexpected profile scope or app count: tenant=%q apps=%d", profile.Tenant, len(profile.Apps))
 	}
-	app := profile.Apps[0]
+	assertDemoAppProjection(t, profile.Apps[0])
+	assertDemoRegistryFixture(t, profile)
+}
+
+func assertDemoAppProjection(t *testing.T, app client.App) {
+	t.Helper()
 	if app.CustomSubdomainAddr != "api-prod" || app.Namespace.Cluster.AppsCustomBaseDomain != "demo-west.darkube.app" {
-		t.Fatalf("platform subdomain fixture was not loaded: label=%q base=%q", app.CustomSubdomainAddr, app.Namespace.Cluster.AppsCustomBaseDomain)
+		t.Fatalf("platform subdomain fixture was not loaded: label=%q base=%q", app.CustomSubdomainAddr,
+			app.Namespace.Cluster.AppsCustomBaseDomain)
 	}
-	if app.Namespace.Name != "production" || app.State.Text != "healthy (2/2)" || !app.ReplicasPresent || app.Service == nil || app.Service.InternalAddress != "api.production.demo.svc" || app.Service.Ports["http"].NodePort != 30421 || app.ReadinessProbePath != "/healthz" || app.Command != "/app/server" || app.Args != "--port 8080" || !reflect.DeepEqual(app.Inputs, []string{"LOG_LEVEL", "PUBLIC_BASE_URL"}) {
+	if app.Namespace.Name != "production" || app.State.Text != "healthy (2/2)" || !app.ReplicasPresent || app.Service == nil ||
+		app.Service.InternalAddress != "api.production.demo.svc" || app.Service.Ports["http"].NodePort != 30421 ||
+		app.ReadinessProbePath != "/healthz" || app.Command != "/app/server" || app.Args != "--port 8080" ||
+		!reflect.DeepEqual(app.Inputs, []string{"LOG_LEVEL", "PUBLIC_BASE_URL"}) {
 		t.Fatalf("unexpected app projection: %+v", app)
 	}
+}
+
+func assertDemoRegistryFixture(t *testing.T, profile MockProfile) {
+	t.Helper()
 	if len(profile.Registries) != 1 || len(profile.Registries[0].Images) == 0 {
 		t.Fatalf("registry fixture missing: %+v", profile.Registries)
 	}
@@ -43,7 +56,8 @@ func TestMockRegistryDeleteTagPreservesManifest(t *testing.T) {
 	registry := profile.Registries[0].Registry
 	image := profile.Registries[0].Images[0]
 	m := newMockBrowser(profile)
-	if err := m.deleteRegistryTags(nil, profile.Tenant, registry.ID, image.Repository.Name, image.Digests[0].Digest, []string{"latest"}); err != nil {
+	if err := m.deleteRegistryTags(nil, profile.Tenant, registry.ID, image.Repository.Name, image.Digests[0].Digest,
+		[]string{"latest"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := m.listRegistryDigests(nil, profile.Tenant, registry.ID, image.Repository.Name)
@@ -108,12 +122,13 @@ func TestMockReplicasMustBePresentAndNonNull(t *testing.T) {
 func TestMockBrowserUsesOfflineProfileData(t *testing.T) {
 	t.Parallel()
 	profile := MockProfile{Tenant: "demo", Apps: []client.App{{
-		ID: "app-1", Name: "api", Namespace: client.Namespace{ID: 1, Name: "production"}, State: client.State{Text: "healthy (1/1)"}, Replicas: 1, ReplicasPresent: true,
+		ID: "app-1", Name: "api", Namespace: client.Namespace{ID: 1, Name: "production"},
+		State: client.State{Text: "healthy (1/1)"}, Replicas: 1, ReplicasPresent: true,
 	}}}
 	m := newMockBrowser(profile)
 	cmd := m.Init()
 	var result appsResult
-	for _, batched := range cmd().(tea.BatchMsg) {
+	for _, batched := range requireMessage[tea.BatchMsg](t, cmd()) {
 		switch msg := batched().(type) {
 		case appsResult:
 			result = msg

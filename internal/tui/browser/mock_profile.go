@@ -32,10 +32,22 @@ type MockProfile struct {
 	Databases  []client.Database
 }
 
+// MockAppData contains offline application fixture data.
 type MockAppData struct {
 	PlainEnvs   []client.EnvVar
 	SecretNames []string
 	Pods        []appstate.Pod
+	Logs        []MockLog
+	Usage       *AppUsage
+	History     UsageHistory
+}
+
+// MockLog is one log entry in an offline mock profile.
+type MockLog struct {
+	Entry     client.LogEntry
+	Pod       string
+	Container string
+	Previous  bool
 }
 
 // MockTenant is one tenant and its local app snapshot.
@@ -49,11 +61,13 @@ type MockTenant struct {
 	Databases  []client.Database
 }
 
+// MockRegistry contains an offline registry fixture.
 type MockRegistry struct {
 	Registry client.Registry
 	Images   []MockRegistryImage
 }
 
+// MockRegistryImage contains an offline registry image fixture.
 type MockRegistryImage struct {
 	Repository client.Repository
 	Digests    []client.Digest
@@ -79,6 +93,7 @@ type mockProfileTenant struct {
 	Databases  []client.Database      `yaml:"databases"`
 }
 
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileRegistry struct {
 	ID                string                     `yaml:"id"`
 	Name              string                     `yaml:"name"`
@@ -89,6 +104,7 @@ type mockProfileRegistry struct {
 	Images            []mockProfileRegistryImage `yaml:"images"`
 }
 
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileRegistryImage struct {
 	Name       string                      `yaml:"name"`
 	LastPushed string                      `yaml:"last_pushed"`
@@ -96,6 +112,7 @@ type mockProfileRegistryImage struct {
 	Digests    []mockProfileRegistryDigest `yaml:"digests"`
 }
 
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileRegistryDigest struct {
 	Digest     string   `yaml:"digest"`
 	Tags       []string `yaml:"tags"`
@@ -103,6 +120,7 @@ type mockProfileRegistryDigest struct {
 	LastPushed string   `yaml:"last_pushed"`
 }
 
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileAlert struct {
 	ID               string `yaml:"id"`
 	AlertName        string `yaml:"alertname"`
@@ -122,27 +140,30 @@ type mockProfileAlert struct {
 
 func convertMockAlerts(input []mockProfileAlert) ([]client.Alert, error) {
 	if len(input) > mockProfileMaxApps {
-		return nil, fmt.Errorf("mock profile has more than %d alerts", mockProfileMaxApps)
+		return nil, fmt.Errorf("%w: mock profile has more than %d alerts", errInvalidMockProfile, mockProfileMaxApps)
 	}
 	out := make([]client.Alert, 0, len(input))
 	seen := make(map[string]struct{}, len(input))
 	for i, alert := range input {
 		id := strings.TrimSpace(alert.ID)
 		if id == "" || strings.TrimSpace(alert.AlertName) == "" {
-			return nil, fmt.Errorf("mock profile alert %d requires id and alertname", i+1)
+			return nil, fmt.Errorf("%w: mock profile alert %d requires id and alertname", errInvalidMockProfile, i+1)
 		}
 		if _, exists := seen[id]; exists {
-			return nil, fmt.Errorf("mock profile has duplicate alert id %q", id)
+			return nil, fmt.Errorf("%w: mock profile has duplicate alert id %q", errInvalidMockProfile, id)
 		}
 		seen[id] = struct{}{}
-		out = append(out, client.Alert{ID: id, AlertName: alert.AlertName, Status: alert.Status, Severity: alert.Severity, Instance: alert.Instance, ServiceOwner: alert.ServiceOwner, Condition: alert.Condition, AlertDescription: alert.AlertDescription, DescriptionFA: alert.DescriptionFA, TimeWindow: alert.TimeWindow, StartsAt: alert.StartsAt, EndsAt: alert.EndsAt, ActionLink: alert.ActionLink, ForMe: alert.ForMe})
+		out = append(out, client.Alert{ID: id, AlertName: alert.AlertName, Status: alert.Status, Severity: alert.Severity,
+			Instance: alert.Instance, ServiceOwner: alert.ServiceOwner, Condition: alert.Condition,
+			AlertDescription: alert.AlertDescription, DescriptionFA: alert.DescriptionFA, TimeWindow: alert.TimeWindow,
+			StartsAt: alert.StartsAt, EndsAt: alert.EndsAt, ActionLink: alert.ActionLink, ForMe: alert.ForMe})
 	}
 	return out, nil
 }
 
 func convertMockRegistries(input []mockProfileRegistry) ([]MockRegistry, error) {
 	if len(input) > mockProfileMaxApps {
-		return nil, fmt.Errorf("mock profile has more than %d registries", mockProfileMaxApps)
+		return nil, fmt.Errorf("%w: mock profile has more than %d registries", errInvalidMockProfile, mockProfileMaxApps)
 	}
 	out := make([]MockRegistry, 0, len(input))
 	ids := map[string]bool{}
@@ -151,48 +172,77 @@ func convertMockRegistries(input []mockProfileRegistry) ([]MockRegistry, error) 
 	for i, raw := range input {
 		id, name := strings.TrimSpace(raw.ID), strings.TrimSpace(raw.Name)
 		if id == "" || name == "" || strings.TrimSpace(raw.Address) == "" {
-			return nil, fmt.Errorf("mock profile registry %d requires id, name and address", i+1)
+			return nil, fmt.Errorf("%w: mock profile registry %d requires id, name and address", errInvalidMockProfile, i+1)
 		}
 		if ids[id] || names[name] {
-			return nil, fmt.Errorf("mock profile has duplicate registry id or name %q", name)
+			return nil, fmt.Errorf("%w: mock profile has duplicate registry id or name %q", errInvalidMockProfile, name)
 		}
 		ids[id], names[name] = true, true
-		reg := client.Registry{ID: client.FlexID(id), Name: name, Address: raw.Address, Username: raw.Username, IsProvidedAsSaaS: raw.IsProvidedAsSaaS, StorageUsageBytes: raw.StorageUsageBytes}
-		images := make([]MockRegistryImage, 0, len(raw.Images))
-		seenImages := map[string]bool{}
-		for _, image := range raw.Images {
-			imageName := strings.TrimSpace(image.Name)
-			if imageName == "" || seenImages[imageName] {
-				return nil, fmt.Errorf("mock profile registry %q has an empty or duplicate image", name)
-			}
-			seenImages[imageName] = true
-			seenTags := map[string]bool{}
-			digests := make([]client.Digest, 0, len(image.Digests))
-			for _, d := range image.Digests {
-				if strings.TrimSpace(d.Digest) == "" {
-					return nil, fmt.Errorf("mock profile image %q has a digest without a digest value", imageName)
-				}
-				tags := append([]string(nil), d.Tags...)
-				for _, tag := range tags {
-					tag = strings.TrimSpace(tag)
-					if tag == "" || seenTags[tag] {
-						return nil, fmt.Errorf("mock profile image %q has an empty or duplicate tag", imageName)
-					}
-					seenTags[tag] = true
-				}
-				digests = append(digests, client.Digest{Digest: d.Digest, Tags: tags, Size: d.Size, LastPushed: d.LastPushed})
-			}
-			images = append(images, MockRegistryImage{Repository: client.Repository{Name: imageName, LastPushed: image.LastPushed, RecentTag: image.RecentTag}, Digests: digests})
+		reg := client.Registry{ID: client.FlexID(id), Name: name, Address: raw.Address, Username: raw.Username,
+			IsProvidedAsSaaS: raw.IsProvidedAsSaaS, StorageUsageBytes: raw.StorageUsageBytes}
+		images, err := convertMockRegistryImages(raw.Images, name)
+		if err != nil {
+			return nil, err
 		}
 		totalImages += len(images)
 		if totalImages > mockProfileMaxApps {
-			return nil, fmt.Errorf("mock profile has more than %d registry images", mockProfileMaxApps)
+			return nil, fmt.Errorf("%w: mock profile has more than %d registry images", errInvalidMockProfile, mockProfileMaxApps)
 		}
 		out = append(out, MockRegistry{Registry: reg, Images: images})
 	}
 	return out, nil
 }
 
+func convertMockRegistryImages(input []mockProfileRegistryImage, registryName string) ([]MockRegistryImage, error) {
+	images := make([]MockRegistryImage, 0, len(input))
+	seen := make(map[string]bool, len(input))
+	for _, raw := range input {
+		name := strings.TrimSpace(raw.Name)
+		if name == "" || seen[name] {
+			return nil, fmt.Errorf("%w: mock profile registry %q has an empty or duplicate image", errInvalidMockProfile, registryName)
+		}
+		seen[name] = true
+		image, err := convertMockRegistryImage(raw, name)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, image)
+	}
+	return images, nil
+}
+
+func convertMockRegistryImage(raw mockProfileRegistryImage, name string) (MockRegistryImage, error) {
+	digests := make([]client.Digest, 0, len(raw.Digests))
+	seenTags := make(map[string]bool)
+	for _, rawDigest := range raw.Digests {
+		digest, err := convertMockRegistryDigest(rawDigest, name, seenTags)
+		if err != nil {
+			return MockRegistryImage{}, err
+		}
+		digests = append(digests, digest)
+	}
+	return MockRegistryImage{
+		Repository: client.Repository{Name: name, LastPushed: raw.LastPushed, RecentTag: raw.RecentTag},
+		Digests:    digests,
+	}, nil
+}
+
+func convertMockRegistryDigest(raw mockProfileRegistryDigest, imageName string, seenTags map[string]bool) (client.Digest, error) {
+	if strings.TrimSpace(raw.Digest) == "" {
+		return client.Digest{}, fmt.Errorf("%w: mock profile image %q has a digest without a digest value", errInvalidMockProfile, imageName)
+	}
+	tags := append([]string(nil), raw.Tags...)
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seenTags[tag] {
+			return client.Digest{}, fmt.Errorf("%w: mock profile image %q has an empty or duplicate tag", errInvalidMockProfile, imageName)
+		}
+		seenTags[tag] = true
+	}
+	return client.Digest{Digest: raw.Digest, Tags: tags, Size: raw.Size, LastPushed: raw.LastPushed}, nil
+}
+
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileApp struct {
 	ID                  string                  `yaml:"id"`
 	Name                string                  `yaml:"name"`
@@ -228,8 +278,37 @@ type mockProfileApp struct {
 	Envs                []client.EnvVar         `yaml:"envs"`
 	SecretEnvNames      []string                `yaml:"secret_envs"`
 	Pods                []mockProfilePod        `yaml:"pods"`
+	Logs                []mockProfileLog        `yaml:"logs"`
+	Usage               mockProfileUsage        `yaml:"usage"`
+	History             mockProfileHistory      `yaml:"history"`
 }
 
+type mockProfileLog struct {
+	Timestamp string `yaml:"timestamp"`
+	Text      string `yaml:"text"`
+	Pod       string `yaml:"pod"`
+	Container string `yaml:"container"`
+	Previous  bool   `yaml:"previous"`
+}
+
+//nolint:tagliatelle // These snake_case YAML keys are part of the mock profile format.
+type mockProfileUsage struct {
+	CPU  *float64 `yaml:"cpu_cores"`
+	RAM  *float64 `yaml:"ram_bytes"`
+	Disk *float64 `yaml:"disk_bytes"`
+}
+
+//nolint:tagliatelle // These snake_case YAML keys are part of the mock profile format.
+type mockProfileHistory struct {
+	CPU            []client.Series `yaml:"cpu"`
+	CPUThrottle    []client.Series `yaml:"cpu_throttle"`
+	RAM            []client.Series `yaml:"ram"`
+	Disk           []client.Series `yaml:"disk"`
+	NetworkReceive []client.Series `yaml:"network_receive"`
+	NetworkSend    []client.Series `yaml:"network_send"`
+}
+
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfilePlan struct {
 	ID              string                `yaml:"id"`
 	Name            string                `yaml:"name"`
@@ -239,6 +318,8 @@ type mockProfilePlan struct {
 	ShowInCreateApp bool                  `yaml:"show_in_create_app"`
 	Detail          mockProfilePlanDetail `yaml:"detail"`
 }
+
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfilePlanDetail struct {
 	RAMLimit   int `yaml:"ram_limit"`
 	CPURequest int `yaml:"cpu_request"`
@@ -246,6 +327,8 @@ type mockProfilePlanDetail struct {
 type mockProfileCustomConfig struct {
 	HPA *mockProfileHPA `yaml:"hpa"`
 }
+
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileHPA struct {
 	Enabled                        bool `yaml:"enabled"`
 	MinReplicas                    int  `yaml:"minReplicas"`
@@ -258,6 +341,7 @@ type mockProfilePod struct {
 	Containers []string `yaml:"containers"`
 }
 
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileService struct {
 	Type            string                 `yaml:"type"`
 	Ports           map[string]client.Port `yaml:"ports"`
@@ -272,6 +356,7 @@ type mockProfileNamespace struct {
 	Cluster mockProfileCluster `yaml:"cluster"`
 }
 
+//nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
 type mockProfileCluster struct {
 	ID                   int    `yaml:"id"`
 	Name                 string `yaml:"name"`
@@ -287,7 +372,7 @@ type mockProfileState struct {
 // LoadMockProfile reads a bounded, versioned YAML fixture. Unknown fields fail
 // parsing so secrets and unsupported data cannot silently enter the UI model.
 func LoadMockProfile(path string) (MockProfile, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // The caller explicitly selects the local fixture path.
 	if err != nil {
 		return MockProfile{}, fmt.Errorf("open mock profile %q: %w", path, err)
 	}
@@ -298,7 +383,7 @@ func LoadMockProfile(path string) (MockProfile, error) {
 		return MockProfile{}, fmt.Errorf("read mock profile %q: %w", path, err)
 	}
 	if len(data) > mockProfileMaxSize {
-		return MockProfile{}, fmt.Errorf("mock profile exceeds the %d-byte limit", mockProfileMaxSize)
+		return MockProfile{}, fmt.Errorf("%w: mock profile exceeds the %d-byte limit", errInvalidMockProfile, mockProfileMaxSize)
 	}
 	return ParseMockProfile(data)
 }
@@ -306,71 +391,103 @@ func LoadMockProfile(path string) (MockProfile, error) {
 // ParseMockProfile decodes one strict YAML document without exposing parser
 // snippets, which can contain values copied into a malformed fixture.
 func ParseMockProfile(data []byte) (MockProfile, error) {
+	input, err := decodeMockProfile(data)
+	if err != nil {
+		return MockProfile{}, err
+	}
+	if len(input.Tenants) > 0 {
+		if mockProfileMixesTopLevelTenants(input) {
+			return MockProfile{}, errMockProfileCannotMixTopLevelTenant
+		}
+		return parseMockTenants(input.Tenants)
+	}
+	return parseTopLevelMockProfile(input)
+}
+
+func decodeMockProfile(data []byte) (mockProfileFile, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	var input mockProfileFile
 	if err := decoder.Decode(&input); err != nil {
-		return MockProfile{}, errors.New("mock profile contains invalid or unsupported YAML")
+		return mockProfileFile{}, errMockProfileContainsInvalidOrUnsupportedYAML
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return MockProfile{}, errors.New("mock profile must contain exactly one YAML document")
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return mockProfileFile{}, errMockProfileMustContainExactlyOneYAML
 	}
 	if input.Version != mockProfileVersion {
-		return MockProfile{}, fmt.Errorf("unsupported mock profile version %d; expected %d", input.Version, mockProfileVersion)
+		return mockProfileFile{}, fmt.Errorf("%w: unsupported mock profile version %d; expected %d", errInvalidMockProfile,
+			input.Version, mockProfileVersion)
 	}
-	if len(input.Tenants) > 0 {
-		if strings.TrimSpace(input.Tenant) != "" || len(input.Apps) > 0 || len(input.Alerts) > 0 || len(input.Namespaces) > 0 || len(input.Registries) > 0 {
-			return MockProfile{}, errors.New("mock profile cannot mix top-level tenant/apps with tenants")
-		}
-		if len(input.Tenants) > mockProfileMaxApps {
-			return MockProfile{}, errors.New("mock profile has too many tenants")
-		}
-		tenants := make([]MockTenant, 0, len(input.Tenants))
-		totalApps := 0
-		seenTenants := make(map[string]struct{}, len(input.Tenants))
-		for _, tenant := range input.Tenants {
-			name := strings.TrimSpace(tenant.Name)
-			if name == "" {
-				return MockProfile{}, errors.New("mock profile tenant name is required")
-			}
-			if _, exists := seenTenants[name]; exists {
-				return MockProfile{}, fmt.Errorf("mock profile has duplicate tenant %q", name)
-			}
-			seenTenants[name] = struct{}{}
-			totalApps += len(tenant.Apps)
-			if totalApps > mockProfileMaxApps {
-				return MockProfile{}, fmt.Errorf("mock profile has more than %d apps", mockProfileMaxApps)
-			}
-			apps, err := convertMockApps(tenant.Apps)
-			if err != nil {
-				return MockProfile{}, err
-			}
-			appData := convertMockAppData(tenant.Apps)
-			alerts, err := convertMockAlerts(tenant.Alerts)
-			if err != nil {
-				return MockProfile{}, err
-			}
-			namespaces, err := convertMockNamespaces(tenant.Namespaces)
-			if err != nil {
-				return MockProfile{}, err
-			}
-			registries, err := convertMockRegistries(tenant.Registries)
-			if err != nil {
-				return MockProfile{}, err
-			}
-			if len(tenant.Databases) > mockProfileMaxApps {
-				return MockProfile{}, fmt.Errorf("mock tenant %q has too many databases", name)
-			}
-			tenants = append(tenants, MockTenant{Name: name, Apps: apps, Alerts: alerts, Namespaces: mergeNamespaces(namespaces, namespacesFromApps(apps)), AppData: appData, Registries: registries, Databases: append([]client.Database(nil), tenant.Databases...)})
-		}
-		return MockProfile{Tenant: tenants[0].Name, Apps: tenants[0].Apps, Alerts: tenants[0].Alerts, Namespaces: tenants[0].Namespaces, Registries: tenants[0].Registries, Databases: tenants[0].Databases, Tenants: tenants}, nil
+	return input, nil
+}
+
+func mockProfileMixesTopLevelTenants(input mockProfileFile) bool {
+	return strings.TrimSpace(input.Tenant) != "" || len(input.Apps) > 0 || len(input.Alerts) > 0 ||
+		len(input.Namespaces) > 0 || len(input.Registries) > 0
+}
+
+func parseMockTenants(input []mockProfileTenant) (MockProfile, error) {
+	if len(input) > mockProfileMaxApps {
+		return MockProfile{}, errMockProfileHasTooManyTenants
 	}
+	tenants := make([]MockTenant, 0, len(input))
+	totalApps := 0
+	seen := make(map[string]struct{}, len(input))
+	for _, raw := range input {
+		name := strings.TrimSpace(raw.Name)
+		if name == "" {
+			return MockProfile{}, errMockProfileTenantNameIsRequired
+		}
+		if _, exists := seen[name]; exists {
+			return MockProfile{}, fmt.Errorf("%w: mock profile has duplicate tenant %q", errInvalidMockProfile, name)
+		}
+		seen[name] = struct{}{}
+		totalApps += len(raw.Apps)
+		if totalApps > mockProfileMaxApps {
+			return MockProfile{}, fmt.Errorf("%w: mock profile has more than %d apps", errInvalidMockProfile, mockProfileMaxApps)
+		}
+		tenant, err := convertMockTenant(raw, name)
+		if err != nil {
+			return MockProfile{}, err
+		}
+		tenants = append(tenants, tenant)
+	}
+	return MockProfile{Tenant: tenants[0].Name, Apps: tenants[0].Apps, Alerts: tenants[0].Alerts,
+		Namespaces: tenants[0].Namespaces, Registries: tenants[0].Registries, Databases: tenants[0].Databases, Tenants: tenants}, nil
+}
+
+func convertMockTenant(raw mockProfileTenant, name string) (MockTenant, error) {
+	apps, err := convertMockApps(raw.Apps)
+	if err != nil {
+		return MockTenant{}, err
+	}
+	alerts, err := convertMockAlerts(raw.Alerts)
+	if err != nil {
+		return MockTenant{}, err
+	}
+	namespaces, err := convertMockNamespaces(raw.Namespaces)
+	if err != nil {
+		return MockTenant{}, err
+	}
+	registries, err := convertMockRegistries(raw.Registries)
+	if err != nil {
+		return MockTenant{}, err
+	}
+	if len(raw.Databases) > mockProfileMaxApps {
+		return MockTenant{}, fmt.Errorf("%w: mock tenant %q has too many databases", errInvalidMockProfile, name)
+	}
+	return MockTenant{Name: name, Apps: apps, Alerts: alerts, Namespaces: mergeNamespaces(namespaces,
+		namespacesFromApps(apps)), AppData: convertMockAppData(raw.Apps), Registries: registries,
+		Databases: append([]client.Database(nil), raw.Databases...)}, nil
+}
+
+func parseTopLevelMockProfile(input mockProfileFile) (MockProfile, error) {
 	if strings.TrimSpace(input.Tenant) == "" {
-		return MockProfile{}, errors.New("mock profile tenant is required")
+		return MockProfile{}, errMockProfileTenantIsRequired
 	}
 	if len(input.Apps) > mockProfileMaxApps {
-		return MockProfile{}, fmt.Errorf("mock profile has more than %d apps", mockProfileMaxApps)
+		return MockProfile{}, fmt.Errorf("%w: mock profile has more than %d apps", errInvalidMockProfile, mockProfileMaxApps)
 	}
 	apps, err := convertMockApps(input.Apps)
 	if err != nil {
@@ -390,15 +507,24 @@ func ParseMockProfile(data []byte) (MockProfile, error) {
 		return MockProfile{}, err
 	}
 	if len(input.Databases) > mockProfileMaxApps {
-		return MockProfile{}, fmt.Errorf("mock profile has too many databases")
+		return MockProfile{}, errMockProfileHasTooManyDatabases
 	}
-	return MockProfile{Tenant: input.Tenant, Apps: apps, Alerts: alerts, Namespaces: mergeNamespaces(namespaces, namespacesFromApps(apps)), AppData: appData, Registries: registries, Databases: append([]client.Database(nil), input.Databases...)}, nil
+	return MockProfile{Tenant: input.Tenant, Apps: apps, Alerts: alerts, Namespaces: mergeNamespaces(namespaces,
+		namespacesFromApps(apps)), AppData: appData, Registries: registries, Databases: append([]client.Database(nil),
+		input.Databases...)}, nil
 }
 
 func convertMockAppData(input []mockProfileApp) map[string]MockAppData {
 	data := make(map[string]MockAppData, len(input))
 	for _, app := range input {
-		item := MockAppData{PlainEnvs: append([]client.EnvVar(nil), app.Envs...), SecretNames: append([]string(nil), app.SecretEnvNames...)}
+		item := MockAppData{PlainEnvs: append([]client.EnvVar(nil), app.Envs...), SecretNames: append([]string(nil), app.SecretEnvNames...),
+			Usage: &AppUsage{CPUCores: app.Usage.CPU, RAMBytes: app.Usage.RAM, DiskBytes: app.Usage.Disk},
+			History: UsageHistory{CPU: app.History.CPU, CPUThrottle: app.History.CPUThrottle, RAM: app.History.RAM,
+				Disk: app.History.Disk, NetworkReceive: app.History.NetworkReceive, NetworkSend: app.History.NetworkSend}}
+		for _, log := range app.Logs {
+			item.Logs = append(item.Logs, MockLog{Entry: client.LogEntry{Timestamp: log.Timestamp, Text: log.Text},
+				Pod: log.Pod, Container: log.Container, Previous: log.Previous})
+		}
 		for _, pod := range app.Pods {
 			containers := make([]appstate.Container, 0, len(pod.Containers))
 			for _, name := range pod.Containers {
@@ -413,28 +539,29 @@ func convertMockAppData(input []mockProfileApp) map[string]MockAppData {
 
 func convertMockNamespaces(input []mockProfileNamespace) ([]client.Namespace, error) {
 	if len(input) > mockProfileMaxApps {
-		return nil, fmt.Errorf("mock profile has more than %d namespaces", mockProfileMaxApps)
+		return nil, fmt.Errorf("%w: mock profile has more than %d namespaces", errInvalidMockProfile, mockProfileMaxApps)
 	}
 	out := make([]client.Namespace, 0, len(input))
 	seen := make(map[int]struct{}, len(input))
 	for i, namespace := range input {
 		if namespace.ID < 1 || strings.TrimSpace(namespace.Name) == "" {
-			return nil, fmt.Errorf("mock profile namespace %d requires a positive id and name", i+1)
+			return nil, fmt.Errorf("%w: mock profile namespace %d requires a positive id and name", errInvalidMockProfile, i+1)
 		}
 		if _, exists := seen[namespace.ID]; exists {
-			return nil, fmt.Errorf("mock profile has duplicate namespace id %d", namespace.ID)
+			return nil, fmt.Errorf("%w: mock profile has duplicate namespace id %d", errInvalidMockProfile, namespace.ID)
 		}
 		seen[namespace.ID] = struct{}{}
 		out = append(out, client.Namespace{
 			ID: namespace.ID, Name: namespace.Name,
-			Cluster: client.Cluster{ID: namespace.Cluster.ID, Name: namespace.Cluster.Name, AppsCustomBaseDomain: namespace.Cluster.AppsCustomBaseDomain},
+			Cluster: client.Cluster{ID: namespace.Cluster.ID, Name: namespace.Cluster.Name,
+				AppsCustomBaseDomain: namespace.Cluster.AppsCustomBaseDomain},
 		})
 	}
 	return out, nil
 }
 
 func namespacesFromApps(apps []client.App) []client.Namespace {
-	var namespaces []client.Namespace
+	namespaces := make([]client.Namespace, 0, len(apps))
 	for _, app := range apps {
 		namespaces = append(namespaces, app.Namespace)
 	}
@@ -446,26 +573,27 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 	seenIDs := make(map[string]struct{}, len(input))
 	for i, app := range input {
 		if strings.TrimSpace(app.ID) == "" || strings.TrimSpace(app.Name) == "" {
-			return nil, fmt.Errorf("mock profile app %d requires id and name", i+1)
+			return nil, fmt.Errorf("%w: mock profile app %d requires id and name", errInvalidMockProfile, i+1)
 		}
 		if app.Namespace.ID < 1 || strings.TrimSpace(app.Namespace.Name) == "" {
-			return nil, fmt.Errorf("mock profile app %q requires a namespace id and name", app.ID)
+			return nil, fmt.Errorf("%w: mock profile app %q requires a namespace id and name", errInvalidMockProfile, app.ID)
 		}
 		if app.Replicas == nil {
-			return nil, fmt.Errorf("mock profile app %q requires replicas", app.ID)
+			return nil, fmt.Errorf("%w: mock profile app %q requires replicas", errInvalidMockProfile, app.ID)
 		}
 		if *app.Replicas < 0 {
-			return nil, fmt.Errorf("mock profile app %q has negative replicas", app.ID)
+			return nil, fmt.Errorf("%w: mock profile app %q has negative replicas", errInvalidMockProfile, app.ID)
 		}
 		if app.DiskSizeInGi < 0 {
-			return nil, fmt.Errorf("mock profile app %q has negative disk size", app.ID)
+			return nil, fmt.Errorf("%w: mock profile app %q has negative disk size", errInvalidMockProfile, app.ID)
 		}
 		if _, exists := seenIDs[app.ID]; exists {
-			return nil, fmt.Errorf("mock profile has duplicate app id %q", app.ID)
+			return nil, fmt.Errorf("%w: mock profile has duplicate app id %q", errInvalidMockProfile, app.ID)
 		}
 		seenIDs[app.ID] = struct{}{}
 		var service *client.AppService
-		if app.Service.Type != "" || len(app.Service.Ports) > 0 || app.Service.InternalAddress != "" || app.Service.ExternalAddress != "" || app.Service.ExternalIP != "" {
+		if app.Service.Type != "" || len(app.Service.Ports) > 0 || app.Service.InternalAddress != "" ||
+			app.Service.ExternalAddress != "" || app.Service.ExternalIP != "" {
 			service = &client.AppService{
 				Type:            app.Service.Type,
 				Ports:           app.Service.Ports,
@@ -474,15 +602,21 @@ func convertMockApps(input []mockProfileApp) ([]client.App, error) {
 				ExternalIP:      app.Service.ExternalIP,
 			}
 		}
-		buildArgs, _ := json.Marshal(app.GitBuildArgs)
+		buildArgs, err := json.Marshal(app.GitBuildArgs)
+		if err != nil {
+			return nil, fmt.Errorf("marshal mock app build arguments: %w", err)
+		}
 		var plan *client.Plan
 		if app.Plan != nil {
-			plan = &client.Plan{ID: app.Plan.ID, Name: app.Plan.Name, CodeName: app.Plan.CodeName, PlanType: app.Plan.PlanType, CostType: app.Plan.CostType, ShowInCreateApp: app.Plan.ShowInCreateApp, Detail: client.PlanDetail{RAMLimit: app.Plan.Detail.RAMLimit, CPURequest: app.Plan.Detail.CPURequest}}
+			plan = &client.Plan{ID: app.Plan.ID, Name: app.Plan.Name, CodeName: app.Plan.CodeName, PlanType: app.Plan.PlanType,
+				CostType: app.Plan.CostType, ShowInCreateApp: app.Plan.ShowInCreateApp,
+				Detail: client.PlanDetail{RAMLimit: app.Plan.Detail.RAMLimit, CPURequest: app.Plan.Detail.CPURequest}}
 		}
 		var customConfig *client.AppCustomConfig
 		if app.CustomConfig.HPA != nil {
 			h := app.CustomConfig.HPA
-			customConfig = &client.AppCustomConfig{HPA: &client.AppHPAConfig{Enabled: h.Enabled, MinReplicas: h.MinReplicas, MaxReplicas: h.MaxReplicas, TargetCPUUtilizationPercentage: h.TargetCPUUtilizationPercentage}}
+			customConfig = &client.AppCustomConfig{HPA: &client.AppHPAConfig{Enabled: h.Enabled, MinReplicas: h.MinReplicas,
+				MaxReplicas: h.MaxReplicas, TargetCPUUtilizationPercentage: h.TargetCPUUtilizationPercentage}}
 		}
 		apps = append(apps, client.App{
 			ID:   app.ID,

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCICDModeGatesBuildHistory(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		method      string
 		wantHistory bool
@@ -29,6 +30,7 @@ func TestCICDModeGatesBuildHistory(t *testing.T) {
 }
 
 func TestBuildArgumentsMaskedUntilRevealed(t *testing.T) {
+	t.Parallel()
 	app := client.App{GitBuildArgs: json.RawMessage(`[{"name":"API_KEY","value":"secret-value"}]`)}
 	m := &browser{}
 	text := ansi.Strip(strings.Join(m.cicdDarkubeInfo(app), "\n"))
@@ -42,6 +44,7 @@ func TestBuildArgumentsMaskedUntilRevealed(t *testing.T) {
 }
 
 func TestRepositoryCredentialsAreHidden(t *testing.T) {
+	t.Parallel()
 	got := redactRepoURL("https://user:secret@example.test/repo?token=secret")
 	if strings.Contains(got, "secret") || got != "https://example.test/repo" {
 		t.Fatalf("repository URL = %q", got)

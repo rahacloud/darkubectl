@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -14,6 +15,10 @@ import (
 	"github.com/rahacloud/darkubectl/internal/client"
 	"github.com/rahacloud/darkubectl/internal/config"
 	"github.com/urfave/cli/v3"
+)
+
+const (
+	jwtExpiryValue3 = 3
 )
 
 const tuiRefreshBeforeExpiry = time.Minute
@@ -111,7 +116,7 @@ func (c *tuiCredential) consoleAccessToken(ctx context.Context) (string, error) 
 
 func jwtExpiry(token string) (time.Time, bool) {
 	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
+	if len(parts) != jwtExpiryValue3 {
 		return time.Time{}, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -129,12 +134,12 @@ func jwtExpiry(token string) (time.Time, bool) {
 
 func tuiAuthError(err error) error {
 	if tuiCredentialRejected(err) {
-		return errors.New("Darkube rejected the TUI credential; run `darkubectl login` or update the configured token, then restart the TUI")
+		return errors.New("darkube rejected the TUI credential; run `darkubectl login` or update the configured token, then restart the TUI")
 	}
 	return err
 }
 
 func tuiCredentialRejected(err error) bool {
 	var apiErr *client.APIError
-	return errors.As(err, &apiErr) && apiErr.StatusCode == 401
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized
 }

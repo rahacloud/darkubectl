@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +15,19 @@ import (
 	"golang.org/x/term"
 )
 
+const (
+	runValue1024 = 1024
+)
+
+const (
+	runValue32  = 32
+	runValue4   = 0x04
+	runValue700 = 700
+)
+
 type tuiTerminalCommand struct {
-	ctx                                                    context.Context
+	// Command lifetime owns the websocket session.
+	ctx                                                    context.Context //nolint:containedctx
 	baseURL, tenant, appID, appName, pod, container, token string
 	tokenErr                                               error
 	stdin                                                  io.Reader
@@ -30,22 +42,16 @@ var _ tea.ExecCommand = (*tuiTerminalCommand)(nil)
 
 func (c *tuiTerminalCommand) Run() error {
 	if c.tokenErr != nil {
-		return fmt.Errorf("Console login required")
+		return errors.New("console login required")
 	}
-	in, ok := c.stdin.(*os.File)
-	if !ok {
-		return fmt.Errorf("interactive terminal input unavailable")
-	}
-	out, ok := c.stdout.(*os.File)
-	if !ok {
-		return fmt.Errorf("interactive terminal output unavailable")
-	}
-	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
-		return fmt.Errorf("interactive terminal required")
+	in, out, err := c.terminalFiles()
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithCancel(c.ctx)
 	defer cancel()
-	session, err := wsexec.Dial(ctx, wsexec.Options{BaseURL: c.baseURL, AccessToken: c.token, Org: c.tenant, AppID: c.appID, PodName: c.pod, Container: c.container})
+	session, err := wsexec.Dial(ctx, wsexec.Options{BaseURL: c.baseURL, AccessToken: c.token, Org: c.tenant, AppID: c.appID,
+		PodName: c.pod, Container: c.container})
 	if err != nil {
 		return err
 	}
@@ -55,7 +61,10 @@ func (c *tuiTerminalCommand) Run() error {
 		return fmt.Errorf("enter terminal raw mode: %w", err)
 	}
 	defer func() { _ = term.Restore(int(in.Fd()), state) }()
-	if _, err := fmt.Fprintf(c.stdout, "\r\nConnected to %s · pod %s · container %s\r\nCtrl+D exits · Ctrl+C interrupts the remote process · Ctrl+L clears the screen. Use your terminal's usual copy and paste shortcuts.\r\n\r\n", c.appName, c.pod, c.container); err != nil {
+	const help = "\r\nConnected to %s · pod %s · container %s\r\n" +
+		"Ctrl+D exits · Ctrl+C interrupts the remote process · Ctrl+L clears the screen. " +
+		"Use your terminal's usual copy and paste shortcuts.\r\n\r\n"
+	if _, err := fmt.Fprintf(c.stdout, help, c.appName, c.pod, c.container); err != nil {
 		return fmt.Errorf("write terminal help: %w", err)
 	}
 	// Let terminal emulators bracket pasted text while the UI is suspended.
@@ -63,70 +72,106 @@ func (c *tuiTerminalCommand) Run() error {
 	defer func() { _, _ = io.WriteString(c.stdout, "\x1b[?2004l\x1b[0m\r\n") }()
 	var writeMu sync.Mutex
 	send := func(fn func() error) error { writeMu.Lock(); defer writeMu.Unlock(); return fn() }
-	sendSize := func() {
-		if w, h, e := term.GetSize(int(out.Fd())); e == nil {
-			_ = send(func() error { return session.SendResize(ctx, w, h) })
-		}
-	}
+	sendSize := func() { sendTerminalSize(ctx, out, send, session) }
 	sendSize()
 	reader, err := cancelreader.NewReader(in)
 	if err != nil {
 		return fmt.Errorf("prepare terminal input: %w", err)
 	}
+	inputDone := startTerminalInput(ctx, cancel, session, reader, send)
+	defer func() { reader.Cancel(); _ = reader.Close(); <-inputDone }()
+	resize := time.NewTicker(runValue700 * time.Millisecond)
+	defer resize.Stop()
+	stopResize := startTerminalResize(ctx, resize.C, sendSize)
+	defer stopResize()
+	return c.readTerminalOutput(ctx, session)
+}
+
+func (c *tuiTerminalCommand) terminalFiles() (*os.File, *os.File, error) {
+	in, ok := c.stdin.(*os.File)
+	if !ok {
+		return nil, nil, errors.New("interactive terminal input unavailable")
+	}
+	out, ok := c.stdout.(*os.File)
+	if !ok {
+		return nil, nil, errors.New("interactive terminal output unavailable")
+	}
+	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
+		return nil, nil, errors.New("interactive terminal required")
+	}
+	return in, out, nil
+}
+
+func sendTerminalSize(ctx context.Context, out *os.File, send func(func() error) error, session *wsexec.Session) {
+	if width, height, err := term.GetSize(int(out.Fd())); err == nil {
+		_ = send(func() error { return session.SendResize(ctx, width, height) })
+	}
+}
+
+func startTerminalInput(ctx context.Context, cancel context.CancelFunc, session *wsexec.Session, reader cancelreader.CancelReader,
+	send func(func() error) error) <-chan struct{} {
 	inputDone := make(chan struct{})
 	go func() {
 		defer close(inputDone)
-		buf := make([]byte, 32*1024)
+		buf := make([]byte, runValue32*runValue1024)
 		for {
-			n, e := reader.Read(buf)
-			if n > 0 {
-				input := buf[:n]
-				exit := false
-				for i, b := range input {
-					if b == 0x04 {
-						input = input[:i]
-						exit = true
-						break
-					}
-				}
-				if len(input) > 0 {
-					if sendErr := send(func() error { return session.SendInput(ctx, input) }); sendErr != nil {
-						return
-					}
-				}
-				if exit {
-					cancel()
-					return
-				}
+			n, err := reader.Read(buf)
+			if n > 0 && !sendTerminalInput(ctx, cancel, session, send, buf[:n]) {
+				return
 			}
-			if e != nil {
+			if err != nil {
 				return
 			}
 		}
 	}()
-	defer func() { reader.Cancel(); _ = reader.Close(); <-inputDone }()
-	resize := time.NewTicker(700 * time.Millisecond)
-	defer resize.Stop()
-	resizeDone := make(chan struct{})
-	resizeStopped := make(chan struct{})
-	defer func() { close(resizeDone); <-resizeStopped }()
+	return inputDone
+}
+
+func sendTerminalInput(ctx context.Context, cancel context.CancelFunc, session *wsexec.Session, send func(func() error) error,
+	data []byte) bool {
+	input, exit := inputBeforeEOF(data)
+	if len(input) > 0 && send(func() error { return session.SendInput(ctx, input) }) != nil {
+		return false
+	}
+	if exit {
+		cancel()
+		return false
+	}
+	return true
+}
+
+func inputBeforeEOF(data []byte) ([]byte, bool) {
+	for i, b := range data {
+		if b == runValue4 {
+			return data[:i], true
+		}
+	}
+	return data, false
+}
+
+func startTerminalResize(ctx context.Context, ticks <-chan time.Time, sendSize func()) func() {
+	stop, stopped := make(chan struct{}), make(chan struct{})
 	go func() {
-		defer close(resizeStopped)
+		defer close(stopped)
 		for {
 			select {
-			case <-resizeDone:
+			case <-stop:
 				return
 			case <-ctx.Done():
 				return
-			case <-resize.C:
+			case <-ticks:
 				sendSize()
 			}
 		}
 	}()
+	return func() { close(stop); <-stopped }
+}
+
+func (c *tuiTerminalCommand) readTerminalOutput(ctx context.Context, session *wsexec.Session) error {
 	for {
 		data, e := session.Read(ctx)
 		if e != nil {
-			return nil
+			return e
 		}
 		if len(data) > 0 {
 			_, _ = c.stdout.Write(data)

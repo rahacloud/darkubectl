@@ -1,9 +1,11 @@
 package browser
 
 import (
+	"strings"
+	"testing"
+
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"strings"
 )
 
 func applyAppsResult(m *browser, apps []client.App, err error) {
@@ -22,4 +24,13 @@ func summaryHasValue(m *browser, label, value string) bool {
 		}
 	}
 	return false
+}
+
+func requireMessage[T any](t *testing.T, msg any) T {
+	t.Helper()
+	result, ok := msg.(T)
+	if !ok {
+		t.Fatalf("unexpected message type %T", msg)
+	}
+	return result
 }

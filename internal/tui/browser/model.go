@@ -1,11 +1,12 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"context"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"time"
 )
 
 const browserKeyEscape = "esc"
@@ -49,18 +50,19 @@ const (
 	sortUpdated
 )
 
-var appSortNames = [...]string{"Name", "Namespace", "State", "Last updated"}
+var appSortNames = [...]string{labelName, "Namespace", "State", "Last updated"}
 
 type browserPage uint8
 
 const (
 	pageApps browserPage = iota
 	pageActivity
+	pageTickets
 	pageDB
 	pageRegistry
 )
 
-type dbSort uint8
+type dbSort int
 
 const (
 	dbSortName dbSort = iota
@@ -84,7 +86,7 @@ const (
 	activityNotifications
 )
 
-type activitySort uint8
+type activitySort int
 
 const (
 	activitySortTime activitySort = iota
@@ -95,10 +97,13 @@ const (
 
 type spinnerMsg struct{}
 
+type paneMessageTimeout struct{ id uint64 }
+
 type tenantOption struct {
 	name   string
 	source string
 	status string
+	roles  []string
 }
 
 type keyHint struct {
@@ -127,6 +132,8 @@ const (
 	requestNotifications
 	requestDatabases
 	requestDatabaseDetail
+	requestTickets
+	requestTicketThread
 	requestRegistry
 )
 
@@ -158,6 +165,37 @@ type treeNode struct {
 }
 
 type browser struct {
+	listTickets                              func(context.Context, string, string, bool) (client.TicketList, error)
+	getTicket                                func(context.Context, string, string) (client.Ticket, error)
+	getTicketComments                        func(context.Context, string, string) ([]client.TicketComment, error)
+	getTicketCategories                      func(context.Context, string) ([]client.TicketCategory, error)
+	getTicketPriorities                      func(context.Context, string) ([]client.TicketPriority, error)
+	createTicket                             func(context.Context, string, client.NewTicket) (string, error)
+	replyTicket                              func(context.Context, string, string, string) error
+	ticketRows                               []client.Ticket
+	ticketComments                           []client.TicketComment
+	ticketCategories                         []client.TicketCategory
+	ticketPriorities                         []client.TicketPriority
+	ticketState                              requestState
+	ticketDetailState                        requestState
+	ticketSelection                          string
+	ticketCursor                             int
+	ticketDetail                             *client.Ticket
+	ticketStatus                             string
+	ticketMine                               bool
+	ticketCompose                            string
+	ticketComposeBeforeDiscard               string
+	ticketDraft                              string
+	ticketSummary                            string
+	ticketCategory                           string
+	ticketPriority                           string
+	ticketComposeField                       int
+	ticketSubmitting                         bool
+	ticketNotice                             string
+	ticketFilter                             string
+	ticketScroll                             int
+	paneMessage                              string
+	paneMessageID                            uint64
 	page                                     browserPage
 	listDatabases                            func(context.Context, string) ([]client.Database, error)
 	databases                                []client.Database
@@ -245,7 +283,7 @@ type browser struct {
 	profile                                  func(context.Context) (*client.Profile, error)
 	alerts                                   func(context.Context, string) ([]client.Alert, error)
 	notifications                            func(context.Context) ([]client.Notification, error)
-	ctx                                      context.Context
+	ctx                                      context.Context //nolint:containedctx // Browser lifetime owns all in-flight requests.
 	now                                      func() time.Time
 	nextRequestID                            uint64
 	tenantGeneration                         uint64
@@ -295,6 +333,7 @@ type browser struct {
 	deleteApp                                func(string, string) error
 	mockDeleteApp                            func(string, string)
 	profileState                             requestState
+	userEmail                                string
 	tenantStatus                             string
 	apps                                     []client.App
 	appsState                                requestState
@@ -367,7 +406,6 @@ type browser struct {
 	buildDetail                              *client.Build
 	buildDetailState                         requestState
 	buildScroll                              int
-	buildListScroll                          int
 	buildSearch                              string
 	buildSearchBefore                        string
 	buildSearchEditing                       bool

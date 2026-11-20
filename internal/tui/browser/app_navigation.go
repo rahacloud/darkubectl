@@ -10,30 +10,7 @@ func (m *browser) switchAppView(delta int) tea.Cmd {
 		return nil
 	}
 	wasLogs := m.activeAppView == appViewLogs
-	if m.activeAppView == appViewBuilds {
-		m.ensureCICDSettings()
-		m.cicdToken, m.cicdNotice = "", ""
-		m.cicdReveal, m.cicdTokenReveal, m.cicdLoading = false, false, false
-		m.cicdGeneration++
-		m.cicdSettingsOriginal, m.cicdSettingsDraft = client.GitBuildSettings{}, client.GitBuildSettings{}
-		m.cicdSettingsLoaded, m.cicdReview, m.cicdSaving = false, false, false
-		m.cicdSettingsNotice, m.cicdHistoryFocus = "", false
-		m.cicdSettingsCursor, m.cicdEditField = 0, -1
-	}
-	if m.activeAppView == appViewEnv {
-		m.envEditMode = envEditNone
-		m.envEditName, m.envEditValue = "", ""
-		m.envConfirm = false
-		m.envRevealName, m.envRevealValue = "", ""
-	}
-	if m.activeAppView == appViewPorts {
-		m.portEditing, m.portConfirm, m.portBusy = false, false, false
-		m.portEditValue = ""
-	}
-	if m.activeAppView == appViewUsage {
-		m.resourceEditing, m.resourceReview, m.resourcePlanPicker = false, false, false
-		m.resourceEditValue = ""
-	}
+	m.resetAppViewEditor(m.activeAppView)
 	views := visibleAppViews()
 	index := 0
 	for i, view := range views {
@@ -52,7 +29,39 @@ func (m *browser) switchAppView(delta int) tea.Cmd {
 	}
 	m.usageScroll = 0
 	m.summaryScroll = 0
-	if m.activeAppView == appViewLogs {
+	return m.loadActiveAppView()
+}
+
+func (m *browser) resetAppViewEditor(view appView) {
+	switch view {
+	case appViewBuilds:
+		m.ensureCICDSettings()
+		m.cicdToken, m.cicdNotice = "", ""
+		m.cicdReveal, m.cicdTokenReveal, m.cicdLoading = false, false, false
+		m.cicdGeneration++
+		m.cicdSettingsOriginal, m.cicdSettingsDraft = client.GitBuildSettings{}, client.GitBuildSettings{}
+		m.cicdSettingsLoaded, m.cicdReview, m.cicdSaving = false, false, false
+		m.cicdSettingsNotice, m.cicdHistoryFocus = "", false
+		m.cicdSettingsCursor, m.cicdEditField = 0, -1
+	case appViewEnv:
+		m.envEditMode = envEditNone
+		m.envEditName, m.envEditValue = "", ""
+		m.envConfirm = false
+		m.envRevealName, m.envRevealValue = "", ""
+	case appViewPorts:
+		m.portEditing, m.portConfirm, m.portBusy = false, false, false
+		m.portEditValue = ""
+	case appViewUsage:
+		m.resourceEditing, m.resourceReview, m.resourcePlanPicker = false, false, false
+		m.resourceEditValue = ""
+	default:
+		return
+	}
+}
+
+func (m *browser) loadActiveAppView() tea.Cmd {
+	switch m.activeAppView {
+	case appViewLogs:
 		if !m.logPrevious {
 			m.logFollowing = !m.logFollowPausedByUser
 		}
@@ -63,38 +72,53 @@ func (m *browser) switchAppView(delta int) tea.Cmd {
 			return m.prepareLogTarget()
 		}
 		return m.loadSelectedPods()
+	case appViewUsage:
+		return m.loadUsageView()
+	case appViewEnv:
+		if m.envState.status == requestIdle {
+			return m.loadEnv()
+		}
+	case appViewDomains:
+		if m.domainState.status == requestIdle {
+			return m.loadDomains()
+		}
+	case appViewPorts:
+		if m.portState.status == requestIdle {
+			return m.loadPorts()
+		}
+	case appViewBuilds:
+		return m.loadBuildsView()
+	default:
+		return nil
 	}
-	if m.activeAppView == appViewUsage && m.usageState.status == requestIdle {
+	return nil
+}
+
+func (m *browser) loadUsageView() tea.Cmd {
+	if m.usageState.status == requestIdle {
 		return tea.Batch(m.loadSelectedUsage(), m.loadUsageHistory())
 	}
-	if m.activeAppView == appViewUsage && m.historyState.status == requestIdle {
+	if m.historyState.status == requestIdle {
 		return m.loadUsageHistory()
 	}
-	if m.activeAppView == appViewEnv && m.envState.status == requestIdle {
-		return m.loadEnv()
-	}
-	if m.activeAppView == appViewDomains && m.domainState.status == requestIdle {
-		return m.loadDomains()
-	}
-	if m.activeAppView == appViewPorts && m.portState.status == requestIdle {
-		return m.loadPorts()
-	}
-	if m.activeAppView == appViewBuilds {
-		app := m.selectedApp()
-		m.ensureCICDSettings()
-		if m.cicdToken == "" {
-			tokenCmd := m.requestCICDToken(false)
-			if app.BuildMethod == client.BuildMethodWebhook {
-				return tea.Batch(m.loadSelectedBuilds(), tokenCmd)
-			}
-			return tokenCmd
+	return nil
+}
+
+func (m *browser) loadBuildsView() tea.Cmd {
+	app := m.selectedApp()
+	m.ensureCICDSettings()
+	if m.cicdToken == "" {
+		tokenCmd := m.requestCICDToken(false)
+		if app.BuildMethod == client.BuildMethodWebhook {
+			return tea.Batch(m.loadSelectedBuilds(), tokenCmd)
 		}
-		if app.BuildMethod == "" {
-			return m.loadSelectedSummary()
-		}
-		if m.buildsState.status == requestIdle || m.buildsState.status == requestUnavailable {
-			return m.loadSelectedBuilds()
-		}
+		return tokenCmd
+	}
+	if app.BuildMethod == "" {
+		return m.loadSelectedSummary()
+	}
+	if m.buildsState.status == requestIdle || m.buildsState.status == requestUnavailable {
+		return m.loadSelectedBuilds()
 	}
 	return nil
 }

@@ -1,11 +1,15 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
-	"github.com/rahacloud/darkubectl/internal/client"
+	"errors"
+	"slices"
+
 	"sort"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func (m *browser) sortApps() {
@@ -25,7 +29,7 @@ func (m *browser) sortApps() {
 			ta, ea := time.Parse(time.RFC3339, a.UpdatedAt)
 			tb, eb := time.Parse(time.RFC3339, b.UpdatedAt)
 			if ea != nil || eb != nil {
-				if ea != eb {
+				if !errors.Is(ea, eb) {
 					return ea == nil
 				}
 				less = false
@@ -75,10 +79,8 @@ func (m *browser) ensureFilterSelection() {
 		m.namespaceSelected = false
 		return
 	}
-	for _, index := range visible {
-		if index == m.selected {
-			return
-		}
+	if slices.Contains(visible, m.selected) {
+		return
 	}
 	m.selected = visible[0]
 	m.namespaceSelected = false
@@ -109,12 +111,7 @@ func (m *browser) selectedAppVisible() bool {
 	if m.selected < 0 || m.selected >= len(m.apps) {
 		return false
 	}
-	for _, index := range m.visibleAppIndices() {
-		if index == m.selected {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.visibleAppIndices(), m.selected)
 }
 
 func (m *browser) selectTree(index int) tea.Cmd {

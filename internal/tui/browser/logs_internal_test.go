@@ -2,7 +2,6 @@ package browser
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -21,9 +20,10 @@ func TestLogsShowPodSnapshotFailureCauseAndRetryHint(t *testing.T) {
 		apps:      []client.App{{ID: "app"}},
 		podsState: requestState{status: requestLoading, meta: meta},
 	}
-	m.handlePodsResult(podsResult{meta: meta, err: errors.New("dial app-state websocket: unexpected HTTP response: 503 Service Unavailable")})
+	m.handlePodsResult(podsResult{meta: meta, err: errAppStateWebsocketUnavailable})
 	got := ansi.Strip(strings.Join(m.logsPaneLines(), "\n"))
-	if !strings.Contains(got, "503 Service Unavailable") || !strings.Contains(got, "press r to retry") || strings.Contains(got, "Target not selected") {
+	if !strings.Contains(got, "503 Service Unavailable") || !strings.Contains(got, "press r to retry") || strings.Contains(got,
+		"Target not selected") {
 		t.Fatalf("log view hid pod failure cause or retry hint: %s", got)
 	}
 }
@@ -209,6 +209,7 @@ func TestLogSearchAndWrappingControls(t *testing.T) {
 }
 
 func TestFormatLogPayloadKeepsPlainTextAndFormatsStructuredJSON(t *testing.T) {
+	t.Parallel()
 	plain := "worker finished without a JSON envelope"
 	level, lines := formatLogPayload(plain)
 	if level != "" || len(lines) != 1 || lines[0] != plain {
@@ -218,7 +219,10 @@ func TestFormatLogPayloadKeepsPlainTextAndFormatsStructuredJSON(t *testing.T) {
 		t.Fatalf("plain level detection = %q", got)
 	}
 
-	level, lines = formatLogPayload(`level=error ts=2026-11-19T05:37:18.424833Z caller=compactor.go:156 msg="compaction failed" tenant=single-tenant err="failed to read blocks\nerror fetching object from s3 backend: internal error"`)
+	logfmt := `level=error ts=2026-11-19T05:37:18.424833Z caller=compactor.go:156 ` +
+		`msg="compaction failed" tenant=single-tenant err="failed to read blocks\n` +
+		`error fetching object from s3 backend: internal error"`
+	level, lines = formatLogPayload(logfmt)
 	joined := strings.Join(lines, "\n")
 	if level != "ERROR" || !strings.Contains(joined, "ERROR  compactor.go:156") ||
 		!strings.Contains(joined, "compaction failed") || !strings.Contains(joined, "tenant: single-tenant") ||
@@ -227,7 +231,10 @@ func TestFormatLogPayloadKeepsPlainTextAndFormatsStructuredJSON(t *testing.T) {
 		t.Fatalf("logfmt payload = level %q, lines %q", level, lines)
 	}
 
-	level, lines = formatLogPayload(`{"@timestamp":"2026-11-19T04:40:59Z","log":{"level":"ERROR","logger":"service.worker","message":"request failed","attempt":2,"process":{"thread":{"name":"http-1"}}}}`)
+	jsonLog := `{"@timestamp":"2026-11-19T04:40:59Z","log":{"level":"ERROR",` +
+		`"logger":"service.worker","message":"request failed","attempt":2,` +
+		`"process":{"thread":{"name":"http-1"}}}}`
+	level, lines = formatLogPayload(jsonLog)
 	joined = strings.Join(lines, "\n")
 	if level != "ERROR" || !strings.Contains(joined, "ERROR  service.worker") ||
 		!strings.Contains(joined, "request failed") || !strings.Contains(joined, "attempt: 2") ||
@@ -238,6 +245,7 @@ func TestFormatLogPayloadKeepsPlainTextAndFormatsStructuredJSON(t *testing.T) {
 }
 
 func TestLogPayloadPreservesNewlinesAndExpandsTabs(t *testing.T) {
+	t.Parallel()
 	_, parts := formatLogPayload(`{"message":"first line\nsecond\tcolumn"}`)
 	if len(parts) != 1 || !strings.Contains(parts[0], "first line\nsecond\tcolumn") {
 		t.Fatalf("JSON message separators were not decoded: %q", parts)
@@ -254,6 +262,7 @@ func TestLogPayloadPreservesNewlinesAndExpandsTabs(t *testing.T) {
 }
 
 func TestLogTimestampUsesReadableLocalAndUTCModes(t *testing.T) {
+	t.Parallel()
 	stamp := "2026-11-19T04:40:59.824173Z"
 	local, utc := formatLogTimestamp(stamp, false), formatLogTimestamp(stamp, true)
 	if !strings.HasPrefix(local, "2026-11-19 ") || !strings.HasPrefix(utc, "2026-11-19 ") || !strings.HasSuffix(utc, "Z") {
@@ -310,6 +319,7 @@ func TestAdjustLogTailRequestsUpdatedEntryCount(t *testing.T) {
 }
 
 func TestLogClipboardTextFormatsEntriesAndSeparators(t *testing.T) {
+	t.Parallel()
 	entries := []client.LogEntry{{
 		Timestamp: "2026-11-19T04:40:59Z",
 		Text:      `{"log":{"level":"INFO","message":"first\nsecond\tcolumn"}}`,

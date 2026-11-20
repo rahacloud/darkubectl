@@ -10,6 +10,18 @@ import (
 	"github.com/rahacloud/darkubectl/internal/client"
 )
 
+const (
+	applyCICDEditValue1024    = 1024
+	applyCICDEditValue128     = 128
+	applyCICDEditValue2       = 2
+	applyCICDEditValue3       = 3
+	applyCICDEditValue4       = 4
+	applyCICDEditValue5       = 5
+	applyCICDEditValue6       = 6
+	beginCICDEditValue7       = 7
+	cicdNewArgumentFieldIndex = -2
+)
+
 const cicdSettingsFields = 8
 
 func autoDeployLabel(value *bool) string {
@@ -39,7 +51,8 @@ func settingsFromApp(app client.App) client.GitBuildSettings {
 }
 
 func (m *browser) ensureCICDSettings() {
-	if m.cicdSettingsLoaded || !m.selectedAppActive() || (m.selectedApp().BuildMethod != client.BuildMethodWebhook && m.selectedApp().BuildMethod != client.BuildMethodGitlabCI) {
+	if m.cicdSettingsLoaded || !m.selectedAppActive() || (m.selectedApp().BuildMethod != client.BuildMethodWebhook &&
+		m.selectedApp().BuildMethod != client.BuildMethodGitlabCI) {
 		return
 	}
 	s := settingsFromApp(m.selectedApp())
@@ -69,7 +82,7 @@ func (m *browser) moveCICDSettings(delta int) {
 	if len(m.cicdSettingsDraft.Args) == 0 {
 		rows = append(rows, cicdSettingsFields)
 	} else {
-		for i := 0; i < len(m.cicdSettingsDraft.Args); i++ {
+		for i := range len(m.cicdSettingsDraft.Args) {
 			rows = append(rows, cicdSettingsFields+i)
 		}
 	}
@@ -89,169 +102,150 @@ func (m *browser) moveCICDSettings(delta int) {
 
 func (m *browser) handleCICDSettingsKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	if m.cicdEditing {
-		switch msg.String() {
-		case "esc":
-			m.cicdEditField, m.cicdEditValue, m.cicdEditKey = -1, "", ""
-			m.cicdEditArg, m.cicdEditAdding, m.cicdEditing = false, false, false
-		case "ctrl+u":
-			m.cicdEditValue = ""
-		case "backspace", "ctrl+h":
-			if len(m.cicdEditValue) > 0 {
-				r := []rune(m.cicdEditValue)
-				m.cicdEditValue = string(r[:len(r)-1])
-			}
-		case "enter":
-			if m.cicdEditAdding && m.cicdEditKey == "" {
-				if strings.TrimSpace(m.cicdEditValue) == "" {
-					m.cicdSettingsNotice = "Argument key cannot be empty"
-					return nil, true
-				}
-				m.cicdEditKey, m.cicdEditValue = strings.TrimSpace(m.cicdEditValue), ""
-				return nil, true
-			}
-			m.applyCICDEdit()
-		default:
-			if msg.Text != "" {
-				m.cicdEditValue += safeText(msg.Text)
-			}
-		}
-		return nil, true
+		return m.handleCICDEditingKey(msg)
 	}
 	if m.cicdReview {
-		switch msg.String() {
-		case "esc", "n":
-			m.cicdReview = false
-		case "y", "enter":
-			m.cicdReview = false
-			return m.saveCICDSettings(), true
-		}
-		return nil, true
+		return m.handleCICDReviewKey(msg.String())
 	}
 	if m.cicdSaving {
 		return nil, true
 	}
 	if m.cicdSettingsDraft.BuildMethod == client.BuildMethodGitlabCI {
-		switch msg.String() {
-		case "t":
-			if m.allowWrites {
-				m.cicdSettingsDraft.BuildMethod = client.BuildMethodWebhook
-				m.cicdSettingsNotice = "Deployment type staged; review and save to apply"
-			}
-			return nil, true
-		case "s":
-			if m.allowWrites && m.cicdSettingsChanged() {
-				m.cicdReview = true
-			} else {
-				m.cicdSettingsNotice = "No staged changes"
-			}
-			return nil, true
-		case "x":
-			if m.allowWrites {
-				m.cicdSettingsDraft = cloneGitSettings(m.cicdSettingsOriginal)
-				m.cicdSettingsNotice = "Staged changes discarded"
-			}
-			return nil, true
-		case "v", "c", "y":
-			return nil, false
-		case "[", "]":
-			return nil, false
-		default:
-			return nil, true
-		}
+		return m.handleGitlabSettingsKey(msg.String())
 	}
 	if m.cicdHistoryFocus {
-		switch msg.String() {
-		case "up", "k":
-			if m.buildListCursor <= 0 {
-				m.cicdHistoryFocus = false
-				m.cicdSettingsCursor = m.cicdSettingsRows() - 1
+		return m.handleCICDHistoryKey(msg.String())
+	}
+	return m.handleCICDNavigationKey(msg.String())
+}
+
+func (m *browser) handleCICDEditingKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch msg.String() {
+	case browserKeyEscape:
+		m.cicdEditField, m.cicdEditValue, m.cicdEditKey = -1, "", ""
+		m.cicdEditArg, m.cicdEditAdding, m.cicdEditing = false, false, false
+	case keyCtrlU:
+		m.cicdEditValue = ""
+	case keyBackspace, keyCtrlH:
+		if len(m.cicdEditValue) > 0 {
+			r := []rune(m.cicdEditValue)
+			m.cicdEditValue = string(r[:len(r)-1])
+		}
+	case keyEnter:
+		if m.cicdEditAdding && m.cicdEditKey == "" {
+			if strings.TrimSpace(m.cicdEditValue) == "" {
+				m.cicdSettingsNotice = "Argument key cannot be empty"
 				return nil, true
 			}
-			m.moveBuildSelection(-1)
+			m.cicdEditKey, m.cicdEditValue = strings.TrimSpace(m.cicdEditValue), ""
 			return nil, true
-		case "down", "j":
-			m.moveBuildSelection(1)
-			return nil, true
-		case "tab", "home":
-			m.cicdHistoryFocus = false
-			return nil, true
-		case "enter":
-			return m.openSelectedBuild(), true
 		}
-		return nil, false
+		m.applyCICDEdit()
+	default:
+		if msg.Text != "" {
+			m.cicdEditValue += safeText(msg.Text)
+		}
 	}
-	switch msg.String() {
+	return nil, true
+}
+
+func (m *browser) handleCICDReviewKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case browserKeyEscape, "n":
+		m.cicdReview = false
+	case "y", keyEnter:
+		m.cicdReview = false
+		return m.saveCICDSettings(), true
+	}
+	return nil, true
+}
+
+func (m *browser) handleGitlabSettingsKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "t":
+		if m.allowWrites {
+			m.cicdSettingsDraft.BuildMethod = client.BuildMethodWebhook
+			m.cicdSettingsNotice = "Deployment type staged; review and save to apply"
+		}
+		return nil, true
+	case "s":
+		if m.allowWrites && m.cicdSettingsChanged() {
+			m.cicdReview = true
+		} else {
+			m.cicdSettingsNotice = messageNoStagedChanges
+		}
+		return nil, true
+	case "x":
+		if m.allowWrites {
+			m.cicdSettingsDraft = cloneGitSettings(m.cicdSettingsOriginal)
+			m.cicdSettingsNotice = messageChangesDiscarded
+		}
+		return nil, true
+	case "v", "c", "y":
+		return nil, false
+	case "[", "]":
+		return nil, false
+	default:
+		return nil, true
+	}
+}
+
+func (m *browser) handleCICDHistoryKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "up", "k":
+		if m.buildListCursor <= 0 {
+			m.cicdHistoryFocus = false
+			m.cicdSettingsCursor = m.cicdSettingsRows() - 1
+			return nil, true
+		}
+		m.moveBuildSelection(-1)
+		return nil, true
+	case keyDown, "j":
+		m.moveBuildSelection(1)
+		return nil, true
+	case inputKeyTab, inputKeyHome:
+		m.cicdHistoryFocus = false
+		return nil, true
+	case keyEnter:
+		return m.openSelectedBuild(), true
+	}
+	return nil, false
+}
+
+func (m *browser) handleCICDNavigationKey(key string) (tea.Cmd, bool) {
+	if handled := m.handleCICDWriteKey(key); handled {
+		return nil, true
+	}
+	switch key {
 	case "up", "k":
 		m.moveCICDSettings(-1)
 		return nil, true
-	case "down", "j":
+	case keyDown, "j":
 		if m.cicdSettingsCursor == m.cicdSettingsRows()-1 && m.selectedApp().BuildMethod == client.BuildMethodWebhook {
 			m.cicdHistoryFocus = true
 		} else {
 			m.moveCICDSettings(1)
 		}
 		return nil, true
-	case "tab":
+	case inputKeyTab:
 		if m.selectedApp().BuildMethod == client.BuildMethodWebhook {
 			m.cicdHistoryFocus = true
 		}
 		return nil, true
-	case "e":
-		if m.allowWrites {
-			m.beginCICDEdit()
-		}
-		return nil, true
-	case "t":
-		if m.allowWrites {
-			m.cicdSettingsDraft.BuildMethod = client.BuildMethodGitlabCI
-			m.cicdSettingsNotice = "Deployment type staged; review and save to apply"
-		}
-		return nil, true
-	case "+":
-		if m.allowWrites {
-			m.cicdSettingsCursor = m.cicdSettingsRows() - 1
-			m.cicdEditAdding = true
-			m.cicdEditArg = true
-			m.cicdEditKey = ""
-			m.cicdEditValue = ""
-			m.cicdEditField = -2
-			m.cicdEditing = true
-		}
-		return nil, true
-	case "d":
-		if m.allowWrites {
-			m.deleteCICDArgument()
-		}
-		return nil, true
-	case "s":
-		if m.allowWrites {
-			if m.cicdSettingsChanged() {
-				m.cicdReview = true
-			} else {
-				m.cicdSettingsNotice = "No staged changes"
-			}
-		}
-		return nil, true
-	case "x":
-		if m.allowWrites {
-			m.cicdSettingsDraft = cloneGitSettings(m.cicdSettingsOriginal)
-			m.cicdSettingsNotice = "Staged changes discarded"
-		}
-		return nil, true
 	case "r":
 		if m.cicdSettingsChanged() {
-			m.cicdSettingsNotice = "Save or discard staged changes before refreshing"
+			m.cicdSettingsNotice = messageSaveOrDiscardBeforeRefresh
 			return nil, true
 		}
 		m.cicdSettingsLoaded = false
 		m.cicdSettingsNotice = ""
 		m.cicdSettingsCursor = 0
 		return m.loadSelectedSummary(), true
-	case "enter":
+	case keyEnter:
 		if m.allowWrites && m.cicdSettingsCursor == cicdSettingsFields+len(m.cicdSettingsDraft.Args) {
 			m.cicdSettingsCursor = m.cicdSettingsRows() - 1
 			m.cicdEditAdding, m.cicdEditArg, m.cicdEditing = true, true, true
-			m.cicdEditKey, m.cicdEditValue, m.cicdEditField = "", "", -2
+			m.cicdEditKey, m.cicdEditValue, m.cicdEditField = "", "", cicdNewArgumentFieldIndex
 		} else {
 			m.beginCICDEdit()
 		}
@@ -260,109 +254,179 @@ func (m *browser) handleCICDSettingsKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	return nil, false
 }
 
+func (m *browser) handleCICDWriteKey(key string) bool {
+	switch key {
+	case "e":
+		if m.allowWrites {
+			m.beginCICDEdit()
+		}
+	case "t":
+		if m.allowWrites {
+			m.cicdSettingsDraft.BuildMethod = client.BuildMethodGitlabCI
+			m.cicdSettingsNotice = "Deployment type staged; review and save to apply"
+		}
+	case "+":
+		if m.allowWrites {
+			m.cicdSettingsCursor = m.cicdSettingsRows() - 1
+			m.cicdEditAdding, m.cicdEditArg = true, true
+			m.cicdEditKey, m.cicdEditValue, m.cicdEditField = "", "", cicdNewArgumentFieldIndex
+			m.cicdEditing = true
+		}
+	case "d":
+		if m.allowWrites {
+			m.deleteCICDArgument()
+		}
+	case "s":
+		if m.allowWrites {
+			if m.cicdSettingsChanged() {
+				m.cicdReview = true
+			} else {
+				m.cicdSettingsNotice = "No staged changes"
+			}
+		}
+	case "x":
+		if m.allowWrites {
+			m.cicdSettingsDraft = cloneGitSettings(m.cicdSettingsOriginal)
+			m.cicdSettingsNotice = "Staged changes discarded"
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 func (m *browser) beginCICDEdit() {
-	if !m.allowWrites || !m.selectedAppActive() || (m.selectedApp().BuildMethod != client.BuildMethodWebhook && m.selectedApp().BuildMethod != client.BuildMethodGitlabCI) {
+	if !m.allowWrites || !m.selectedAppActive() || (m.selectedApp().BuildMethod != client.BuildMethodWebhook &&
+		m.selectedApp().BuildMethod != client.BuildMethodGitlabCI) {
 		return
 	}
 	row := m.cicdSettingsCursor
-	if row < cicdSettingsFields {
-		if row == 7 {
-			if m.cicdSettingsDraft.Autodeploy == nil {
-				value := true
-				m.cicdSettingsDraft.Autodeploy = &value
-			} else {
-				value := !*m.cicdSettingsDraft.Autodeploy
-				m.cicdSettingsDraft.Autodeploy = &value
-			}
+	if row == beginCICDEditValue7 {
+		m.toggleCICDAutodeploy()
+		return
+	}
+	if row >= cicdSettingsFields {
+		arg := row - cicdSettingsFields
+		if arg >= len(m.cicdSettingsDraft.Args) {
 			return
 		}
-		fields := []string{m.cicdSettingsDraft.RepoURL, m.cicdSettingsDraft.Branch, m.cicdSettingsDraft.Provider, m.cicdSettingsDraft.Builder, m.cicdSettingsDraft.Dockerfile, m.cicdSettingsDraft.Context, m.cicdSettingsDraft.Workdir}
-		m.cicdEditValue, m.cicdEditField = fields[row], row
+		m.cicdEditArg, m.cicdEditAdding = true, false
+		m.cicdEditKey, m.cicdEditValue = m.cicdSettingsDraft.Args[arg].Key, m.cicdSettingsDraft.Args[arg].Value
+		m.cicdEditField = row
 		m.cicdEditing = true
 		return
 	}
-	arg := row - cicdSettingsFields
-	if arg >= len(m.cicdSettingsDraft.Args) {
+	fieldValues := map[int]string{
+		0: m.cicdSettingsDraft.RepoURL,
+		1: m.cicdSettingsDraft.Branch,
+		2: m.cicdSettingsDraft.Provider,
+		3: m.cicdSettingsDraft.Builder,
+		4: m.cicdSettingsDraft.Dockerfile,
+		5: m.cicdSettingsDraft.Context,
+		6: m.cicdSettingsDraft.Workdir,
+	}
+	value, ok := fieldValues[row]
+	if !ok {
 		return
 	}
-	m.cicdEditArg, m.cicdEditAdding = true, false
-	m.cicdEditKey, m.cicdEditValue = m.cicdSettingsDraft.Args[arg].Key, m.cicdSettingsDraft.Args[arg].Value
-	m.cicdEditField = row
+	m.cicdEditValue, m.cicdEditField = value, row
 	m.cicdEditing = true
+}
+
+func (m *browser) toggleCICDAutodeploy() {
+	if m.cicdSettingsDraft.Autodeploy == nil {
+		value := true
+		m.cicdSettingsDraft.Autodeploy = &value
+		return
+	}
+	value := !*m.cicdSettingsDraft.Autodeploy
+	m.cicdSettingsDraft.Autodeploy = &value
 }
 
 func (m *browser) applyCICDEdit() {
 	value := m.cicdEditValue
 	if m.cicdEditArg {
-		key := strings.TrimSpace(m.cicdEditKey)
-		if m.cicdEditAdding {
-			if key == "" {
-				m.cicdSettingsNotice = "Argument key cannot be empty"
-				return
-			}
-			for _, a := range m.cicdSettingsDraft.Args {
-				if a.Key == key {
-					m.cicdSettingsNotice = "Argument key already exists"
-					return
-				}
-			}
-			m.cicdSettingsDraft.Args = append(m.cicdSettingsDraft.Args, client.GitBuildArg{Key: key, Value: value})
-			m.cicdSettingsCursor = cicdSettingsFields + len(m.cicdSettingsDraft.Args) - 1
-		} else {
-			i := m.cicdEditField - cicdSettingsFields
-			if i >= 0 && i < len(m.cicdSettingsDraft.Args) {
-				m.cicdSettingsDraft.Args[i].Value = value
-			}
+		if !m.applyCICDArgumentEdit(value) {
+			return
 		}
-	} else {
-		switch m.cicdEditField {
-		case 0:
-			if utf8.RuneCountInString(value) > 1024 {
-				m.cicdSettingsNotice = "Repository URL is longer than 1024 characters"
-				return
-			}
-			m.cicdSettingsDraft.RepoURL = value
-		case 1:
-			if utf8.RuneCountInString(value) > 128 {
-				m.cicdSettingsNotice = "Branch is longer than 128 characters"
-				return
-			}
-			m.cicdSettingsDraft.Branch = value
-		case 2:
-			if value != "Github" && value != "Gitlab" {
-				m.cicdSettingsNotice = "Provider must be Github or Gitlab"
-				return
-			}
-			m.cicdSettingsDraft.Provider = value
-		case 3:
-			if value != "dockerfile" && value != "heroku_buildpacks" {
-				m.cicdSettingsNotice = "Builder must be dockerfile or heroku_buildpacks"
-				return
-			}
-			m.cicdSettingsDraft.Builder = value
-		case 4:
-			if utf8.RuneCountInString(value) > 128 {
-				m.cicdSettingsNotice = "Dockerfile path is longer than 128 characters"
-				return
-			}
-			m.cicdSettingsDraft.Dockerfile = value
-		case 5:
-			if utf8.RuneCountInString(value) > 128 {
-				m.cicdSettingsNotice = "Build context is longer than 128 characters"
-				return
-			}
-			m.cicdSettingsDraft.Context = value
-		case 6:
-			if utf8.RuneCountInString(value) > 128 {
-				m.cicdSettingsNotice = "Workdir is longer than 128 characters"
-				return
-			}
-			m.cicdSettingsDraft.Workdir = value
-		}
+	} else if !m.applyCICDFieldEdit(value) {
+		return
 	}
 	m.cicdEditField, m.cicdEditValue, m.cicdEditKey = -1, "", ""
 	m.cicdEditArg, m.cicdEditAdding, m.cicdEditing = false, false, false
 	m.cicdSettingsNotice = ""
+}
+
+func (m *browser) applyCICDArgumentEdit(value string) bool {
+	key := strings.TrimSpace(m.cicdEditKey)
+	if !m.cicdEditAdding {
+		index := m.cicdEditField - cicdSettingsFields
+		if index >= 0 && index < len(m.cicdSettingsDraft.Args) {
+			m.cicdSettingsDraft.Args[index].Value = value
+		}
+		return true
+	}
+	if key == "" {
+		m.cicdSettingsNotice = "Argument key cannot be empty"
+		return false
+	}
+	for _, arg := range m.cicdSettingsDraft.Args {
+		if arg.Key == key {
+			m.cicdSettingsNotice = "Argument key already exists"
+			return false
+		}
+	}
+	m.cicdSettingsDraft.Args = append(m.cicdSettingsDraft.Args, client.GitBuildArg{Key: key, Value: value})
+	m.cicdSettingsCursor = cicdSettingsFields + len(m.cicdSettingsDraft.Args) - 1
+	return true
+}
+
+func (m *browser) applyCICDFieldEdit(value string) bool {
+	switch m.cicdEditField {
+	case 0:
+		if utf8.RuneCountInString(value) > applyCICDEditValue1024 {
+			m.cicdSettingsNotice = "Repository URL is longer than 1024 characters"
+			return false
+		}
+		m.cicdSettingsDraft.RepoURL = value
+	case 1:
+		if utf8.RuneCountInString(value) > applyCICDEditValue128 {
+			m.cicdSettingsNotice = "Branch is longer than 128 characters"
+			return false
+		}
+		m.cicdSettingsDraft.Branch = value
+	case applyCICDEditValue2:
+		if value != "Github" && value != "Gitlab" {
+			m.cicdSettingsNotice = "Provider must be Github or Gitlab"
+			return false
+		}
+		m.cicdSettingsDraft.Provider = value
+	case applyCICDEditValue3:
+		if value != "dockerfile" && value != "heroku_buildpacks" {
+			m.cicdSettingsNotice = "Builder must be dockerfile or heroku_buildpacks"
+			return false
+		}
+		m.cicdSettingsDraft.Builder = value
+	case applyCICDEditValue4:
+		if utf8.RuneCountInString(value) > applyCICDEditValue128 {
+			m.cicdSettingsNotice = "Dockerfile path is longer than 128 characters"
+			return false
+		}
+		m.cicdSettingsDraft.Dockerfile = value
+	case applyCICDEditValue5:
+		if utf8.RuneCountInString(value) > applyCICDEditValue128 {
+			m.cicdSettingsNotice = "Build context is longer than 128 characters"
+			return false
+		}
+		m.cicdSettingsDraft.Context = value
+	case applyCICDEditValue6:
+		if utf8.RuneCountInString(value) > applyCICDEditValue128 {
+			m.cicdSettingsNotice = "Workdir is longer than 128 characters"
+			return false
+		}
+		m.cicdSettingsDraft.Workdir = value
+	}
+	return true
 }
 
 func (m *browser) deleteCICDArgument() {
@@ -424,15 +488,18 @@ func (m *browser) handleCICDSettingsWrite(msg cicdSettingsWriteResult) tea.Cmd {
 }
 
 func (m *browser) cicdSettingsReviewLines() []string {
-	lines := []string{sectionHeading("Review CI/CD changes"), summaryField("Deployment type", cicdMethodLabel(m.cicdSettingsDraft.BuildMethod))}
+	lines := []string{sectionHeading("Review CI/CD changes"), summaryField("Deployment type",
+		cicdMethodLabel(m.cicdSettingsDraft.BuildMethod))}
 	add := func(name, old, next string) {
 		if old != next {
-			lines = append(lines, paint("− "+safeText(name)+" = "+old, browserNumber, false), paint("+ "+safeText(name)+" = "+next, browserAccent, false))
+			lines = append(lines, paint("− "+safeText(name)+" = "+old, browserNumber, false), paint("+ "+safeText(name)+" = "+next,
+				browserAccent, false))
 		}
 	}
 	a, b := m.cicdSettingsOriginal, m.cicdSettingsDraft
 	if a.BuildMethod != b.BuildMethod {
-		lines = append(lines, paint("− Deployment type = "+cicdMethodLabel(a.BuildMethod), browserNumber, false), paint("+ Deployment type = "+cicdMethodLabel(b.BuildMethod), browserAccent, false))
+		lines = append(lines, paint("− Deployment type = "+cicdMethodLabel(a.BuildMethod), browserNumber, false),
+			paint("+ Deployment type = "+cicdMethodLabel(b.BuildMethod), browserAccent, false))
 	}
 	add("Repository", redactRepoURL(a.RepoURL), redactRepoURL(b.RepoURL))
 	add("Branch", a.Branch, b.Branch)

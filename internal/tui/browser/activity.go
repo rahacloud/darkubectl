@@ -1,7 +1,7 @@
 package browser
 
 import (
-	"fmt"
+	"errors"
 	"html"
 	"regexp"
 	"sort"
@@ -11,6 +11,31 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const (
+	alertColumnWidthsValue10 = 10
+	alertColumnWidthsValue12 = 12
+	alertColumnWidthsValue2  = 2
+)
+
+const (
+	activityFilterLineValue2        = 2
+	alertColumnWidthsValue11        = 11
+	alertColumnWidthsValue3         = 3
+	alertColumnWidthsValue42        = 42
+	alertColumnWidthsValue54        = 54
+	activityAlertCompactWidth       = 5
+	activityAlertFallbackWidth      = 8
+	alertPaneLinesValue2            = 2
+	alertSeverityRankValue2         = 2
+	boundedActivityTextValue4096    = 4096
+	cycleActivityStatusFilterValue2 = 2
+	cycleActivityStatusFilterValue3 = 3
+	handleActivityKeyValue2         = 2
+	handleActivityKeyValue3         = 3
+	handleActivityKeyValue8         = 8
+	notificationPaneLinesValue2     = 2
 )
 
 var activityHTMLTag = regexp.MustCompile(`<[^>]*>`)
@@ -24,14 +49,15 @@ func (m *browser) loadActivityFeed(force bool) tea.Cmd {
 		return nil
 	}
 	if m.activityTab == activityAlerts {
-		if !force && (m.activityAlertsState.active() || m.activityAlertsState.status == requestReady || m.activityAlertsState.status == requestEmpty || m.activityAlertsState.status == requestUnavailable) {
+		if !force && (m.activityAlertsState.active() || m.activityAlertsState.status == requestReady ||
+			m.activityAlertsState.status == requestEmpty || m.activityAlertsState.status == requestUnavailable) {
 			return nil
 		}
 		meta, ctx := m.startRequest(requestAlerts, m.tenant, "", m.tenantGeneration)
 		m.activityAlertsState.begin(meta, m.requestTime())
 		if m.alerts == nil {
 			m.finishRequest(requestAlerts, meta)
-			m.activityAlertsState.unavailable(fmt.Errorf("alerts are unavailable"))
+			m.activityAlertsState.unavailable(errAlertsAreUnavailable)
 			return nil
 		}
 		return func() tea.Msg {
@@ -39,14 +65,15 @@ func (m *browser) loadActivityFeed(force bool) tea.Cmd {
 			return alertsResult{meta: meta, alerts: alerts, err: err}
 		}
 	}
-	if !force && (m.activityNotificationsState.active() || m.activityNotificationsState.status == requestReady || m.activityNotificationsState.status == requestEmpty || m.activityNotificationsState.status == requestUnavailable) {
+	if !force && (m.activityNotificationsState.active() || m.activityNotificationsState.status == requestReady ||
+		m.activityNotificationsState.status == requestEmpty || m.activityNotificationsState.status == requestUnavailable) {
 		return nil
 	}
 	meta, ctx := m.startRequest(requestNotifications, "", "", 0)
 	m.activityNotificationsState.begin(meta, m.requestTime())
 	if m.notifications == nil {
 		m.finishRequest(requestNotifications, meta)
-		m.activityNotificationsState.unavailable(fmt.Errorf("notifications are unavailable"))
+		m.activityNotificationsState.unavailable(errNotificationsAreUnavailable)
 		return nil
 	}
 	return func() tea.Msg {
@@ -55,14 +82,14 @@ func (m *browser) loadActivityFeed(force bool) tea.Cmd {
 	}
 }
 
-func (m *browser) handleAlertsResult(msg alertsResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleAlertsResult(msg alertsResult) tea.Model {
 	m.finishRequest(requestAlerts, msg.meta)
 	if !m.activityAlertsState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.tenantGeneration {
-		return m, nil
+		return m
 	}
 	if msg.err != nil {
 		m.activityAlertsState.fail(msg.err)
-		return m, nil
+		return m
 	}
 	selected := m.activityAlertSelected
 	m.activityAlertsData = append([]client.Alert(nil), msg.alerts...)
@@ -80,17 +107,17 @@ func (m *browser) handleAlertsResult(msg alertsResult) (tea.Model, tea.Cmd) {
 		m.activityAlertCursor = min(m.activityAlertCursor, max(0, len(m.activityAlertsData)-1))
 	}
 	m.updateActivityAlertSelection()
-	return m, nil
+	return m
 }
 
-func (m *browser) handleNotificationsResult(msg notificationsResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleNotificationsResult(msg notificationsResult) tea.Model {
 	m.finishRequest(requestNotifications, msg.meta)
 	if !m.activityNotificationsState.matches(msg.meta) || msg.meta.tenant != "" || msg.meta.scopeGeneration != 0 {
-		return m, nil
+		return m
 	}
 	if msg.err != nil {
 		m.activityNotificationsState.fail(msg.err)
-		return m, nil
+		return m
 	}
 	selected := m.activityNotificationSelected
 	m.activityNotificationsData = append([]client.Notification(nil), msg.notifications...)
@@ -108,7 +135,7 @@ func (m *browser) handleNotificationsResult(msg notificationsResult) (tea.Model,
 		m.activityNotificationCursor = min(m.activityNotificationCursor, max(0, len(m.activityNotificationsData)-1))
 	}
 	m.updateActivityNotificationSelection()
-	return m, nil
+	return m
 }
 
 func (m *browser) switchActivityTab(delta int) tea.Cmd {
@@ -146,14 +173,14 @@ func (m *browser) setActivityFilter(value string) {
 
 func (m *browser) handleActivityFilterKey(msg tea.KeyPressMsg) {
 	switch msg.String() {
-	case "enter":
+	case keyEnter:
 		m.activityFilterEditing = false
-	case "esc":
+	case browserKeyEscape:
 		m.activityFilterEditing = false
 		m.setActivityFilter(m.activityFilterBefore)
-	case "ctrl+u":
+	case keyCtrlU:
 		m.setActivityFilter("")
-	case "backspace", "ctrl+h":
+	case keyBackspace, keyCtrlH:
 		value := []rune(m.activityFilter())
 		if len(value) > 0 {
 			m.setActivityFilter(string(value[:len(value)-1]))
@@ -166,43 +193,14 @@ func (m *browser) handleActivityFilterKey(msg tea.KeyPressMsg) {
 }
 
 func (m *browser) handleActivityKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if model, cmd, handled := m.handleActivityCommandKey(msg.String()); handled {
+		return model, cmd
+	}
+	if handled := m.handleActivityNavigationKey(msg.String()); handled {
+		return m, nil
+	}
 	switch msg.String() {
-	case "1":
-		return m, m.focusPane(0)
-	case "2":
-		return m, m.focusPane(1)
-	case "3":
-		return m, m.focusPane(2)
-	case "4":
-		return m, m.focusPane(3)
-	case "tab":
-		return m, m.cycleFocus(false)
-	case "shift+tab", "backtab":
-		return m, m.cycleFocus(true)
-	case "ctrl+c", "q":
-		return m, tea.Quit
-	case "?":
-		m.help = true
-		return m, nil
-	case "left", "h":
-		return m, m.switchActivityTab(-1)
-	case "right", "l":
-		return m, m.switchActivityTab(1)
-	case "f":
-		m.cycleActivityStatusFilter()
-		return m, nil
-	case "s":
-		m.sorting = true
-		_, sortBy, descending := m.activitySortOptions()
-		m.sortChoice, m.sortDescending = int(sortBy), descending
-		return m, nil
-	case "/":
-		m.activityFilterBefore = m.activityFilter()
-		m.activityFilterEditing = true
-		return m, nil
-	case "r":
-		return m, m.loadActivityFeed(true)
-	case "esc":
+	case browserKeyEscape:
 		if m.detail {
 			m.detail = false
 			m.activityDetailScroll = 0
@@ -211,72 +209,118 @@ func (m *browser) handleActivityKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.detail = false
 		}
 		return m, nil
-	case "enter":
+	case keyEnter:
 		m.detail = !m.detail
 		m.activityDetailScroll = 0
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m *browser) handleActivityNavigationKey(key string) bool {
+	switch key {
 	case "up", "k":
 		if m.detail {
 			m.activityDetailScroll = max(0, m.activityDetailScroll-1)
 		} else {
 			m.moveActivitySelection(-1)
 		}
-		return m, nil
-	case "down", "j":
+	case keyDown, "j":
 		if m.detail {
 			m.activityDetailScroll++
 		} else {
 			m.moveActivitySelection(1)
 		}
-		return m, nil
-	case "home", "g":
-		if m.detail {
-			m.activityDetailScroll = 0
-		} else if m.activityTab == activityAlerts {
-			m.activityAlertCursor = 0
-			m.updateActivityAlertSelection()
-		} else {
-			m.activityNotificationCursor = 0
-			m.updateActivityNotificationSelection()
-		}
-		return m, nil
-	case "end", "G":
-		if m.detail {
-			m.activityDetailScroll = len(m.activityDetails())
-		} else if m.activityTab == activityAlerts {
-			m.activityAlertCursor = max(0, len(m.activityAlertsVisible())-1)
-			m.updateActivityAlertSelection()
-		} else {
-			m.activityNotificationCursor = max(0, len(m.activityNotificationsVisible())-1)
-			m.updateActivityNotificationSelection()
-		}
-		return m, nil
-	case "pgup":
-		if m.detail {
-			m.activityDetailScroll = max(0, m.activityDetailScroll-max(1, m.height-8))
-		} else {
-			m.moveActivitySelection(-max(1, m.height-8))
-		}
-		return m, nil
-	case "pgdown":
-		if m.detail {
-			m.activityDetailScroll += max(1, m.height-8)
-		} else {
-			m.moveActivitySelection(max(1, m.height-8))
-		}
-		return m, nil
+	case inputKeyHome, "g":
+		m.activityMoveToStart()
+	case inputKeyEnd, "G":
+		m.activityMoveToEnd()
+	case inputKeyPgUp:
+		m.activityMovePage(-1)
+	case inputKeyPgDown:
+		m.activityMovePage(1)
+	default:
+		return false
 	}
-	return m, nil
+	return true
+}
+
+func (m *browser) activityMoveToStart() {
+	switch {
+	case m.detail:
+		m.activityDetailScroll = 0
+	case m.activityTab == activityAlerts:
+		m.activityAlertCursor = 0
+		m.updateActivityAlertSelection()
+	default:
+		m.activityNotificationCursor = 0
+		m.updateActivityNotificationSelection()
+	}
+}
+
+func (m *browser) activityMoveToEnd() {
+	switch {
+	case m.detail:
+		m.activityDetailScroll = len(m.activityDetails())
+	case m.activityTab == activityAlerts:
+		m.activityAlertCursor = max(0, len(m.activityAlertsVisible())-1)
+		m.updateActivityAlertSelection()
+	default:
+		m.activityNotificationCursor = max(0, len(m.activityNotificationsVisible())-1)
+		m.updateActivityNotificationSelection()
+	}
+}
+
+func (m *browser) activityMovePage(direction int) {
+	pageSize := max(1, m.height-handleActivityKeyValue8)
+	if m.detail {
+		m.activityDetailScroll = max(0, m.activityDetailScroll+direction*pageSize)
+		return
+	}
+	m.moveActivitySelection(direction * pageSize)
+}
+
+func (m *browser) handleActivityCommandKey(key string) (tea.Model, tea.Cmd, bool) {
+	switch key {
+	case "1", "2", "3", "4":
+		return m, m.focusPane(int(key[0] - '1')), true
+	case inputKeyTab:
+		return m, m.cycleFocus(false), true
+	case inputKeyShiftTab, inputKeyBacktab:
+		return m, m.cycleFocus(true), true
+	case inputKeyCtrlC, "q":
+		return m, tea.Quit, true
+	case "?":
+		m.help = true
+	case keyLeft, "h":
+		return m, m.switchActivityTab(-1), true
+	case keyRight, "l":
+		return m, m.switchActivityTab(1), true
+	case "f":
+		m.cycleActivityStatusFilter()
+	case "s":
+		m.sorting = true
+		_, sortBy, descending := m.activitySortOptions()
+		m.sortChoice, m.sortDescending = int(sortBy), descending
+	case "/":
+		m.activityFilterBefore = m.activityFilter()
+		m.activityFilterEditing = true
+	case "r":
+		return m, m.loadActivityFeed(true), true
+	default:
+		return nil, nil, false
+	}
+	return m, nil, true
 }
 
 func (m *browser) cycleActivityStatusFilter() {
 	if m.activityTab == activityAlerts {
-		m.activityAlertStatusFilter = (m.activityAlertStatusFilter + 1) % 3
+		m.activityAlertStatusFilter = (m.activityAlertStatusFilter + 1) % cycleActivityStatusFilterValue3
 		m.activityAlertCursor = 0
 		m.updateActivityAlertSelection()
 		return
 	}
-	m.activityNotificationUnreadFilter = (m.activityNotificationUnreadFilter + 1) % 2
+	m.activityNotificationUnreadFilter = (m.activityNotificationUnreadFilter + 1) % cycleActivityStatusFilterValue2
 	m.activityNotificationCursor = 0
 	m.updateActivityNotificationSelection()
 }
@@ -285,7 +329,8 @@ func (m *browser) activityAlertsVisible() []client.Alert {
 	out := make([]client.Alert, 0, len(m.activityAlertsData))
 	query := strings.TrimSpace(m.activityAlertFilter)
 	for _, a := range m.activityAlertsData {
-		if m.activityAlertStatusFilter == 1 && !alertIsKnownFiring(a.Status) || m.activityAlertStatusFilter == 2 && !alertIsKnownResolved(a.Status) {
+		if m.activityAlertStatusFilter == 1 && !alertIsKnownFiring(a.Status) || m.activityAlertStatusFilter == 2 &&
+			!alertIsKnownResolved(a.Status) {
 			continue
 		}
 		if query != "" && !fuzzyMatch(strings.Join([]string{a.AlertName, a.Status, a.Severity, a.Instance, a.Condition}, " "), query) {
@@ -325,7 +370,6 @@ func (m *browser) sortActivityAlerts() {
 		case activitySortStatus:
 			ra, rb := alertStatusRank(a.Status), alertStatusRank(b.Status)
 			knownA, knownB = ra >= 0, rb >= 0
-			cmp = compareKnown(ra, rb)
 		case activitySortName:
 			cmp = strings.Compare(strings.ToLower(a.AlertName), strings.ToLower(b.AlertName))
 		default:
@@ -376,7 +420,7 @@ func compareTimes(a, b string) int {
 	ta, ea := time.Parse(time.RFC3339Nano, a)
 	tb, eb := time.Parse(time.RFC3339Nano, b)
 	if ea != nil || eb != nil {
-		if ea != eb {
+		if !errors.Is(ea, eb) {
 			if ea == nil {
 				return -1
 			}
@@ -423,12 +467,12 @@ func boolCompare(a, b bool) int {
 
 func alertSeverityRank(value string) int {
 	switch strings.ToLower(value) {
-	case "critical":
+	case statusCritical:
 		return 0
-	case "warning":
+	case statusWarning:
 		return 1
-	case "info":
-		return 2
+	case statusInfo:
+		return alertSeverityRankValue2
 	default:
 		return -1
 	}
@@ -436,9 +480,9 @@ func alertSeverityRank(value string) int {
 
 func alertStatusRank(value string) int {
 	switch strings.ToLower(value) {
-	case "firing":
+	case statusFiring:
 		return 0
-	case "resolved":
+	case statusResolved:
 		return 1
 	default:
 		return -1
@@ -450,9 +494,9 @@ func alertIsKnownResolved(value string) bool { return alertStatusRank(value) == 
 
 func alertStatusCell(value string) string {
 	switch strings.ToLower(value) {
-	case "firing":
+	case statusFiring:
 		return paint("● Firing", browserDanger, true)
-	case "resolved":
+	case statusResolved:
 		return paint("✓ Resolved", browserSuccess, true)
 	case "":
 		return paint("? Unknown", browserMuted, false)
@@ -463,7 +507,7 @@ func alertStatusCell(value string) string {
 
 func alertSeverityCell(value string) string {
 	switch strings.ToLower(value) {
-	case "critical":
+	case statusCritical:
 		return paint("✖ Critical", browserDanger, true)
 	case "warning":
 		return paint("▲ Warning", browserNumber, true)
@@ -575,16 +619,18 @@ func (m *browser) alertPaneLines(height int) []string {
 		statusHeading, severityHeading, startedHeading = "ST", "S", "TIME"
 		alertHeading = "NAME"
 	}
-	heading := padActivityCell(statusHeading, statusWidth) + " " + padActivityCell(severityHeading, severityWidth) + " " + padActivityCell(startedHeading, startedWidth) + " " + alertHeading
+	heading := padActivityCell(statusHeading, statusWidth) + " " + padActivityCell(severityHeading,
+		severityWidth) + " " + padActivityCell(startedHeading, startedWidth) + " " + alertHeading
 	lines := []string{paint(activityWidth(heading, width), browserMuted, true)}
 	stateLines := m.activityStateLines(m.activityAlertsState, "Alerts")
 	lines = append(lines, stateLines...)
 	rows := m.activityAlertsVisible()
 	if len(rows) == 0 && !m.activityAlertsState.active() && m.activityAlertsState.err == nil {
 		msg := "No alerts"
-		if m.activityAlertStatusFilter == 1 {
+		switch m.activityAlertStatusFilter {
+		case 1:
 			msg = "No firing alerts"
-		} else if m.activityAlertStatusFilter == 2 {
+		case alertPaneLinesValue2:
 			msg = "No resolved alerts"
 		}
 		lines = append(lines, paint(msg, browserMuted, false))
@@ -599,7 +645,8 @@ func (m *browser) alertPaneLines(height int) []string {
 		if compact {
 			started = shortActivityClock(a.StartsAt)
 		}
-		label := padActivityCell(status, statusWidth) + " " + padActivityCell(severity, severityWidth) + " " + padActivityCell(started, startedWidth) + " " + safeText(a.AlertName)
+		label := padActivityCell(status, statusWidth) + " " + padActivityCell(severity, severityWidth) + " " + padActivityCell(started,
+			startedWidth) + " " + safeText(a.AlertName)
 		label = activityWidth(label, width)
 		if i == m.activityAlertCursor {
 			label = selectedRowStyle().Render(label)
@@ -613,14 +660,14 @@ func (m *browser) alertPaneLines(height int) []string {
 	return activityListViewport(lines, height, &m.activityScroll, selectedRow)
 }
 
-func alertColumnWidths(width int) (statusWidth, severityWidth, startedWidth int, compact bool) {
+func alertColumnWidths(width int) (int, int, int, bool) {
 	switch {
-	case width >= 54:
-		return 11, 12, 12, false
-	case width >= 42:
-		return 10, 10, 8, false
+	case width >= alertColumnWidthsValue54:
+		return alertColumnWidthsValue11, alertColumnWidthsValue12, alertColumnWidthsValue12, false
+	case width >= alertColumnWidthsValue42:
+		return alertColumnWidthsValue10, alertColumnWidthsValue10, activityAlertFallbackWidth, false
 	default:
-		return 3, 2, 5, true
+		return alertColumnWidthsValue3, alertColumnWidthsValue2, activityAlertCompactWidth, true
 	}
 }
 
@@ -647,7 +694,7 @@ func alertStatusShort(value string) string {
 	case "resolved":
 		return "Resolved"
 	default:
-		return "Unknown"
+		return logUnknownState
 	}
 }
 
@@ -659,12 +706,12 @@ func shortActivityClock(raw string) string {
 	if err != nil {
 		return safeText(raw)
 	}
-	return t.Local().Format("15:04")
+	return formatLocalWallTime(t, "15:04")
 }
 
 func alertSeverityGlyph(value string) string {
 	switch strings.ToLower(value) {
-	case "critical":
+	case statusCritical:
 		return paint("✖", browserDanger, true)
 	case "warning":
 		return paint("▲", browserNumber, true)
@@ -701,7 +748,7 @@ func (m *browser) notificationPaneLines(height int) []string {
 	}
 	selectedRow := -1
 	if len(rows) > 0 {
-		selectedRow = 2 + len(stateLines) + m.activityNotificationCursor
+		selectedRow = notificationPaneLinesValue2 + len(stateLines) + m.activityNotificationCursor
 	}
 	return activityListViewport(lines, height, &m.activityScroll, selectedRow)
 }
@@ -711,12 +758,15 @@ func (m *browser) activityStateLines(state requestState, name string) []string {
 	if state.active() {
 		lines = append(lines, m.loadingMessage("Loading "+strings.ToLower(name)+"…"))
 	}
-	if state.status == requestStale {
+	switch state.status {
+	case requestStale:
 		lines = append(lines, paint("Stale · refresh failed: "+safeText(state.err.Error()), browserNumber, false), staleRequestTime(name, state))
-	} else if state.status == requestFailed {
+	case requestFailed:
 		lines = append(lines, paint("Could not load "+strings.ToLower(name)+": "+safeText(state.err.Error()), browserDanger, false))
-	} else if state.status == requestUnavailable {
+	case requestUnavailable:
 		lines = append(lines, paint(name+" unavailable", browserMuted, false))
+	default:
+		return lines
 	}
 	return lines
 }
@@ -752,7 +802,7 @@ func shortActivityTime(raw string) string {
 	if err != nil {
 		return safeText(raw)
 	}
-	return t.Local().Format("Jan 02 15:04")
+	return formatLocalWallTime(t, "Jan 02 15:04")
 }
 
 func stripActivityHTML(raw string) string {
@@ -767,7 +817,11 @@ func (m *browser) activityDetails() []string {
 			return []string{paint("Select an alert to inspect details.", browserMuted, false)}
 		}
 		a := rows[m.activityAlertCursor]
-		lines := []string{paint("⚠ "+safeText(a.AlertName), browserAccent, true), summaryField("Status", alertStatusCell(a.Status)), summaryField("Severity", alertSeverityCell(a.Severity)), summaryField("Instance", dashActivity(a.Instance)), summaryField("Owner", dashActivity(a.ServiceOwner)), summaryField("Condition", dashActivity(a.Condition)), summaryField("Started", dashActivity(shortActivityTime(a.StartsAt))), summaryField("Ended", dashActivity(shortActivityTime(a.EndsAt))), summaryField("Window", dashActivity(a.TimeWindow))}
+		lines := []string{paint("⚠ "+safeText(a.AlertName), browserAccent, true), summaryField("Status", alertStatusCell(a.Status)),
+			summaryField("Severity", alertSeverityCell(a.Severity)), summaryField("Instance", dashActivity(a.Instance)),
+			summaryField("Owner", dashActivity(a.ServiceOwner)), summaryField("Condition", dashActivity(a.Condition)),
+			summaryField("Started", dashActivity(shortActivityTime(a.StartsAt))), summaryField("Ended",
+				dashActivity(shortActivityTime(a.EndsAt))), summaryField("Window", dashActivity(a.TimeWindow))}
 		description := a.AlertDescription
 		if description == "" {
 			description = a.DescriptionFA
@@ -786,7 +840,9 @@ func (m *browser) activityDetails() []string {
 	if n.Unread {
 		status = "Unread"
 	}
-	lines := []string{summaryField("Status", status), summaryField("Time", shortActivityTime(n.Timestamp)), summaryField("Type", dashActivity(n.TargetType)), summaryField("Target", dashActivity(n.ActionLabel)), "", sectionHeading("Message"), safeText(n.Title), boundedActivityText(n.Description)}
+	lines := []string{summaryField("Status", status), summaryField("Time", shortActivityTime(n.Timestamp)), summaryField("Type",
+		dashActivity(n.TargetType)), summaryField("Target", dashActivity(n.ActionLabel)), "", sectionHeading("Message"),
+		safeText(n.Title), boundedActivityText(n.Description)}
 	return lines
 }
 
@@ -817,7 +873,7 @@ func (m *browser) activityFilterLine() string {
 		switch filter {
 		case 1:
 			indicator, color = "●", browserDanger
-		case 2:
+		case activityFilterLineValue2:
 			indicator, color = "✓", browserSuccess
 		}
 	} else if filter == 1 {
@@ -856,14 +912,15 @@ func (m *browser) activityDetailLines(height int) []string {
 
 func activityStatusFilterLabel(tab activityTab, filter int) string {
 	if tab == activityAlerts {
-		return []string{"All", "Firing", "Resolved"}[min(max(filter, 0), 2)]
+		labels := []string{labelAll, "Firing", "Resolved"}
+		return labels[min(max(filter, 0), len(labels)-1)]
 	}
 	return []string{"All", "Unread"}[min(max(filter, 0), 1)]
 }
 
 func boundedActivityText(s string) string {
 	runes := []rune(s)
-	if len(runes) > 4096 {
+	if len(runes) > boundedActivityTextValue4096 {
 		s = string(runes[:4096]) + "…"
 	}
 	return stripActivityHTML(s)

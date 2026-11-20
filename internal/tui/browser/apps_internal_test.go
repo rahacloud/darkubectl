@@ -1,11 +1,12 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"io"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func TestBrowserSelectionAndRefresh(t *testing.T) {

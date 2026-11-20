@@ -37,12 +37,12 @@ func (m *browser) beginTerminalPicker() tea.Cmd {
 
 func (m *browser) handleTerminalPickerKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "t":
+	case browserKeyEscape, "t":
 		m.logTargetPicker = false
 		m.terminalChoosing = false
-	case "left", "h":
+	case keyLeft, "h":
 		m.logPickerColumn = max(0, m.logPickerColumn-1)
-	case "right", "l":
+	case keyRight, "l":
 		m.logPickerColumn = min(1, m.logPickerColumn+1)
 	case "up", "k":
 		if m.logPickerColumn == 0 {
@@ -51,19 +51,19 @@ func (m *browser) handleTerminalPickerKey(msg tea.KeyPressMsg) tea.Cmd {
 		} else if m.logPodCursor >= 0 && m.logPodCursor < len(m.podList) {
 			m.logContainerCursor = max(0, m.logContainerCursor-1)
 		}
-	case "down", "j":
+	case keyDown, "j":
 		if m.logPickerColumn == 0 {
 			m.logPodCursor = min(len(m.podList)-1, m.logPodCursor+1)
 			m.logContainerCursor = 0
 		} else if m.logPodCursor >= 0 && m.logPodCursor < len(m.podList) {
 			m.logContainerCursor = min(max(0, len(m.podList[m.logPodCursor].Containers)-1), m.logContainerCursor+1)
 		}
-	case "enter":
+	case keyEnter:
 		if m.logPodCursor < 0 || m.logPodCursor >= len(m.podList) {
 			return nil
 		}
 		pod := m.podList[m.logPodCursor]
-		container := "main"
+		container := defaultNameMain
 		if len(pod.Containers) > 0 {
 			container = pod.Containers[min(m.logContainerCursor, len(pod.Containers)-1)].Name
 		}
@@ -107,7 +107,7 @@ func (m *browser) connectTerminal() tea.Cmd {
 		return nil
 	}
 	if m.terminalContainer == "" {
-		m.terminalContainer = "main"
+		m.terminalContainer = defaultNameMain
 	}
 	command := m.terminal(m.ctx, m.tenant, m.selectedDetailTarget(), appName, m.terminalPod, m.terminalContainer)
 	if command == nil {
@@ -118,16 +118,17 @@ func (m *browser) connectTerminal() tea.Cmd {
 	return tea.Exec(command, func(err error) tea.Msg { return terminalFinishedMsg{err: err} })
 }
 
-func (m *browser) handleTerminalFinished(msg terminalFinishedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil && strings.Contains(msg.err.Error(), "Console login required") {
+func (m *browser) handleTerminalFinished(msg terminalFinishedMsg) tea.Model {
+	switch {
+	case msg.err != nil && strings.Contains(msg.err.Error(), "Console login required"):
 		m.actionNotice = "Console login required · run darkubectl login"
-	} else if msg.err != nil {
+	case msg.err != nil:
 		m.actionNotice = "Terminal session ended with an error"
-	} else {
+	default:
 		m.actionNotice = "Terminal session ended"
 	}
 	m.terminalPod, m.terminalContainer = "", ""
-	return m, nil
+	return m
 }
 
 // The fixture runner prints the same target/controls header while making no
@@ -142,14 +143,22 @@ func (c *mockTerminalCommand) SetStdin(r io.Reader)  { c.stdin = r }
 func (c *mockTerminalCommand) SetStdout(w io.Writer) { c.stdout = w }
 func (c *mockTerminalCommand) SetStderr(w io.Writer) { c.stderr = w }
 func (c *mockTerminalCommand) Run() error {
-	if _, err := fmt.Fprintf(c.stdout, "\r\nMOCK TERMINAL PREVIEW · no remote connection made\r\nApp: %s · pod: %s · container: %s\r\nLive controls: Ctrl+D exits · Ctrl+C interrupts the remote process · Ctrl+L clears the screen. Use your terminal's usual copy and paste shortcuts.\r\nPress Ctrl+D to return to the browser. Commands are not executed in mock mode.\r\nmock$ ", c.appName, c.pod, c.container); err != nil {
+	const preview = "\r\nMOCK TERMINAL PREVIEW · no remote connection made\r\n" +
+		"App: %s · pod: %s · container: %s\r\n" +
+		"Live controls: Ctrl+D exits · Ctrl+C interrupts the remote process · Ctrl+L clears the screen. " +
+		"Use your terminal's usual copy and paste shortcuts.\r\n" +
+		"Press Ctrl+D to return to the browser. Commands are not executed in mock mode.\r\nmock$ "
+	if _, err := fmt.Fprintf(c.stdout, preview, c.appName, c.pod, c.container); err != nil {
 		return err
 	}
 	reader := bufio.NewReader(c.stdin)
 	for {
 		b, err := reader.ReadByte()
-		if err != nil || b == 0x04 {
+		if err == io.EOF || b == 0x04 {
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 		if b == '\r' || b == '\n' {
 			if _, writeErr := fmt.Fprint(c.stdout, "\r\nMOCK · shell commands are disabled\r\nmock$ "); writeErr != nil {

@@ -2,56 +2,9 @@ package browser
 
 import (
 	"fmt"
-	"github.com/rahacloud/darkubectl/internal/client"
-	"strings"
-)
 
-func (m *browser) usagePaneLines() []string {
-	lines := []string{}
-	if m.namespaceSelected || !m.selectedAppVisible() {
-		return []string{summaryField("App", "not selected")}
-	}
-	a := m.apps[m.selected]
-	if m.detailApp != nil && m.detailApp.ID == a.ID {
-		a = *m.detailApp
-	}
-	switch m.usageState.status {
-	case requestLoading:
-		lines = append(lines, summaryField("Usage", "loading"))
-	case requestRefreshing:
-		lines = append(lines, summaryField("Usage", "refreshing"))
-	case requestStale:
-		lines = append(lines, summaryField("Refresh", paint("failed · last samples shown", browserNumber, false)), staleRequestTime("Usage", m.usageState))
-	case requestFailed:
-		lines = append(lines, summaryField("Usage", paint("unavailable", browserNumber, false)))
-	case requestUnavailable:
-		lines = append(lines, summaryField("Usage", "unavailable for this connection"))
-	case requestEmpty:
-		lines = append(lines, summaryField("Samples", "none · last 5 minutes"))
-	default:
-		if m.usageState.lastSuccessAt.IsZero() {
-			lines = append(lines, summaryField("Usage", "no snapshot yet"))
-		}
-	}
-	usage := m.detailUsage
-	if m.usageAppID != a.ID {
-		usage = nil
-	}
-	lines = append(lines,
-		usageField(" CPU", usageValue(usage, func(u *AppUsage) *float64 { return u.CPUCores }), resourceLimit(a, "cpu"), formatCores, usage != nil && usage.Failed.CPU),
-		usageField(" RAM", usageValue(usage, func(u *AppUsage) *float64 { return u.RAMBytes }), resourceLimit(a, "ram"), formatBytes, usage != nil && usage.Failed.RAM))
-	if a.Disk != nil && a.Disk.SizeInGi > 0 {
-		lines = append(lines, usageField(" Disk", usageValue(usage, func(u *AppUsage) *float64 { return u.DiskBytes }), resourceLimit(a, "disk"), formatBytes, usage != nil && usage.Failed.Disk))
-	}
-	lines = append(lines, "")
-	lines = append(lines, m.historyLines()...)
-	if !m.usageState.lastSuccessAt.IsZero() {
-		when := m.usageState.lastSuccessAt.Local().Format("Jan 2, 3:04 PM MST")
-		lines = append(lines, "", summaryField("Updated", when))
-	}
-	lines = append(lines, summaryField("Usage window", "last 5 minutes"))
-	return lines
-}
+	"github.com/rahacloud/darkubectl/internal/client"
+)
 
 func resourceLimit(app client.App, resource string) string {
 	switch resource {
@@ -85,7 +38,7 @@ func usageField(label string, value *float64, limit string, format func(float64)
 }
 
 func resourceUsageText(value *float64, limit string, format func(float64) string, failed bool) string {
-	shown := ""
+	var shown string
 	switch {
 	case failed && value == nil:
 		shown = "Unavailable"
@@ -117,15 +70,4 @@ func usageValue(usage *AppUsage, selectValue func(*AppUsage) *float64) *float64 
 		return nil
 	}
 	return selectValue(usage)
-}
-
-func usageRatio(used *float64, total string, format func(float64) string) string {
-	if used == nil {
-		return displayValue(total)
-	}
-	usedText := format(*used)
-	if strings.TrimSpace(total) == "" || total == "-" {
-		return usedText
-	}
-	return usedText + " / " + displayValue(total)
 }

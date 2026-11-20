@@ -2,12 +2,34 @@ package browser
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/x/ansi"
+)
+
+const (
+	domainColumnWidthsValue8        = 8
+	domainContentWidthValue2        = 2
+	domainContentWidthValue4        = 4
+	domainRecordColumnWidthsValue14 = 14
+)
+
+const (
+	domainColumnWidthsValue2       = 2
+	domainContentWidthValue16      = 16
+	domainRecordColumnWidthsValue2 = 2
+	domainHostColumnRightPadding   = 15
+	domainRecordColumnDivisor      = 3
+	handleDomainsKeyValue2         = 2
+	handleDomainsKeyValue20        = 20
+	handleDomainsKeyValue3         = 3
+	handleDomainsKeyValue8         = 8
+	handleDomainsResultValue2      = 2
 )
 
 // DomainConfig is the verified app ingress configuration editable in the TUI.
@@ -44,7 +66,7 @@ type domainCopyResult struct {
 func (m *browser) loadDomains() tea.Cmd {
 	id := m.selectedDetailTarget()
 	if id == "" || m.domains == nil {
-		m.domainState.unavailable(fmt.Errorf("domain view unavailable"))
+		m.domainState.unavailable(errDomainViewUnavailable)
 		return nil
 	}
 	meta, ctx := m.startRequest(requestDomains, m.tenant, id, m.selectionGeneration)
@@ -55,50 +77,45 @@ func (m *browser) loadDomains() tea.Cmd {
 	}
 }
 
-func (m *browser) handleDomainsResult(msg domainsResult) (tea.Model, tea.Cmd) {
+func (m *browser) handleDomainsResult(msg domainsResult) tea.Model {
 	m.finishRequest(requestDomains, msg.meta)
-	if !m.domainState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration || msg.meta.appID != m.selectedDetailTarget() {
-		return m, nil
+	if !m.domainState.matches(msg.meta) || msg.meta.tenant != m.tenant || msg.meta.scopeGeneration != m.selectionGeneration ||
+		msg.meta.appID != m.selectedDetailTarget() {
+		return m
 	}
 	if msg.err != nil {
-		m.domainState.fail(fmt.Errorf("could not load domain status"))
-		return m, nil
+		m.domainState.fail(errCouldNotLoadDomainStatus)
+		return m
 	}
 	m.domainConfig = cloneDomainConfig(msg.config)
 	m.domainOriginal = cloneDomainConfig(msg.config)
-	m.domainCursor = min(m.domainCursor, m.domainSettingsStart()+2)
+	m.domainCursor = min(m.domainCursor, m.domainSettingsStart()+handleDomainsResultValue2)
 	m.domainState.succeed(len(msg.config.Hosts) == 0 && msg.config.Subdomain == "", m.requestTime())
-	return m, nil
+	return m
 }
 
 func cloneDomainConfig(c DomainConfig) DomainConfig {
 	c.Hosts = append([]string(nil), c.Hosts...)
 	if c.DNS != nil {
 		d := map[string]bool{}
-		for k, v := range c.DNS {
-			d[k] = v
-		}
+		maps.Copy(d, c.DNS)
 		c.DNS = d
 	}
 	if c.Certificates != nil {
 		d := map[string]string{}
-		for k, v := range c.Certificates {
-			d[k] = v
-		}
+		maps.Copy(d, c.Certificates)
 		c.Certificates = d
 	}
 	if c.ChallengeRecords != nil {
 		d := map[string]string{}
-		for k, v := range c.ChallengeRecords {
-			d[k] = v
-		}
+		maps.Copy(d, c.ChallengeRecords)
 		c.ChallengeRecords = d
 	}
 	return c
 }
 
 func (m *browser) domainRecordNames() []string {
-	if m.domainConfig.Challenge != "dns01" {
+	if m.domainConfig.Challenge != dnsChallengeDNS01 {
 		return nil
 	}
 	names := make([]string, 0, len(m.domainConfig.ChallengeRecords))
@@ -122,11 +139,29 @@ func (m *browser) domainsPaneLines() []string {
 		lines = append(lines, paint("Domain status unavailable · "+safeText(m.domainState.err.Error()), browserNumber, false))
 	}
 	addingExternal := m.domainEditing && !m.domainEditSubdomain
+	lines = m.appendDomainHosts(lines, addingExternal)
+	challengeSelected := m.domainCursor == len(m.domainConfig.Hosts) && !addingExternal
+	if challengeSelected {
+		m.domainCursorLine = len(lines)
+		marker := "  "
+		if m.allowWrites {
+			marker = domainMarker("› ", true)
+		}
+		lines = append(lines, marker+summaryField("Certificate challenge", paint(challengeLabel(m.domainConfig.Challenge), browserAccent, true)))
+	} else {
+		lines = append(lines, summaryField("Certificate challenge", paint(challengeLabel(m.domainConfig.Challenge), browserAccent, true)))
+	}
+	lines = m.appendDomainChallengeRecords(lines)
+	return m.appendDomainSettings(lines)
+}
+
+func (m *browser) appendDomainHosts(lines []string, addingExternal bool) []string {
 	if len(m.domainConfig.Hosts) == 0 && !addingExternal {
 		lines = append(lines, summaryField("Domains", "none"))
 	} else {
 		hostWidth, dnsWidth, certWidth := m.domainColumnWidths()
-		lines = append(lines, domainHostRow("  ", paint("DOMAIN", browserMuted, true), paint("DNS", browserMuted, true), paint("CERTIFICATE", browserMuted, true), hostWidth, dnsWidth, certWidth))
+		lines = append(lines, domainHostRow("  ", paint("DOMAIN", browserMuted, true), paint("DNS", browserMuted, true),
+			paint("CERTIFICATE", browserMuted, true), hostWidth, dnsWidth, certWidth))
 	}
 	hostWidth, dnsWidth, certWidth := m.domainColumnWidths()
 	for i, h := range m.domainConfig.Hosts {
@@ -154,58 +189,62 @@ func (m *browser) domainsPaneLines() []string {
 				cert = v
 			}
 		}
-		lines = append(lines, domainHostRow(domainMarker(mark, selected && m.allowWrites), domainLink(h), dns, safeText(cert), hostWidth, dnsWidth, certWidth))
+		lines = append(lines, domainHostRow(domainMarker(mark, selected && m.allowWrites), domainLink(h), dns, safeText(cert), hostWidth,
+			dnsWidth, certWidth))
 	}
 	if addingExternal {
 		m.domainCursorLine = len(lines)
-		lines = append(lines, domainHostRow(domainMarker("› ", true), paint(safeText(m.domainInput)+"█", browserAccent, true), paint("new", browserMuted, false), paint("staged on Enter", browserMuted, false), hostWidth, dnsWidth, certWidth))
+		lines = append(lines, domainHostRow(domainMarker("› ", true), paint(safeText(m.domainInput)+"█", browserAccent, true),
+			paint("new", browserMuted, false), paint("staged on Enter", browserMuted, false), hostWidth, dnsWidth, certWidth))
 	}
-	challengeSelected := m.domainCursor == len(m.domainConfig.Hosts) && !addingExternal
-	if challengeSelected {
-		m.domainCursorLine = len(lines)
+	return lines
+}
+
+func (m *browser) appendDomainChallengeRecords(lines []string) []string {
+	if m.domainConfig.Challenge != dnsChallengeDNS01 {
+		return lines
+	}
+	lines = append(lines, "", domainSectionHeading("DNS challenge records", len(m.domainConfig.ChallengeRecords), "record"))
+	if strings.Join(m.domainConfig.Hosts, "\x00") != strings.Join(m.domainOriginal.Hosts, "\x00") {
+		lines = append(lines, paint("Records reflect saved domains; save to refresh.", browserMuted, false))
+	}
+	switch {
+	case m.domainState.active():
+		lines = append(lines, paint("Loading records…", browserMuted, false))
+	case m.domainConfig.ChallengeRecordsFailed:
+		lines = append(lines, paint("Could not load records. Press r to retry.", browserNumber, false))
+	case len(m.domainConfig.ChallengeRecords) == 0:
+		lines = append(lines, paint("No records returned.", browserMuted, false))
+	}
+	names := m.domainRecordNames()
+	typeWidth, nameWidth, valueWidth := m.domainRecordColumnWidths(names)
+	if len(names) > 0 {
+		lines = append(lines, domainRecordRow("  ", paint("TYPE", browserMuted, true), paint("NAME", browserMuted, true), paint("VALUE",
+			browserMuted, true), typeWidth, nameWidth, valueWidth))
+	}
+	for i, name := range names {
+		selected := m.domainCursor == len(m.domainConfig.Hosts)+1+i
 		marker := "  "
-		if m.allowWrites {
-			marker = domainMarker("› ", true)
+		if selected {
+			marker = "› "
+			m.domainCursorLine = len(lines) + 1
 		}
-		lines = append(lines, marker+summaryField("Certificate challenge", paint(challengeLabel(m.domainConfig.Challenge), browserAccent, true)))
-	} else {
-		lines = append(lines, summaryField("Certificate challenge", paint(challengeLabel(m.domainConfig.Challenge), browserAccent, true)))
+		lines = append(lines, domainRecordRow(domainMarker(marker, selected), paint("CNAME", browserAccent, true), paint(safeText(name),
+			browserValue, false), paint(safeText(m.domainConfig.ChallengeRecords[name]), browserValue, false), typeWidth, nameWidth,
+			valueWidth))
 	}
-	if m.domainConfig.Challenge == "dns01" {
-		lines = append(lines, "", domainSectionHeading("DNS challenge records", len(m.domainConfig.ChallengeRecords), "record"))
-		if strings.Join(m.domainConfig.Hosts, "\x00") != strings.Join(m.domainOriginal.Hosts, "\x00") {
-			lines = append(lines, paint("Records reflect saved domains; save to refresh.", browserMuted, false))
-		}
-		switch {
-		case m.domainState.active():
-			lines = append(lines, paint("Loading records…", browserMuted, false))
-		case m.domainConfig.ChallengeRecordsFailed:
-			lines = append(lines, paint("Could not load records. Press r to retry.", browserNumber, false))
-		case len(m.domainConfig.ChallengeRecords) == 0:
-			lines = append(lines, paint("No records returned.", browserMuted, false))
-		}
-		names := m.domainRecordNames()
-		typeWidth, nameWidth, valueWidth := m.domainRecordColumnWidths(names)
-		if len(names) > 0 {
-			lines = append(lines, domainRecordRow("  ", paint("TYPE", browserMuted, true), paint("NAME", browserMuted, true), paint("VALUE", browserMuted, true), typeWidth, nameWidth, valueWidth))
-		}
-		for i, name := range names {
-			selected := m.domainCursor == len(m.domainConfig.Hosts)+1+i
-			marker := "  "
-			if selected {
-				marker = "› "
-				m.domainCursorLine = len(lines) + 1
-			}
-			lines = append(lines, domainRecordRow(domainMarker(marker, selected), paint("CNAME", browserAccent, true), paint(safeText(name), browserValue, false), paint(safeText(m.domainConfig.ChallengeRecords[name]), browserValue, false), typeWidth, nameWidth, valueWidth))
-		}
-	}
+	return lines
+}
+
+func (m *browser) appendDomainSettings(lines []string) []string {
 	lines = append(lines, "", sectionHeading("Platform subdomain"))
 	subdomainLine := len(lines) - 1
 	if m.domainCursor == m.domainSubdomainCursor() {
 		m.domainCursorLine = subdomainLine
 	}
 	lines = append(lines, "")
-	lines[subdomainLine+1] = domainRow(m.domainConfig.Subdomain, m.domainConfig.BaseDomain, m.domainInput, m.domainEditing && m.domainEditSubdomain, m.allowWrites && m.domainCursor == m.domainSubdomainCursor())
+	lines[subdomainLine+1] = domainRow(m.domainConfig.Subdomain, m.domainConfig.BaseDomain, m.domainInput, m.domainEditing &&
+		m.domainEditSubdomain, m.allowWrites && m.domainCursor == m.domainSubdomainCursor())
 	lines = append(lines, "", sectionHeading("Ingress"), summaryField("CNAME target", displayValue(m.domainConfig.CNAME)))
 	if m.domainConfig.CNAME != "" {
 		lines = append(lines, paint("Point each custom host's DNS CNAME at this target.", browserMuted, false))
@@ -218,7 +257,8 @@ func (m *browser) domainsPaneLines() []string {
 	if m.domainCursor == settingsStart+1 {
 		m.domainCursorLine = len(lines)
 	}
-	lines = append(lines, domainSettingLine("HTTPS redirect", m.domainConfig.RedirectHTTPS, m.allowWrites && m.domainCursor == settingsStart+1))
+	lines = append(lines, domainSettingLine("HTTPS redirect", m.domainConfig.RedirectHTTPS, m.allowWrites &&
+		m.domainCursor == settingsStart+1))
 	if m.domainCursor == settingsStart+2 {
 		m.domainCursorLine = len(lines)
 	}
@@ -238,10 +278,10 @@ func (m *browser) domainsPaneLines() []string {
 
 func (m *browser) domainContentWidth() int {
 	if m.domainMaximized {
-		return max(16, m.width-4)
+		return max(domainContentWidthValue16, m.width-domainContentWidthValue4)
 	}
 	_, right, _ := m.paneWidths()
-	return max(16, right-2)
+	return max(domainContentWidthValue16, right-domainContentWidthValue2)
 }
 func domainSectionHeading(title string, count int, noun string) string {
 	label := noun
@@ -256,27 +296,29 @@ func domainMarker(marker string, selected bool) string {
 	}
 	return marker
 }
-func (m *browser) domainColumnWidths() (host, dns, cert int) {
-	available := m.domainContentWidth() - 2
+func (m *browser) domainColumnWidths() (int, int, int) {
+	var host, dns, cert int
+	available := m.domainContentWidth() - domainColumnWidthsValue2
 	longest := len("DOMAIN")
 	for _, h := range m.domainConfig.Hosts {
 		longest = max(longest, ansi.StringWidth(h))
 	}
-	host = min(max(8, longest), max(8, available-15))
+	host = min(max(domainColumnWidthsValue8, longest), max(domainColumnWidthsValue8, available-domainHostColumnRightPadding))
 	dns = 11
-	cert = max(1, available-host-dns-2)
-	return
+	cert = max(1, available-host-dns-domainColumnWidthsValue2)
+	return host, dns, cert
 }
-func (m *browser) domainRecordColumnWidths(names []string) (typ, name, value int) {
-	available := m.domainContentWidth() - 2
+func (m *browser) domainRecordColumnWidths(names []string) (int, int, int) {
+	var typ, name, value int
+	available := m.domainContentWidth() - domainRecordColumnWidthsValue2
 	longest := len("NAME")
 	for _, n := range names {
 		longest = max(longest, ansi.StringWidth(n))
 	}
 	typ = 7
-	name = min(max(14, longest), max(14, available/3))
-	value = max(1, available-typ-name-2)
-	return
+	name = min(max(domainRecordColumnWidthsValue14, longest), max(domainRecordColumnWidthsValue14, available/domainRecordColumnDivisor))
+	value = max(1, available-typ-name-domainRecordColumnWidthsValue2)
+	return typ, name, value
 }
 func domainCell(value string, width int) string {
 	if width < 1 {
@@ -310,9 +352,6 @@ func domainFullSubdomain(label, base string) string {
 }
 func domainRow(label, base, input string, editing, selected bool) string {
 	marker := "  "
-	if selected {
-		marker = "› "
-	}
 	address := paint("not set", browserMuted, false)
 	if editing {
 		address = paint(safeText(input)+"█"+domainSuffix(base), browserAccent, true)
@@ -329,7 +368,7 @@ func validPlatformLabel(label string) bool {
 		return false
 	}
 	for _, r := range label {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
 			return false
 		}
 	}
@@ -356,9 +395,6 @@ func domainSettingLine(name string, enabled bool, selected bool) string {
 		glyph = paint("●", browserSuccess, true)
 	}
 	marker := "  "
-	if selected {
-		marker = "› "
-	}
 	return domainMarker(marker, selected) + summaryField(name, glyph)
 }
 func domainDiff(old, cur DomainConfig) []string {
@@ -374,7 +410,8 @@ func domainDiff(old, cur DomainConfig) []string {
 		}
 	}
 	if old.Subdomain != cur.Subdomain {
-		out = append(out, summaryField("Platform subdomain", domainFullSubdomain(old.Subdomain, old.BaseDomain)+" → "+domainFullSubdomain(cur.Subdomain, cur.BaseDomain)))
+		out = append(out, summaryField("Platform subdomain", domainFullSubdomain(old.Subdomain,
+			old.BaseDomain)+" → "+domainFullSubdomain(cur.Subdomain, cur.BaseDomain)))
 	}
 	if old.Challenge != cur.Challenge {
 		out = append(out, summaryField("Challenge", cur.Challenge))
@@ -402,175 +439,209 @@ func (m *browser) handleDomainsKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if m.domainEditing {
-		switch msg.String() {
-		case "esc":
-			m.domainEditing = false
-			m.domainEditSubdomain = false
-			m.domainInput = ""
-		case "enter":
-			h := strings.TrimSpace(m.domainInput)
-			if m.domainEditSubdomain {
-				if validPlatformLabel(h) {
-					m.domainConfig.Subdomain = h
-					if h != "" {
-						m.domainConfig.SSL = true
-					}
-				} else {
-					m.domainMessage = "Use a bare label without dots or spaces"
-				}
-				m.domainEditing = false
-				m.domainEditSubdomain = false
-				m.domainInput = ""
-				return nil
-			}
-			if h != "" && !strings.ContainsAny(h, " \t\r\n") && !isPlatformHost(h, m.domainConfig.BaseDomain) && !containsString(m.domainConfig.Hosts, h) {
-				m.domainConfig.Hosts = append(m.domainConfig.Hosts, h)
-				sort.Strings(m.domainConfig.Hosts)
-				m.domainCursor = 0
-				for i, host := range m.domainConfig.Hosts {
-					if host == h {
-						m.domainCursor = i
-						break
-					}
-				}
-				if strings.HasPrefix(h, "*.") {
-					m.domainConfig.Challenge = "dns01"
-					m.domainConfig.SSL = true
-				}
-				m.domainEditing = false
-				m.domainInput = ""
-				return nil
-			} else if h != "" {
-				m.domainMessage = "Enter a unique hostname; platform subdomains use the platform subdomain setting"
-				return nil
-			}
-			m.domainEditing = false
-			m.domainInput = ""
-		case "backspace":
-			r := []rune(m.domainInput)
-			if len(r) > 0 {
-				m.domainInput = string(r[:len(r)-1])
-			}
-		case "ctrl+u":
-			m.domainInput = ""
-		default:
-			if msg.Text != "" {
-				m.domainInput += msg.Text
-			}
-		}
+		m.handleDomainInputKey(msg)
 		return nil
 	}
 	if m.domainConfirm {
-		switch msg.String() {
-		case "esc":
-			m.domainConfirm = false
-		case "enter":
-			return m.saveDomains()
-		case "pgup", "pageup":
-			m.summaryScroll = max(0, m.summaryScroll-8)
-		case "pgdown", "pagedown":
-			m.summaryScroll += 8
-		}
-		return nil
+		return m.handleDomainConfirmKey(msg.String())
 	}
+	return m.handleDomainBrowseKey(msg)
+}
+
+func (m *browser) handleDomainInputKey(msg tea.KeyPressMsg) {
+	switch msg.String() {
+	case browserKeyEscape:
+		m.domainEditing = false
+		m.domainEditSubdomain = false
+		m.domainInput = ""
+	case keyEnter:
+		h := strings.TrimSpace(m.domainInput)
+		if m.domainEditSubdomain {
+			m.applyDomainSubdomainInput(h)
+			return
+		}
+		m.applyDomainHostInput(h)
+	case keyBackspace:
+		r := []rune(m.domainInput)
+		if len(r) > 0 {
+			m.domainInput = string(r[:len(r)-1])
+		}
+	case keyCtrlU:
+		m.domainInput = ""
+	default:
+		if msg.Text != "" {
+			m.domainInput += msg.Text
+		}
+	}
+}
+
+func (m *browser) applyDomainSubdomainInput(value string) {
+	if validPlatformLabel(value) {
+		m.domainConfig.Subdomain = value
+		if value != "" {
+			m.domainConfig.SSL = true
+		}
+	} else {
+		m.domainMessage = "Use a bare label without dots or spaces"
+	}
+	m.domainEditing, m.domainEditSubdomain, m.domainInput = false, false, ""
+}
+
+func (m *browser) applyDomainHostInput(host string) {
+	if host == "" {
+		m.domainEditing, m.domainInput = false, ""
+		return
+	}
+	if strings.ContainsAny(host, " \t\r\n") || isPlatformHost(host, m.domainConfig.BaseDomain) || containsString(m.domainConfig.Hosts, host) {
+		m.domainMessage = "Enter a unique hostname; platform subdomains use the platform subdomain setting"
+		return
+	}
+	m.domainConfig.Hosts = append(m.domainConfig.Hosts, host)
+	sort.Strings(m.domainConfig.Hosts)
+	m.domainCursor = slices.Index(m.domainConfig.Hosts, host)
+	if strings.HasPrefix(host, "*.") {
+		m.domainConfig.Challenge, m.domainConfig.SSL = dnsChallengeDNS01, true
+	}
+	m.domainEditing, m.domainInput = false, ""
+}
+
+func (m *browser) handleDomainConfirmKey(key string) tea.Cmd {
+	switch key {
+	case browserKeyEscape:
+		m.domainConfirm = false
+	case keyEnter:
+		return m.saveDomains()
+	case inputKeyPgUp, inputKeyPageUp:
+		m.summaryScroll = max(0, m.summaryScroll-handleDomainsKeyValue8)
+	case inputKeyPgDown, inputKeyPageDown:
+		m.summaryScroll += 8
+	}
+	return nil
+}
+
+func (m *browser) handleDomainBrowseKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "up":
 		m.domainCursor = max(0, m.domainCursor-1)
-	case "down":
-		m.domainCursor = min(m.domainSettingsStart()+2, m.domainCursor+1)
+	case keyDown:
+		m.domainCursor = min(m.domainSettingsStart()+handleDomainsKeyValue2, m.domainCursor+1)
 	case "n", "y":
-		names := m.domainRecordNames()
-		i := m.domainCursor - len(m.domainConfig.Hosts) - 1
-		if i >= 0 && i < len(names) {
-			name := names[i]
-			field := "name"
-			value := name
-			if msg.String() == "y" {
-				field = "target"
-				value = m.domainConfig.ChallengeRecords[name]
-			}
-			tenant, id := m.tenant, m.selectedDetailTarget()
-			return func() tea.Msg {
-				return domainCopyResult{tenant: tenant, appID: id, field: field, err: clipboard.WriteAll(value)}
-			}
-		}
-	case "pgup", "pageup":
-		m.summaryScroll = max(0, m.summaryScroll-8)
+		return m.copyDomainRecord(msg.String())
+	case inputKeyPgUp, "pageup":
+		m.summaryScroll = max(0, m.summaryScroll-handleDomainsKeyValue8)
 	case "pgdown", "pagedown":
 		m.summaryScroll += 8
+	case "+", "d", "e", "s", "x", "m", "r":
+		return m.handleDomainActionKey(msg.String())
+	}
+	return nil
+}
+
+func (m *browser) copyDomainRecord(key string) tea.Cmd {
+	names := m.domainRecordNames()
+	index := m.domainCursor - len(m.domainConfig.Hosts) - 1
+	if index < 0 || index >= len(names) {
+		return nil
+	}
+	name, field := names[index], "name"
+	value := name
+	if key == "y" {
+		field, value = "target", m.domainConfig.ChallengeRecords[name]
+	}
+	tenant, id := m.tenant, m.selectedDetailTarget()
+	return func() tea.Msg {
+		return domainCopyResult{tenant: tenant, appID: id, field: field, err: clipboard.WriteAll(value)}
+	}
+}
+
+func (m *browser) handleDomainActionKey(key string) tea.Cmd {
+	switch key {
 	case "+":
 		if m.allowWrites {
-			m.domainEditing = true
-			m.domainEditSubdomain = false
-			m.domainInput = ""
+			m.domainEditing, m.domainEditSubdomain, m.domainInput = true, false, ""
 			m.domainCursor = len(m.domainConfig.Hosts)
 		}
 	case "d":
-		if m.allowWrites && m.domainCursor == m.domainSubdomainCursor() {
-			m.domainConfig.Subdomain = ""
-		} else if m.allowWrites && m.domainCursor < len(m.domainConfig.Hosts) && len(m.domainConfig.Hosts) > 0 {
-			m.domainConfig.Hosts = append(m.domainConfig.Hosts[:m.domainCursor], m.domainConfig.Hosts[m.domainCursor+1:]...)
-			m.domainCursor = min(m.domainCursor, max(0, len(m.domainConfig.Hosts)-1))
-		}
+		m.deleteSelectedDomain()
 	case "e":
-		if m.allowWrites {
-			if m.domainCursor == m.domainSubdomainCursor() {
-				m.domainEditing = true
-				m.domainEditSubdomain = true
-				m.domainInput = m.domainConfig.Subdomain
-				return nil
-			}
-			index := m.domainCursor - len(m.domainConfig.Hosts)
-			if index > 0 && index <= len(m.domainRecordNames()) {
-				break
-			}
-			if index > 0 {
-				index -= len(m.domainRecordNames())
-			}
-			if index > 1 {
-				index--
-			}
-			switch index {
-			case 0:
-				if m.domainConfig.Challenge == "dns01" {
-					if containsWildcard(m.domainConfig.Hosts) {
-						m.domainMessage = "Wildcard domains require the DNS challenge"
-						break
-					}
-					m.domainConfig.Challenge = "http01"
-				} else {
-					m.domainConfig.Challenge = "dns01"
-				}
-				m.domainConfig.SSL = true
-			case 1:
-				m.domainConfig.SSL = !m.domainConfig.SSL
-			case 2:
-				m.domainConfig.RedirectHTTPS = !m.domainConfig.RedirectHTTPS
-			case 3:
-				m.domainConfig.HTTP2 = !m.domainConfig.HTTP2
-			}
-		}
+		m.editSelectedDomainSetting()
 	case "s":
 		if m.allowWrites && len(domainDiff(m.domainOriginal, m.domainConfig)) > 0 {
 			m.domainConfirm = true
-			m.summaryScroll = 1 << 20
+			m.summaryScroll = 1 << handleDomainsKeyValue20
 		}
 	case "x":
 		m.domainConfig = cloneDomainConfig(m.domainOriginal)
-		m.domainMessage = "Staged changes discarded"
+		m.domainMessage = messageChangesDiscarded
 	case "m":
 		m.domainMaximized = !m.domainMaximized
 	case "r":
-		if !m.domainBusy {
-			if len(domainDiff(m.domainOriginal, m.domainConfig)) > 0 {
-				m.domainMessage = "Save or discard staged changes before refreshing"
-				return nil
-			}
-			m.domainState.reset()
-			return m.loadDomains()
+		if len(domainDiff(m.domainOriginal, m.domainConfig)) > 0 {
+			m.domainMessage = messageSaveOrDiscardBeforeRefresh
+			return nil
 		}
+		m.domainState.reset()
+		return m.loadDomains()
 	}
 	return nil
+}
+
+func (m *browser) deleteSelectedDomain() {
+	if !m.allowWrites {
+		return
+	}
+	if m.domainCursor == m.domainSubdomainCursor() {
+		m.domainConfig.Subdomain = ""
+		return
+	}
+	if m.domainCursor < len(m.domainConfig.Hosts) && len(m.domainConfig.Hosts) > 0 {
+		m.domainConfig.Hosts = append(m.domainConfig.Hosts[:m.domainCursor], m.domainConfig.Hosts[m.domainCursor+1:]...)
+		m.domainCursor = min(m.domainCursor, max(0, len(m.domainConfig.Hosts)-1))
+	}
+}
+
+func (m *browser) editSelectedDomainSetting() {
+	if !m.allowWrites {
+		return
+	}
+	if m.domainCursor == m.domainSubdomainCursor() {
+		m.domainEditing, m.domainEditSubdomain, m.domainInput = true, true, m.domainConfig.Subdomain
+		return
+	}
+	index := m.domainCursor - len(m.domainConfig.Hosts)
+	recordCount := len(m.domainRecordNames())
+	if index > 0 && index <= recordCount {
+		return
+	}
+	if index > 0 {
+		index -= recordCount
+	}
+	if index > 1 {
+		index--
+	}
+	switch index {
+	case 0:
+		m.toggleDomainChallenge()
+	case 1:
+		m.domainConfig.SSL = !m.domainConfig.SSL
+	case handleDomainsKeyValue2:
+		m.domainConfig.RedirectHTTPS = !m.domainConfig.RedirectHTTPS
+	case handleDomainsKeyValue3:
+		m.domainConfig.HTTP2 = !m.domainConfig.HTTP2
+	}
+}
+
+func (m *browser) toggleDomainChallenge() {
+	if m.domainConfig.Challenge == "dns01" {
+		if containsWildcard(m.domainConfig.Hosts) {
+			m.domainMessage = "Wildcard domains require the DNS challenge"
+			return
+		}
+		m.domainConfig.Challenge = "http01"
+	} else {
+		m.domainConfig.Challenge = "dns01"
+	}
+	m.domainConfig.SSL = true
 }
 
 func containsWildcard(hosts []string) bool {
@@ -583,12 +654,7 @@ func containsWildcard(hosts []string) bool {
 }
 
 func containsString(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }
 
 func (m *browser) saveDomains() tea.Cmd {

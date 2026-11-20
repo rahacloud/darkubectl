@@ -1,12 +1,31 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/client"
+	"slices"
+
 	"sort"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const (
+	fileValue24                 = 24
+	fileValue6                  = 6
+	historyLinesValue12         = 12
+	historyLinesValue16         = 16
+	historyLinesValue2          = 2
+	historyLinesValue3          = 3
+	historyLinesValue4          = 4
+	historyLinesValue8          = 8
+	historySixHourStepMinutes   = 5
+	historyDayStepMinutes       = 20
+	historyChartSideInset       = 2
+	historyMinimumLabelWidth    = 5
+	historyPodLabelWidthDivisor = 2
 )
 
 // UsageHistory holds the API's per-pod time series for a single query window.
@@ -25,8 +44,8 @@ type usageRange struct {
 
 var usageRanges = []usageRange{
 	{label: "1h", window: time.Hour, step: time.Minute},
-	{label: "6h", window: 6 * time.Hour, step: 5 * time.Minute},
-	{label: "24h", window: 24 * time.Hour, step: 20 * time.Minute},
+	{label: "6h", window: fileValue6 * time.Hour, step: historySixHourStepMinutes * time.Minute},
+	{label: "24h", window: fileValue24 * time.Hour, step: historyDayStepMinutes * time.Minute},
 }
 
 func (m *browser) loadUsageHistory() tea.Cmd {
@@ -79,6 +98,8 @@ func (m *browser) historyLines() []string {
 		lines = append(lines, summaryField("History", paint("stale · last samples shown", browserNumber, false)))
 	case requestPartial:
 		lines = append(lines, summaryField("History", paint("partial · some metrics unavailable", browserNumber, false)))
+	case requestReady:
+		break
 	}
 	if m.history == nil {
 		return lines
@@ -91,16 +112,24 @@ func (m *browser) historyLines() []string {
 	series = filterHistoryPod(series, m.historyPod)
 	capacity := metric.capacity(app)
 	_, width, _ := m.paneWidths()
-	width = max(16, width-2)
-	labelWidth := ansi.StringWidth(metric.format(maxHistoryScale(series, capacity)))
-	labelWidth = min(12, max(5, labelWidth))
-	axisWidth := labelWidth + 3
-	plotWidth := max(4, width-axisWidth)
-	chart, peak, ok := historyPlot(series, m.history.Start, m.history.End, m.history.Step, plotWidth, capacity)
+	width = max(historyLinesValue16, width-historyChartSideInset)
+	graphLines, ok := m.historyGraphLines(metric, series, capacity, width)
 	if !ok {
 		return append(lines, summaryField(metric.name, "no samples"))
 	}
-	lines = append(lines, summaryField("Peak", metric.format(peak)))
+	return append(lines, graphLines...)
+}
+
+func (m *browser) historyGraphLines(metric historyMetric, series []client.Series, capacity *float64, width int) ([]string, bool) {
+	labelWidth := ansi.StringWidth(metric.format(maxHistoryScale(series, capacity)))
+	labelWidth = min(historyLinesValue12, max(historyMinimumLabelWidth, labelWidth))
+	axisWidth := labelWidth + historyLinesValue3
+	plotWidth := max(historyLinesValue4, width-axisWidth)
+	chart, peak, ok := historyPlot(series, m.history.Start, m.history.End, m.history.Step, plotWidth, capacity)
+	if !ok {
+		return nil, false
+	}
+	lines := []string{summaryField("Peak", metric.format(peak))}
 	if capacity != nil {
 		capacityName := metric.capacityLabel
 		if capacityName != "" {
@@ -114,8 +143,8 @@ func (m *browser) historyLines() []string {
 		switch row {
 		case 0:
 			value = metric.format(axisScale)
-		case historyPlotHeight / 2:
-			value = metric.format(axisScale / 2)
+		case historyPlotHeight / historyLinesValue2:
+			value = metric.format(axisScale / historyLinesValue2)
 		case historyPlotHeight - 1:
 			value = metric.format(0)
 		}
@@ -129,11 +158,11 @@ func (m *browser) historyLines() []string {
 			continue
 		}
 		if sample, ok := item.Latest(); ok {
-			podLabel := ansi.Truncate(safeText(item.Pod), max(8, width/2), "…")
+			podLabel := ansi.Truncate(safeText(item.Pod), max(historyLinesValue8, width/historyPodLabelWidthDivisor), "…")
 			lines = append(lines, summaryField("Latest "+podLabel, metric.format(sample.Value)))
 		}
 	}
-	return lines
+	return lines, true
 }
 
 func (m *browser) selectedApp() client.App {
@@ -184,7 +213,8 @@ func historyPods(history *UsageHistory) []string {
 		return nil
 	}
 	unique := make(map[string]struct{})
-	for _, group := range [][]client.Series{history.CPU, history.CPUThrottle, history.RAM, history.Disk, history.NetworkReceive, history.NetworkSend} {
+	for _, group := range [][]client.Series{history.CPU, history.CPUThrottle, history.RAM, history.Disk, history.NetworkReceive,
+		history.NetworkSend} {
 		for _, series := range group {
 			if series.Pod != "" {
 				unique[series.Pod] = struct{}{}
@@ -207,10 +237,8 @@ func (m *browser) syncHistoryPod() {
 	}
 	pods := historyPods(m.history)
 	if m.historyPod != "" {
-		for _, pod := range pods {
-			if pod == m.historyPod {
-				return
-			}
+		if slices.Contains(pods, m.historyPod) {
+			return
 		}
 		m.historyPod = ""
 	}

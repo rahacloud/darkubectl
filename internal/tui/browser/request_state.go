@@ -102,10 +102,10 @@ func (s *requestState) reset() {
 	*s = requestState{}
 }
 
-func (s requestState) matches(meta requestMeta) bool {
+func (s *requestState) matches(meta requestMeta) bool {
 	return s.meta == meta && (s.status == requestLoading || s.status == requestRefreshing)
 }
 
-func (s requestState) active() bool {
+func (s *requestState) active() bool {
 	return s.status == requestLoading || s.status == requestRefreshing
 }

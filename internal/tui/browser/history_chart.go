@@ -2,14 +2,60 @@ package browser
 
 import (
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"image/color"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const historyPodColorCount uint32 = 10
+const historyColorAlphaOpaque = 255
+
+const (
+	historyAxisMidpointDivisor = 2
+	historyPercentageScale     = 100
+	historyRaspberryGreen      = 51
+	historyLeafGreen           = 192
+	historyVioletGreen         = 94
+	historyRedGreen            = 49
+	historyLimeGreen           = 201
+	historyFNVPrime            = 16777619
+	historyPodColorValue130    = 130
+	historyPodColorValue132    = 132
+	historyPodColorValue214    = 214
+	historyPodColorValue224    = 224
+	historyPodColorValue64     = 64
+	historyPodColorBlue108     = 108
+	historyPodColorGreen87     = 87
+	historyPodColorBlue247     = 247
+	historyPodColorRed49       = 49
+	historyPodColorBlue30      = 30
+	historyColorBlueA1         = 34
+	historyColorBlueA2         = 139
+	historyColorBlueA3         = 230
+	historyColorOrangeR        = 240
+	historyColorOrangeG        = 140
+	historyColorOrangeB        = 0
+	historyColorCyanR          = 21
+	historyColorCyanG          = 170
+	historyColorCyanB          = 191
+	historyColorPinkG          = 101
+	historyColorPinkB          = 149
+	historyColorAmberR         = 250
+	historyColorAmberG         = 176
+	historyColorAmberB         = 5
+	historyXAxisValue16        = 16
+	historyXAxisValue2         = 2
+	historyXAxisValue36        = 36
+	historyXAxisValue8         = 8
+	usageCapacityValue1000     = 1000
+	usageCapacityValue1e6      = 1e6
+	usageCapacityValue30       = 30
 )
 
 const historyPlotHeight = 10
@@ -36,24 +82,25 @@ func historyXAxis(start, end time.Time, width, prefixWidth int) []string {
 	format := "15:04"
 	if end.Sub(start) >= 24*time.Hour {
 		switch {
-		case width >= 36:
+		case width >= historyXAxisValue36:
 			format = "01/02 15:04"
-		case width >= 16:
+		case width >= historyXAxisValue16:
 			format = "01/02"
 		default:
 			format = "15h"
 		}
-	} else if width < 8 {
+	} else if width < historyXAxisValue8 {
 		format = "15"
 	}
-	labels := []string{start.Local().Format(format), start.Add(end.Sub(start) / 2).Local().Format(format), end.Local().Format(format)}
-	showMiddle := width >= 3*ansi.StringWidth(labels[0])+2
+	labels := []string{formatLocalWallTime(start, format), formatLocalWallTime(start.Add(end.Sub(start)/historyAxisMidpointDivisor),
+		format), formatLocalWallTime(end, format)}
+	showMiddle := width >= 3*ansi.StringWidth(labels[0])+historyXAxisValue2
 	axis := make([]rune, width)
 	for i := range axis {
 		axis[i] = '─'
 	}
 	axis[0] = '└'
-	axis[min(width-1, width/2)] = '┴'
+	axis[min(width-1, width/historyXAxisValue2)] = '┴'
 	axis[width-1] = '┘'
 	labelLine := make([]rune, width)
 	for i := range labelLine {
@@ -92,45 +139,65 @@ type historyMetric struct {
 }
 
 var historyMetrics = []historyMetric{
-	{"CPU Usage", "", "request", func(h *UsageHistory) []client.Series { return h.CPU }, func(f UsageMetricFailures) bool { return f.CPU }, formatCores, func(a client.App) *float64 { return usageCapacity(a, "cpu") }},
-	{"CPU Throttle", "", "", func(h *UsageHistory) []client.Series { return h.CPUThrottle }, func(f UsageMetricFailures) bool { return f.CPUThrottle }, func(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }, func(client.App) *float64 { return nil }},
-	{"RAM Usage", "", "limit", func(h *UsageHistory) []client.Series { return h.RAM }, func(f UsageMetricFailures) bool { return f.RAM }, formatBytes, func(a client.App) *float64 { return usageCapacity(a, "ram") }},
-	{"Disk Usage", "", "capacity", func(h *UsageHistory) []client.Series { return h.Disk }, func(f UsageMetricFailures) bool { return f.Disk }, formatBytes, func(a client.App) *float64 { return usageCapacity(a, "disk") }},
-	{"Network Receive", "↓", "", func(h *UsageHistory) []client.Series { return h.NetworkReceive }, func(f UsageMetricFailures) bool { return f.NetworkReceive }, func(v float64) string { return formatBytes(v) + "/s" }, func(client.App) *float64 { return nil }},
-	{"Network Send", "↑", "", func(h *UsageHistory) []client.Series { return h.NetworkSend }, func(f UsageMetricFailures) bool { return f.NetworkSend }, func(v float64) string { return formatBytes(v) + "/s" }, func(client.App) *float64 { return nil }},
+	{"CPU Usage", "", "request", func(h *UsageHistory) []client.Series { return h.CPU },
+		func(f UsageMetricFailures) bool { return f.CPU }, formatCores, func(a client.App) *float64 { return usageCapacity(a, "cpu") }},
+	{"CPU Throttle", "", "", func(h *UsageHistory) []client.Series { return h.CPUThrottle },
+		func(f UsageMetricFailures) bool { return f.CPUThrottle }, func(v float64) string {
+			return fmt.Sprintf("%.1f%%",
+				v*historyPercentageScale)
+		}, func(client.App) *float64 { return nil }},
+	{"RAM Usage", "", "limit", func(h *UsageHistory) []client.Series { return h.RAM },
+		func(f UsageMetricFailures) bool { return f.RAM }, formatBytes, func(a client.App) *float64 { return usageCapacity(a, "ram") }},
+	{"Disk Usage", "", "capacity", func(h *UsageHistory) []client.Series { return h.Disk },
+		func(f UsageMetricFailures) bool { return f.Disk }, formatBytes, func(a client.App) *float64 { return usageCapacity(a, "disk") }},
+	{"Network Receive", "↓", "", func(h *UsageHistory) []client.Series { return h.NetworkReceive },
+		func(f UsageMetricFailures) bool { return f.NetworkReceive }, func(v float64) string { return formatBytes(v) + "/s" },
+		func(client.App) *float64 { return nil }},
+	{"Network Send", "↑", "", func(h *UsageHistory) []client.Series { return h.NetworkSend },
+		func(f UsageMetricFailures) bool { return f.NetworkSend }, func(v float64) string { return formatBytes(v) + "/s" },
+		func(client.App) *float64 { return nil }},
 }
 
 func historyPodColor(pod string) color.Color {
 	colors := []color.Color{
-		color.RGBA{R: 214, G: 51, B: 108, A: 255}, color.RGBA{R: 34, G: 139, B: 230, A: 255},
-		color.RGBA{R: 64, G: 192, B: 87, A: 255}, color.RGBA{R: 240, G: 140, B: 0, A: 255},
-		color.RGBA{R: 132, G: 94, B: 247, A: 255}, color.RGBA{R: 21, G: 170, B: 191, A: 255},
-		color.RGBA{R: 224, G: 49, B: 49, A: 255}, color.RGBA{R: 240, G: 101, B: 149, A: 255},
-		color.RGBA{R: 130, G: 201, B: 30, A: 255}, color.RGBA{R: 250, G: 176, B: 5, A: 255},
+		color.RGBA{R: historyPodColorValue214, G: historyRaspberryGreen, B: historyPodColorBlue108, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyColorBlueA1, G: historyColorBlueA2, B: historyColorBlueA3, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyPodColorValue64, G: historyLeafGreen, B: historyPodColorGreen87, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyColorOrangeR, G: historyColorOrangeG, B: historyColorOrangeB, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyPodColorValue132, G: historyVioletGreen, B: historyPodColorBlue247, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyColorCyanR, G: historyColorCyanG, B: historyColorCyanB, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyPodColorValue224, G: historyRedGreen, B: historyPodColorRed49, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyColorOrangeR, G: historyColorPinkG, B: historyColorPinkB, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyPodColorValue130, G: historyLimeGreen, B: historyPodColorBlue30, A: historyColorAlphaOpaque},
+		color.RGBA{R: historyColorAmberR, G: historyColorAmberG, B: historyColorAmberB, A: historyColorAlphaOpaque},
 	}
 	var hash uint32 = 2166136261
-	for _, r := range pod {
-		hash = (hash ^ uint32(r)) * 16777619
+	for _, b := range []byte(pod) {
+		hash = (hash ^ uint32(b)) * historyFNVPrime
 	}
-	return colors[int(hash%uint32(len(colors)))]
+	return colors[hash%historyPodColorCount]
 }
 
 func usageCapacity(app client.App, resource string) *float64 {
 	var value float64
 	switch resource {
 	case "cpu":
-		value, _ = parseUsageQuantity(app.CPURequest, true)
+		if parsed, valid := parseUsageQuantity(app.CPURequest, true); valid {
+			value = parsed
+		}
 		if value <= 0 && app.Plan != nil {
-			value = float64(app.Plan.Detail.CPURequest) / 1000
+			value = float64(app.Plan.Detail.CPURequest) / usageCapacityValue1000
 		}
 	case "ram":
-		value, _ = parseUsageQuantity(app.RAMLimit, false)
+		if parsed, valid := parseUsageQuantity(app.RAMLimit, false); valid {
+			value = parsed
+		}
 		if value <= 0 && app.Plan != nil {
-			value = float64(app.Plan.Detail.RAMLimit) * 1e6
+			value = float64(app.Plan.Detail.RAMLimit) * usageCapacityValue1e6
 		}
 	case "disk":
 		if app.Disk != nil {
-			value = float64(app.Disk.SizeInGi) * (1 << 30)
+			value = float64(app.Disk.SizeInGi) * (1 << usageCapacityValue30)
 		}
 	}
 	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
@@ -166,7 +233,8 @@ func parseUsageQuantity(raw string, cpu bool) (float64, bool) {
 // Each column shows the highest reported value in its time bucket. Empty
 // buckets stay blank except for the reference line.
 
-func historyPlot(series []client.Series, start, end time.Time, step time.Duration, width int, reference *float64) ([]string, float64, bool) {
+func historyPlot(series []client.Series, start, end time.Time, step time.Duration, width int, reference *float64) ([]string,
+	float64, bool) {
 	if step <= 0 || !end.After(start) || width < 1 {
 		return nil, 0, false
 	}
@@ -177,38 +245,62 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 	if len(series) == 0 {
 		return nil, 0, false
 	}
+	series = sortedHistorySeries(series)
+	groups := min(count, max(1, width/len(series)))
+	values, present, peak, found := bucketHistorySamples(series, start, end, step, count, groups)
+	if !found {
+		return nil, 0, false
+	}
+	scale := historyScale(peak, reference)
+	rows, colors := newHistoryPlotGrid(width)
+	interpolateHistoryGaps(values, present, len(series), groups)
+	drawHistoryBars(rows, colors, series, values, present, scale, width, groups)
+	drawHistoryReference(rows, colors, reference, scale)
+	return renderHistoryPlot(rows, colors), peak, true
+}
+
+func sortedHistorySeries(series []client.Series) []client.Series {
 	series = append([]client.Series(nil), series...)
 	sort.Slice(series, func(i, j int) bool { return series[i].Pod < series[j].Pod })
-	groups := min(count, max(1, width/len(series)))
+	return series
+}
+
+func bucketHistorySamples(series []client.Series, start, end time.Time, step time.Duration, count, groups int) ([][]float64,
+	[][]bool, float64, bool) {
 	values := make([][]float64, len(series))
 	present := make([][]bool, len(series))
-	peak := 0.0
-	found := false
+	peak, found := 0.0, false
 	for podIndex, pod := range series {
 		values[podIndex] = make([]float64, groups)
 		present[podIndex] = make([]bool, groups)
 		for _, sample := range pod.Values {
-			if sample.Time.Before(start) || sample.Time.After(end) || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) || sample.Value < 0 {
+			if invalidHistorySample(sample.Value) || sample.Time.Before(start) || sample.Time.After(end) {
 				continue
 			}
 			index := int(sample.Time.Sub(start) / step)
 			group := min(groups-1, index*groups/count)
 			values[podIndex][group] = math.Max(values[podIndex][group], sample.Value)
 			present[podIndex][group] = true
-			peak = math.Max(peak, sample.Value)
-			found = true
+			peak, found = math.Max(peak, sample.Value), true
 		}
 	}
-	if !found {
-		return nil, 0, false
+	return values, present, peak, found
+}
+
+func invalidHistorySample(value float64) bool {
+	return math.IsNaN(value) || math.IsInf(value, 0) || value < 0
+}
+
+func historyScale(peak float64, reference *float64) float64 {
+	if reference != nil && *reference > peak {
+		return *reference
 	}
-	scale := peak
-	if reference != nil && *reference > scale {
-		scale = *reference
-	}
-	const height = historyPlotHeight
-	rows := make([][]rune, height)
-	colors := make([][]color.Color, height)
+	return peak
+}
+
+func newHistoryPlotGrid(width int) ([][]rune, [][]color.Color) {
+	rows := make([][]rune, historyPlotHeight)
+	colors := make([][]color.Color, historyPlotHeight)
 	for row := range rows {
 		rows[row] = make([]rune, width)
 		colors[row] = make([]color.Color, width)
@@ -216,22 +308,29 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 			rows[row][col] = ' '
 		}
 	}
-	for podIndex := range series {
+	return rows, colors
+}
+
+func interpolateHistoryGaps(values [][]float64, present [][]bool, pods, groups int) {
+	for podIndex := range pods {
 		previous := -1
 		for group := range groups {
 			if !present[podIndex][group] {
 				continue
 			}
-			if previous >= 0 && group-previous > 1 {
-				for gap := previous + 1; gap < group; gap++ {
-					fraction := float64(gap-previous) / float64(group-previous)
-					values[podIndex][gap] = values[podIndex][previous] + (values[podIndex][group]-values[podIndex][previous])*fraction
-					present[podIndex][gap] = true
-				}
+			for gap := previous + 1; previous >= 0 && group-previous > 1 && gap < group; gap++ {
+				fraction := float64(gap-previous) / float64(group-previous)
+				values[podIndex][gap] = values[podIndex][previous] + (values[podIndex][group]-values[podIndex][previous])*fraction
+				present[podIndex][gap] = true
 			}
 			previous = group
 		}
 	}
+}
+
+func drawHistoryBars(rows [][]rune, colors [][]color.Color, series []client.Series, values [][]float64, present [][]bool,
+	scale float64, width, groups int) {
+	height := len(rows)
 	for group := range groups {
 		left, right := group*width/groups, (group+1)*width/groups
 		span := max(1, right-left)
@@ -258,7 +357,11 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 			}
 		}
 	}
+}
+
+func drawHistoryReference(rows [][]rune, colors [][]color.Color, reference *float64, scale float64) {
 	if reference != nil && *reference > 0 && scale > 0 {
+		height := len(rows)
 		line := height - 1 - int(math.Round(*reference/scale*float64(height-1)))
 		for col := range rows[line] {
 			if rows[line][col] == '█' {
@@ -269,7 +372,10 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 			colors[line][col] = browserMatchBG
 		}
 	}
-	out := make([]string, height)
+}
+
+func renderHistoryPlot(rows [][]rune, colors [][]color.Color) []string {
+	out := make([]string, len(rows))
 	for row := range rows {
 		var b strings.Builder
 		for col, cell := range rows[row] {
@@ -285,40 +391,18 @@ func historyPlot(series []client.Series, start, end time.Time, step time.Duratio
 		}
 		out[row] = b.String()
 	}
-	return out, peak, true
+	return out
 }
 
 // historyChart sums values reported at the same timestamp and plots gaps as
 // spaces. The chart uses a zero baseline and the peak in this query window.
 
 func historyChart(series []client.Series, start, end time.Time, step time.Duration, width int) (string, float64, bool) {
-	if step <= 0 || !end.After(start) || width < 1 {
+	count, ok := historyChartCount(start, end, step, width)
+	if !ok {
 		return "", 0, false
 	}
-	count := int(end.Sub(start)/step) + 1
-	if count < 1 || count > 10000 {
-		return "", 0, false
-	}
-	values := make([]float64, count)
-	present := make([]bool, count)
-	for _, pod := range series {
-		for _, sample := range pod.Values {
-			if sample.Time.Before(start) || sample.Time.After(end) || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) || sample.Value < 0 {
-				continue
-			}
-			i := int(sample.Time.Sub(start) / step)
-			values[i] += sample.Value
-			present[i] = true
-		}
-	}
-	var peak float64
-	found := false
-	for i, value := range values {
-		if present[i] {
-			found = true
-			peak = math.Max(peak, value)
-		}
-	}
+	values, present, peak, found := aggregateHistorySamples(series, start, end, step, count)
 	if !found {
 		return "", 0, false
 	}
@@ -346,4 +430,38 @@ func historyChart(series []client.Series, start, end time.Time, step time.Durati
 		chart.WriteRune(blocks[level])
 	}
 	return chart.String(), peak, true
+}
+
+func historyChartCount(start, end time.Time, step time.Duration, width int) (int, bool) {
+	if step <= 0 || !end.After(start) || width < 1 {
+		return 0, false
+	}
+	count := int(end.Sub(start)/step) + 1
+	return count, count > 0 && count <= 10000
+}
+
+func aggregateHistorySamples(series []client.Series, start, end time.Time, step time.Duration, count int) ([]float64, []bool,
+	float64, bool) {
+	values := make([]float64, count)
+	present := make([]bool, count)
+	for _, pod := range series {
+		for _, sample := range pod.Values {
+			if sample.Time.Before(start) || sample.Time.After(end) || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) || sample.Value < 0 {
+				continue
+			}
+			i := int(sample.Time.Sub(start) / step)
+			values[i] += sample.Value
+			present[i] = true
+		}
+	}
+	var peak float64
+	found := false
+	for i, value := range values {
+		if !present[i] {
+			continue
+		}
+		found = true
+		peak = math.Max(peak, value)
+	}
+	return values, present, peak, found
 }

@@ -1,11 +1,12 @@
 package browser
 
 import (
+	"strings"
+	"testing"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"strings"
-	"testing"
 )
 
 func TestAppTreeGroupsAndScrolls(t *testing.T) {
@@ -36,7 +37,6 @@ func TestAppTreeGroupsAndScrolls(t *testing.T) {
 		t.Fatalf("namespace did not collapse: %s", got)
 	}
 	m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
-	got = ansi.Strip(strings.Join(m.appTree(6), "\n"))
 	if !strings.Contains(got, "  ▾ prod (ID 1)") || !strings.Contains(got, "└── worker") {
 		t.Fatalf("namespace did not expand: %s", got)
 	}

@@ -5,9 +5,9 @@ import tea "charm.land/bubbletea/v2"
 func (m *browser) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	previousTarget := m.selectedDetailTarget()
 	switch msg.String() {
-	case "ctrl+c":
+	case inputKeyCtrlC:
 		return m, tea.Quit
-	case "enter":
+	case keyEnter:
 		m.filterEditing = false
 		m.filterBeforeEdit = m.filterQuery
 		if len(m.visibleAppIndices()) > 0 {
@@ -16,16 +16,14 @@ func (m *browser) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.loadSelectedSummary()
 		}
 		return m, nil
-	case "up", "down":
+	case "up", keyDown:
 		m.filterEditing = false
 		m.filterBeforeEdit = m.filterQuery
 		if msg.String() == "up" {
 			return m, m.moveTree(-1)
-		} else {
-			return m, m.moveTree(1)
 		}
-		return m, nil
-	case "esc":
+		return m, m.moveTree(1)
+	case browserKeyEscape:
 		m.filterEditing = false
 		m.filterQuery = m.filterBeforeEdit
 		for i := range m.apps {
@@ -36,14 +34,14 @@ func (m *browser) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.ensureFilterSelection()
 		return m, m.syncDetailTarget(previousTarget)
-	case "backspace", "ctrl+h":
+	case keyBackspace, keyCtrlH:
 		runes := []rune(m.filterQuery)
 		if len(runes) > 0 {
 			m.filterQuery = string(runes[:len(runes)-1])
 			m.ensureFilterSelection()
 		}
 		return m, m.syncDetailTarget(previousTarget)
-	case "ctrl+u":
+	case keyCtrlU:
 		m.filterQuery = ""
 		m.ensureFilterSelection()
 		return m, m.syncDetailTarget(previousTarget)
@@ -59,42 +57,46 @@ func (m *browser) handleSortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	options := appSortNames[:]
 	descending := m.sortDescending
-	if m.page == pageActivity {
+	switch m.page {
+	case pageActivity:
 		var sortBy activitySort
 		options, sortBy, descending = m.activitySortOptions()
 		if !m.sorting {
 			m.sortChoice = int(sortBy)
 		}
-	} else if m.page == pageDB {
+	case pageDB:
 		options = dbSortNames[:]
 		descending = m.databaseSortDescending
 		if !m.sorting {
 			m.sortChoice = int(m.databaseSortBy)
 		}
+	case pageApps, pageRegistry, pageTickets:
+		break
 	}
 	switch msg.String() {
-	case "ctrl+c":
+	case inputKeyCtrlC:
 		return m, tea.Quit
-	case "esc":
+	case browserKeyEscape:
 		m.sorting = false
 	case "up", "k":
 		m.sortChoice = (m.sortChoice + len(options) - 1) % len(options)
-	case "down", "j":
+	case keyDown, "j":
 		m.sortChoice = (m.sortChoice + 1) % len(options)
-	case "left", "h":
+	case keyLeft, "h":
 		descending = false
-	case "right", "l":
+	case keyRight, "l":
 		descending = true
-	case "enter":
-		if m.page == pageActivity {
+	case keyEnter:
+		switch m.page {
+		case pageActivity:
 			m.applyActivitySort(m.sortChoice, descending)
-		} else if m.page == pageDB {
+		case pageDB:
 			m.databaseSortBy = dbSort(m.sortChoice)
 			m.databaseSortDescending = descending
 			m.sortDatabases()
 			m.databaseCursor = 0
 			cmd = m.updateDatabaseSelection()
-		} else {
+		default:
 			m.sortBy = appSort(m.sortChoice)
 			m.sortDescending = descending
 			m.sortApps()
@@ -112,9 +114,9 @@ func (m *browser) handleSortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *browser) handleHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case inputKeyCtrlC, "q":
 		return m, tea.Quit
-	case "esc", "?":
+	case browserKeyEscape, "?":
 		m.help = false
 	}
 	return m, nil

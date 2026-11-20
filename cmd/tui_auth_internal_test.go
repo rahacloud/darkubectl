@@ -30,14 +30,12 @@ func TestTUICredentialRefreshesOnceForConcurrentRequests(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for range 12 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			got, err := c.current(context.Background())
 			if err != nil || got != client.BearerToken(fakeJWT(now.Add(time.Hour))) {
 				t.Errorf("current() = %q, %v", got, err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := calls.Load(); got != 1 {

@@ -1,11 +1,12 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
-	"fmt"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"sort"
+	"strconv"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func (m *browser) sortNamespaces() {
@@ -34,23 +35,23 @@ func (m *browser) openNamespacePicker() tea.Cmd {
 func (m *browser) handleNamespaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	choices := m.namespaceChoices()
 	switch msg.String() {
-	case "ctrl+c":
+	case inputKeyCtrlC:
 		return m, tea.Quit
-	case "esc":
+	case browserKeyEscape:
 		m.selectingNamespace = false
 		m.namespaceQuery = ""
-	case "enter":
+	case keyEnter:
 		if len(choices) > 0 {
 			return m, m.chooseNamespace(choices[m.namespaceCursor])
 		}
 	case "up":
 		m.namespaceCursor = max(0, m.namespaceCursor-1)
-	case "down":
+	case keyDown:
 		m.namespaceCursor = min(max(0, len(choices)-1), m.namespaceCursor+1)
-	case "ctrl+u":
+	case keyCtrlU:
 		m.namespaceQuery = ""
 		m.namespaceCursor = 0
-	case "backspace", "ctrl+h":
+	case keyBackspace, keyCtrlH:
 		query := []rune(m.namespaceQuery)
 		if len(query) > 0 {
 			m.namespaceQuery = string(query[:len(query)-1])
@@ -70,7 +71,8 @@ func (m *browser) namespaceChoices() []namespaceChoice {
 	for _, namespace := range m.namespaces {
 		key := namespaceKey{id: namespace.ID, name: namespace.Name}
 		query := strings.TrimSpace(m.namespaceQuery)
-		if query != "" && !fuzzyMatch(namespace.Name, query) && !fuzzyMatch(namespace.Cluster.Name, query) && !fuzzyMatch(fmt.Sprint(namespace.ID), query) {
+		if query != "" && !fuzzyMatch(namespace.Name, query) && !fuzzyMatch(namespace.Cluster.Name,
+			query) && !fuzzyMatch(strconv.Itoa(namespace.ID), query) {
 			continue
 		}
 		choices = append(choices, namespaceChoice{key: key, scoped: true})

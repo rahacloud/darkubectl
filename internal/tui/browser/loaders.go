@@ -2,7 +2,6 @@ package browser
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"fmt"
 	"github.com/rahacloud/darkubectl/internal/client"
 )
 
@@ -27,6 +26,9 @@ func (m *browser) syncDetailTarget(previous string) tea.Cmd {
 	if m.detail {
 		return m.loadSelectedSummary()
 	}
+	if m.page == pageApps {
+		return m.loadSelectedPods()
+	}
 	return nil
 }
 
@@ -36,7 +38,7 @@ func (m *browser) load() tea.Cmd {
 	m.appsState.begin(meta, m.requestTime())
 	if m.listApps == nil {
 		m.finishRequest(requestApps, meta)
-		m.appsState.unavailable(fmt.Errorf("app listing is unavailable"))
+		m.appsState.unavailable(errAppListingIsUnavailable)
 		return nil
 	}
 	appsCmd := func() tea.Msg {
@@ -60,7 +62,8 @@ func (m *browser) loadProfile() tea.Cmd {
 }
 
 func (m *browser) loadNamespaces() tea.Cmd {
-	if m.namespaceState.status == requestReady || m.namespaceState.status == requestEmpty || m.namespaceState.status == requestUnavailable || m.namespaceState.matches(m.namespaceState.meta) {
+	if m.namespaceState.status == requestReady || m.namespaceState.status == requestEmpty ||
+		m.namespaceState.status == requestUnavailable || m.namespaceState.matches(m.namespaceState.meta) {
 		return nil
 	}
 	if m.listNamespaces == nil {
@@ -111,7 +114,7 @@ func (m *browser) loadSelectedSummary() tea.Cmd {
 		m.detailState.begin(meta, m.requestTime())
 		if m.getApp == nil {
 			m.finishRequest(requestSummary, meta)
-			m.detailState.unavailable(fmt.Errorf("app detail is unavailable"))
+			m.detailState.unavailable(errAppDetailIsUnavailable)
 		} else {
 			getApp := m.getApp
 			cmds = append(cmds, func() tea.Msg {
@@ -158,7 +161,7 @@ func (m *browser) loadSelectedPods() tea.Cmd {
 	m.podsState.begin(meta, m.requestTime())
 	if m.fetchPods == nil {
 		m.finishRequest(requestPods, meta)
-		m.podsState.unavailable(fmt.Errorf("pod data is unavailable"))
+		m.podsState.unavailable(errPodDataIsUnavailable)
 		return nil
 	}
 	getPods, tenant := m.fetchPods, m.tenant
@@ -176,7 +179,7 @@ func (m *browser) loadEgressRoutes(force bool) tea.Cmd {
 	m.egressState.begin(meta, m.requestTime())
 	if m.egressRoutes == nil {
 		m.finishRequest(requestEgress, meta)
-		m.egressState.unavailable(fmt.Errorf("outbound IP data is unavailable"))
+		m.egressState.unavailable(errOutboundIPDataIsUnavailable)
 		return nil
 	}
 	getRoutes := m.egressRoutes

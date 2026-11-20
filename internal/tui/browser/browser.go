@@ -1,11 +1,12 @@
 package browser
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"context"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 	"github.com/rahacloud/darkubectl/internal/appstate"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"time"
 )
 
 // AppUsage is an optional latest resource snapshot, in CPU cores and bytes.
@@ -34,11 +35,18 @@ type ResourceConfig struct {
 	Autoscaling                                           bool
 }
 
-// BrowserOptions contains the live browser's reads and opt-in app lifecycle actions.
-type BrowserOptions struct {
+// Options contains the live browser's reads and opt-in app lifecycle actions.
+type Options struct {
 	Tenant                   string
 	LocalTenants             []string
 	AllowWrites              bool
+	ListTickets              func(context.Context, string, string, bool) (client.TicketList, error)
+	GetTicket                func(context.Context, string, string) (client.Ticket, error)
+	GetTicketComments        func(context.Context, string, string) ([]client.TicketComment, error)
+	GetTicketCategories      func(context.Context, string) ([]client.TicketCategory, error)
+	GetTicketPriorities      func(context.Context, string) ([]client.TicketPriority, error)
+	CreateTicket             func(context.Context, string, client.NewTicket) (string, error)
+	ReplyTicket              func(context.Context, string, string, string) error
 	Profile                  func(context.Context) (*client.Profile, error)
 	Alerts                   func(context.Context, string) ([]client.Alert, error)
 	Notifications            func(context.Context) ([]client.Notification, error)
@@ -81,10 +89,10 @@ type BrowserOptions struct {
 }
 
 // RunBrowser opens the app browser using the caller's scoped clients.
-func RunBrowser(ctx context.Context, options BrowserOptions) error {
+func RunBrowser(ctx context.Context, options Options) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &browser{tenant: options.Tenant, mode: "LIVE", profile: options.Profile, ctx: ctx,
+	m := &browser{tenant: options.Tenant, mode: connectionLabelLive, profile: options.Profile, ctx: ctx,
 		activityAlertStatusFilter: 1, activitySortAlertsDescending: true, activitySortNotificationsDescending: true,
 		allowWrites: options.AllowWrites, localTenants: append([]string(nil), options.LocalTenants...),
 		listApps: options.ListApps, logWrap: true, logTail: logDefaultTailSize}
@@ -111,12 +119,21 @@ func RunBrowser(ctx context.Context, options BrowserOptions) error {
 	m.alerts, m.notifications = options.Alerts, options.Notifications
 	m.listDatabases = options.ListDatabases
 	m.getDatabase = options.GetDatabase
+	m.listTickets = options.ListTickets
+	if options.GetTicket != nil {
+		m.getTicket = options.GetTicket
+	}
+	m.getTicketComments, m.getTicketCategories, m.getTicketPriorities = options.GetTicketComments, options.GetTicketCategories,
+		options.GetTicketPriorities
+	m.createTicket, m.replyTicket = options.CreateTicket, options.ReplyTicket
 	m.egressRoutes = options.EgressRoutes
 	if options.Namespaces != nil {
 		m.listNamespaces = options.Namespaces
 	}
-	m.listRegistries, m.listRegistryRepositories, m.listRegistryDigests = options.ListRegistries, options.ListRegistryRepositories, options.ListRegistryDigests
-	m.deleteRegistryRepository, m.deleteRegistryDigests, m.deleteRegistryTags = options.DeleteRegistryRepository, options.DeleteRegistryDigests, options.DeleteRegistryTags
+	m.listRegistries, m.listRegistryRepositories, m.listRegistryDigests = options.ListRegistries,
+		options.ListRegistryRepositories, options.ListRegistryDigests
+	m.deleteRegistryRepository, m.deleteRegistryDigests, m.deleteRegistryTags = options.DeleteRegistryRepository,
+		options.DeleteRegistryDigests, options.DeleteRegistryTags
 	if options.RestartApp != nil {
 		m.restartApp = func(tenant, id string) error { return options.RestartApp(ctx, tenant, id) }
 	}

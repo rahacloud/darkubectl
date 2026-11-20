@@ -1,14 +1,16 @@
 package browser
 
 import (
+	"strings"
+	"testing"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rahacloud/darkubectl/internal/client"
-	"strings"
-	"testing"
 )
 
 func TestPaneBordersStayAlignedBetweenTenantAndPages(t *testing.T) {
+	t.Parallel()
 	for _, width := range []int{60, 80, 120, 200} {
 		m := &browser{width: width, height: 30}
 		appsWidth, _, contextWidth := m.paneWidths()
@@ -28,7 +30,7 @@ func TestPaneBordersStayAlignedBetweenTenantAndPages(t *testing.T) {
 	}
 }
 
-func TestFooterShowsOnlyQuitAndHelpWhileHelpModalListsShortcuts(t *testing.T) {
+func TestAppListFooterShowsListShortcutsAndHelpModalListsShortcuts(t *testing.T) {
 	t.Parallel()
 	m := &browser{width: 120, height: 24}
 	applyAppsResult(m, []client.App{{
@@ -36,8 +38,10 @@ func TestFooterShowsOnlyQuitAndHelpWhileHelpModalListsShortcuts(t *testing.T) {
 	}}, nil)
 
 	footer := ansi.Strip(m.footerLine())
-	if footer != "q quit · ? help" {
-		t.Fatalf("footer = %q, want only quit and help", footer)
+	for _, hint := range []string{"q quit", "? help", "↑↓/jk apps", "↵ details", "n scope", "/ filter", "s sort", "r refresh"} {
+		if !strings.Contains(footer, hint) {
+			t.Errorf("footer = %q, missing list hint %q", footer, hint)
+		}
 	}
 	m.help = true
 	background := make([]string, m.height)
@@ -110,7 +114,8 @@ func TestResizePreservesFilterAndSelection(t *testing.T) {
 	m := &browser{width: 100, height: 30, tenant: "acme", filterQuery: "prod/api", filterEditing: true, selected: 3}
 	m.Update(tea.WindowSizeMsg{Width: 45, Height: 14})
 	if m.tenant != "acme" || m.filterQuery != "prod/api" || !m.filterEditing || m.selected != 3 {
-		t.Fatalf("resize changed browsing state: tenant=%q filter=%q editing=%v selected=%d", m.tenant, m.filterQuery, m.filterEditing, m.selected)
+		t.Fatalf("resize changed browsing state: tenant=%q filter=%q editing=%v selected=%d", m.tenant, m.filterQuery,
+			m.filterEditing, m.selected)
 	}
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	if m.filterQuery != "prod/api" || !m.filterEditing || m.selected != 3 {

@@ -10,6 +10,7 @@ import (
 )
 
 func TestPortTableFitsPaneAndShowsEveryColumn(t *testing.T) {
+	t.Parallel()
 	values := []string{"main", "TCP", "27017", "27017", "30161"}
 	for _, paneWidth := range []int{32, 40, 57, 58, 90} {
 		m := &browser{width: paneWidth + 2, portMaximized: true}
@@ -32,6 +33,7 @@ func TestPortTableFitsPaneAndShowsEveryColumn(t *testing.T) {
 }
 
 func TestPortTableHeadersAlignWithValues(t *testing.T) {
+	t.Parallel()
 	values := []string{"main", "TCP", "8080", "9091", "30421"}
 	for _, width := range []int{40, 90} {
 		m := &browser{width: width + 2, portMaximized: true}
@@ -57,7 +59,9 @@ func TestPortTableHeadersAlignWithValues(t *testing.T) {
 }
 
 func TestPortEditingStartsWithE(t *testing.T) {
-	m := &browser{allowWrites: true, portCursorRow: 1, portConfig: PortConfig{Type: "ClusterIP", Ports: map[string]client.Port{"main": {Protocol: "TCP", ContainerPort: 8080, ServicePort: 80}}}}
+	t.Parallel()
+	m := &browser{allowWrites: true, portCursorRow: 1, portConfig: PortConfig{Type: "ClusterIP",
+		Ports: map[string]client.Port{"main": {Protocol: "TCP", ContainerPort: 8080, ServicePort: 80}}}}
 	m.handlePortsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.portEditing {
 		t.Fatal("Enter unexpectedly started editing")
@@ -69,7 +73,9 @@ func TestPortEditingStartsWithE(t *testing.T) {
 }
 
 func TestPortProtocolTogglesWithE(t *testing.T) {
-	m := &browser{allowWrites: true, portCursorRow: 1, portCursorCol: 1, portConfig: PortConfig{Type: "ClusterIP", Ports: map[string]client.Port{"main": {Protocol: "TCP", ContainerPort: 8080, ServicePort: 80}}}}
+	t.Parallel()
+	m := &browser{allowWrites: true, portCursorRow: 1, portCursorCol: 1, portConfig: PortConfig{Type: "ClusterIP",
+		Ports: map[string]client.Port{"main": {Protocol: "TCP", ContainerPort: 8080, ServicePort: 80}}}}
 	key := tea.KeyPressMsg{Code: 'e', Text: "e"}
 	m.handlePortsKey(key)
 	if m.portEditing || m.portConfig.Ports["main"].Protocol != "UDP" {
@@ -82,6 +88,7 @@ func TestPortProtocolTogglesWithE(t *testing.T) {
 }
 
 func TestPortCellKeepsEditingCaretVisible(t *testing.T) {
+	t.Parallel()
 	cell := ansi.Strip(portCell("a-very-long-port-name", true, true, false, 8))
 	if !strings.Contains(cell, "█") || ansi.StringWidth(cell) > 10 {
 		t.Fatalf("editing cell = %q", cell)

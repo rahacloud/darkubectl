@@ -2,10 +2,16 @@ package browser
 
 import (
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/rahacloud/darkubectl/internal/client"
+)
+
+const (
+	namespaceBreadcrumbValue2 = 2
+	namespaceTopLineValue28   = 28
 )
 
 func (m *browser) sortLine() string {
@@ -13,22 +19,7 @@ func (m *browser) sortLine() string {
 		return m.activitySortLine()
 	}
 	if m.page == pageDB {
-		choice := int(m.databaseSortBy)
-		if m.sorting && m.sortChoice >= 0 && m.sortChoice < len(dbSortNames) {
-			choice = m.sortChoice
-		}
-		direction := "↑"
-		if m.databaseSortDescending {
-			direction = "↓"
-		}
-		if m.sorting {
-			if m.sortDescending {
-				direction = "↓"
-			} else {
-				direction = "↑"
-			}
-		}
-		return paint("⇅", browserMuted, false) + " " + paint(dbSortNames[choice], browserBranch, true) + " " + paint(direction, browserNumber, true)
+		return m.databaseSortLine()
 	}
 	choice := int(m.sortBy)
 	if m.sorting && m.sortChoice >= 0 && m.sortChoice < len(appSortNames) {
@@ -38,7 +29,25 @@ func (m *browser) sortLine() string {
 	if m.sortDescending {
 		direction = "↓"
 	}
-	return paint("⇅", browserMuted, false) + " " + paint(appSortNames[choice], browserBranch, true) + " " + paint(direction, browserNumber, true)
+	return paint("⇅", browserMuted, false) + " " + paint(appSortNames[choice], browserBranch, true) + " " + paint(direction,
+		browserNumber, true)
+}
+
+func (m *browser) databaseSortLine() string {
+	choice := int(m.databaseSortBy)
+	if m.sorting && m.sortChoice >= 0 && m.sortChoice < len(dbSortNames) {
+		choice = m.sortChoice
+	}
+	direction := "↑"
+	if m.sorting {
+		if m.sortDescending {
+			direction = "↓"
+		}
+	} else if m.databaseSortDescending {
+		direction = "↓"
+	}
+	return paint("⇅", browserMuted, false) + " " + paint(dbSortNames[choice], browserBranch, true) + " " + paint(direction,
+		browserNumber, true)
 }
 
 func (m *browser) namespaceTopLine() string {
@@ -46,7 +55,7 @@ func (m *browser) namespaceTopLine() string {
 		return paint("⎈ NS", browserMuted, true) + " " + paint("/ "+safeText(m.namespaceQuery), browserBranch, true)
 	}
 	if m.namespaceScoped {
-		name := ansi.Truncate(safeText(m.namespaceBreadcrumb(m.namespaceScope)), 28, "…")
+		name := ansi.Truncate(safeText(m.namespaceBreadcrumb(m.namespaceScope)), namespaceTopLineValue28, "…")
 		return paint("⎈ NS", browserMuted, true) + " " + paint(name, browserBranch, true)
 	}
 	return paint("⎈ NS", browserMuted, true) + " " + paint("All", browserBranch, true)
@@ -57,9 +66,8 @@ func fuzzyMatch(value, query string) bool {
 	if len(queryRunes) == 0 {
 		return true
 	}
-	valueRunes := []rune(strings.ToLower(value))
 	queryIndex := 0
-	for _, valueRune := range valueRunes {
+	for _, valueRune := range strings.ToLower(value) {
 		if valueRune == queryRunes[queryIndex] {
 			queryIndex++
 			if queryIndex == len(queryRunes) {
@@ -81,37 +89,15 @@ func (m *browser) breadcrumb() string {
 	}
 	if m.page == pageActivity {
 		parts = append(parts, "Activity")
-		separator := paint(" / ", browserMuted, false)
-		crumbs := make([]string, 0, len(parts))
-		for i, part := range parts {
-			if i == 0 {
-				crumbs = append(crumbs, paint(part, browserAccent, true))
-			} else {
-				crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
-			}
-		}
-		path := strings.Join(crumbs, separator)
-		if m.mode == "LIVE" {
-			return m.liveGlyph() + " " + path
-		}
-		return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
+		return m.contextBreadcrumb(parts)
+	}
+	if m.page == pageTickets {
+		parts = append(parts, "Tickets")
+		return m.contextBreadcrumb(parts)
 	}
 	if m.page == pageRegistry {
 		parts = append(parts, "Registry")
-		separator := paint(" / ", browserMuted, false)
-		crumbs := make([]string, 0, len(parts))
-		for i, part := range parts {
-			if i == 0 {
-				crumbs = append(crumbs, paint(part, browserAccent, true))
-			} else {
-				crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
-			}
-		}
-		path := strings.Join(crumbs, separator)
-		if m.mode == "LIVE" {
-			return m.liveGlyph() + " " + path
-		}
-		return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
+		return m.contextBreadcrumb(parts)
 	}
 	if m.page == pageDB {
 		parts = append(parts, "DB")
@@ -128,20 +114,7 @@ func (m *browser) breadcrumb() string {
 		}
 		parts = append(parts, safeText(app.Name))
 	}
-	separator := paint(" / ", browserMuted, false)
-	crumbs := make([]string, 0, len(parts))
-	for i, part := range parts {
-		if i == 0 {
-			crumbs = append(crumbs, paint(part, browserAccent, true))
-		} else {
-			crumbs = append(crumbs, paint(part, browserBranch, i == len(parts)-1))
-		}
-	}
-	path := strings.Join(crumbs, separator)
-	if m.mode == "LIVE" {
-		return m.liveGlyph() + " " + path
-	}
-	return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
+	return m.contextBreadcrumb(parts)
 }
 
 func (m *browser) contextBreadcrumb(parts []string) string {
@@ -155,7 +128,7 @@ func (m *browser) contextBreadcrumb(parts []string) string {
 		}
 	}
 	path := strings.Join(crumbs, separator)
-	if m.mode == "LIVE" {
+	if m.mode == connectionLabelLive {
 		return m.liveGlyph() + " " + path
 	}
 	return paint("◈", browserNumber, true) + " " + paint("MOCK PROFILE · OFFLINE", browserMuted, false) + "  " + path
@@ -163,13 +136,13 @@ func (m *browser) contextBreadcrumb(parts []string) string {
 
 func (m *browser) namespaceBreadcrumb(key namespaceKey) string {
 	name := key.name
-	duplicates := make([]client.Namespace, 0, 2)
+	duplicates := make([]client.Namespace, 0, namespaceBreadcrumbValue2)
 	for _, namespace := range m.namespaces {
 		if namespace.Name == key.name {
 			duplicates = append(duplicates, namespace)
 		}
 	}
-	if len(duplicates) < 2 {
+	if len(duplicates) < namespaceBreadcrumbValue2 {
 		return name
 	}
 	for _, namespace := range duplicates {
@@ -236,9 +209,9 @@ func namespaceHeading(app client.App, namespaceIDs map[string]map[int]bool, appC
 	if len(namespaceIDs[app.Namespace.Name]) > 1 {
 		name += fmt.Sprintf(" (ID %d)", app.Namespace.ID)
 	}
-	appLabel := "apps"
+	appLabel := labelApps
 	if appCount == 1 {
-		appLabel = "app"
+		appLabel = labelApp
 	}
 	return fmt.Sprintf("%s  ·  %d %s", name, appCount, appLabel)
 }

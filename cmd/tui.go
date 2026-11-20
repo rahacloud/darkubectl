@@ -65,7 +65,7 @@ func tuiAction(ctx context.Context, cmd *cli.Command) error {
 	}
 	baseURL := resolveBaseURL(cmd, cfg)
 	org := resolveOrg(cmd, cfg)
-	return browserUI.RunBrowser(ctx, newTUIBrowserOptions(ctx, cmd, cfg, credential, baseURL, org))
+	return browserUI.RunBrowser(ctx, newTUIBrowserOptions(cmd, cfg, credential, baseURL, org))
 }
 
 func rejectMockConnectionFlags(cmd *cli.Command) error {

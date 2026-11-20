@@ -3,6 +3,7 @@ package theme
 
 import "charm.land/lipgloss/v2"
 
+// The palette colors are shared by interactive views.
 var (
 	ColorAccent      = lipgloss.Color("#B9A3FF")
 	ColorBranch      = lipgloss.Color("#A78BFA")

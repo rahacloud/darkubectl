@@ -11,6 +11,7 @@ import (
 )
 
 func TestHistoryChartSumsPodsAndPreservesMissingSteps(t *testing.T) {
+	t.Parallel()
 	start := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	series := []client.Series{
 		{Values: []client.Sample{{Time: start, Value: 1}, {Time: start.Add(2 * time.Minute), Value: 2}}},
@@ -23,6 +24,7 @@ func TestHistoryChartSumsPodsAndPreservesMissingSteps(t *testing.T) {
 }
 
 func TestHistoryPlotShowsReferenceAndSampleGaps(t *testing.T) {
+	t.Parallel()
 	start := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	reference := 2.0
 	series := []client.Series{{Pod: "a", Values: []client.Sample{{Time: start, Value: 1}, {Time: start.Add(2 * time.Minute), Value: 3}}}}
@@ -34,6 +36,7 @@ func TestHistoryPlotShowsReferenceAndSampleGaps(t *testing.T) {
 }
 
 func TestUsageCapacityAndColors(t *testing.T) {
+	t.Parallel()
 	app := client.App{CPURequest: "750m", RAMLimit: "512Mi", Disk: &client.Disk{SizeInGi: 2}}
 	for _, tc := range []struct {
 		resource string
@@ -47,6 +50,7 @@ func TestUsageCapacityAndColors(t *testing.T) {
 }
 
 func TestHistoryPodSelection(t *testing.T) {
+	t.Parallel()
 	m := &browser{history: &UsageHistory{CPU: []client.Series{{Pod: "b"}, {Pod: "a"}}}}
 	m.syncHistoryPod()
 	if m.historyPod != "" {
@@ -71,6 +75,7 @@ func TestHistoryPodSelection(t *testing.T) {
 }
 
 func TestDiskMetricIsConditionalOnConfiguredDisk(t *testing.T) {
+	t.Parallel()
 	if len(availableHistoryMetrics(client.App{})) != 5 {
 		t.Fatal("disk metric should be hidden without disk")
 	}
@@ -81,6 +86,7 @@ func TestDiskMetricIsConditionalOnConfiguredDisk(t *testing.T) {
 }
 
 func TestHistoryRangeChangeRejectsPreviousResponse(t *testing.T) {
+	t.Parallel()
 	m := &browser{
 		tenant: "acme", detail: true, activeAppView: appViewUsage,
 		apps: []client.App{{ID: "a", Name: "app"}},
@@ -90,9 +96,9 @@ func TestHistoryRangeChangeRejectsPreviousResponse(t *testing.T) {
 	}
 	old := m.loadUsageHistory()
 	_, next := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
-	newResult := next().(usageHistoryResult)
+	newResult := requireMessage[usageHistoryResult](t, next())
 	m.Update(newResult)
-	m.Update(old().(usageHistoryResult))
+	m.Update(requireMessage[usageHistoryResult](t, old()))
 	if m.history == nil || m.history.Step != 5*time.Minute || m.historyRange != 1 {
 		t.Fatalf("old range replaced current history: %+v", m.history)
 	}

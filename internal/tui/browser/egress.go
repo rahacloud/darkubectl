@@ -1,7 +1,7 @@
 package browser
 
 import (
-	"fmt"
+	"strconv"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 )
@@ -12,18 +12,20 @@ func (m *browser) egressIPForApp(a client.App) string {
 		return m.spinnerGlyph()
 	case requestFailed, requestUnavailable, requestEmpty, requestIdle:
 		return "-"
+	case requestReady, requestStale, requestPartial:
+		break
 	}
 	clusterID := a.Namespace.Cluster.ID
-	clusterKey := fmt.Sprint(clusterID)
+	clusterKey := strconv.Itoa(clusterID)
 	clusterRoutes, ok := m.egressData[clusterKey]
 	if !ok {
-		for key, candidate := range m.egressData {
+		for _, candidate := range m.egressData {
 			matches := clusterID != 0 && candidate.Cluster.ID == clusterID
 			if clusterID == 0 {
 				matches = candidate.Cluster.Name == a.Namespace.Cluster.Name
 			}
 			if matches {
-				clusterKey, clusterRoutes, ok = key, candidate, true
+				clusterRoutes, ok = candidate, true
 				break
 			}
 		}
@@ -44,7 +46,6 @@ func (m *browser) egressIPForApp(a client.App) string {
 		for i := range clusterRoutes.Routes {
 			route := &clusterRoutes.Routes[i]
 			if route.ApplyToAllNamespaces {
-				matchedRoute = route
 				break
 			}
 		}
@@ -60,7 +61,7 @@ func egressRouteMatchesNamespace(route client.EgressRoute, namespaceID int) bool
 		return true
 	}
 	for _, selected := range route.SelectedNamespaces {
-		if string(selected) == fmt.Sprint(namespaceID) {
+		if string(selected) == strconv.Itoa(namespaceID) {
 			return true
 		}
 	}

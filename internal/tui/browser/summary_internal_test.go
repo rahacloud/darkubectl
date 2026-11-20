@@ -1,12 +1,13 @@
 package browser
 
 import (
-	"github.com/charmbracelet/x/ansi"
-	"github.com/rahacloud/darkubectl/internal/client"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/rahacloud/darkubectl/internal/client"
 )
 
 func TestSummaryDistinguishesUnknownReplicasFromExplicitZero(t *testing.T) {
@@ -32,7 +33,8 @@ func TestSummaryUsesConfiguredResourceTotalsWithoutFakeUsage(t *testing.T) {
 	}
 	m := &browser{tenant: "demo", detail: true, width: 120, height: 30, apps: []client.App{app}}
 	got := ansi.Strip(strings.Join(m.summaryPaneLines(), "\n"))
-	if !strings.Contains(got, " CPU") || !strings.Contains(got, "500m") || !strings.Contains(got, " RAM") || !strings.Contains(got, "1000M") || strings.Contains(got, "0m / 500m") {
+	if !strings.Contains(got, " CPU") || !strings.Contains(got, "500m") || !strings.Contains(got,
+		" RAM") || !strings.Contains(got, "1000M") || strings.Contains(got, "0m / 500m") {
 		t.Fatalf("summary fabricated usage or lost configured totals: %s", got)
 	}
 	if strings.Contains(got, "Plan") {
@@ -118,7 +120,8 @@ func TestSummaryShowsOptionalServiceAndRuntimeFields(t *testing.T) {
 	m := &browser{tenant: "demo", detail: true, width: 160, height: 40, apps: []client.App{app}}
 	got := ansi.Strip(strings.Join(m.summaryPaneLines(), "\n"))
 	for _, want := range []string{
-		"Service", "LoadBalancer", "Port Service", "Internal Address", "api.prod.svc:80", "External IP", "192.0.2.42", "Readiness Probe", "HTTP GET /healthz",
+		"Service", "LoadBalancer", "Port Service", "Internal Address", "api.prod.svc:80", "External IP", "192.0.2.42",
+		"Readiness Probe", "HTTP GET /healthz",
 		"Command", "/app/server --port 8080", "Inputs", "PUBLIC_BASE_URL",
 	} {
 		if !strings.Contains(got, want) {
@@ -128,7 +131,8 @@ func TestSummaryShowsOptionalServiceAndRuntimeFields(t *testing.T) {
 	if !summaryHasValue(m, "Port Service", "80") || strings.Contains(got, "9090") || strings.Contains(got, "30421") {
 		t.Fatalf("summary should show only the primary service port: %s", got)
 	}
-	if got, want := ansi.StringWidth(ansi.Strip(summaryLabel("Tenant"))), ansi.StringWidth(ansi.Strip(summaryLabel("Readiness Probe"))); got != want {
+	if got, want := ansi.StringWidth(ansi.Strip(summaryLabel("Tenant"))),
+		ansi.StringWidth(ansi.Strip(summaryLabel("Readiness Probe"))); got != want {
 		t.Fatalf("summary label columns are not aligned: Tenant=%d Readiness Probe=%d", got, want)
 	}
 }
@@ -137,7 +141,8 @@ func TestSummaryShowsMissingExternalIPAsDash(t *testing.T) {
 	t.Parallel()
 	app := client.App{
 		ID: "internal-only", Name: "worker", Namespace: client.Namespace{ID: 1, Name: "prod"},
-		Service: &client.AppService{Type: "ClusterIP", InternalAddress: "worker.prod.svc", Ports: map[string]client.Port{"main": {ServicePort: 8080}}},
+		Service: &client.AppService{Type: "ClusterIP", InternalAddress: "worker.prod.svc",
+			Ports: map[string]client.Port{"main": {ServicePort: 8080}}},
 	}
 	m := &browser{tenant: "demo", detail: true, width: 120, height: 30, apps: []client.App{app}}
 	if !summaryHasValue(m, "External IP", "-") {
