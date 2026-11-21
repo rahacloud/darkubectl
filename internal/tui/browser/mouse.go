@@ -44,7 +44,7 @@ func (m *browser) handleBrowserMouse(msg tea.MouseClickMsg) tea.Cmd {
 	if m.page == pageRegistry {
 		return m.handleRegistryMouse(msg)
 	}
-	if m.detail && m.appViewMaximized() {
+	if m.detail && m.appViewMaximized() && !m.writeDisabledNotice() {
 		return nil
 	}
 	bodyY := m.browserBodyY()
@@ -377,7 +377,7 @@ func appViewTabAt(x, width int, active appView) (appView, bool) {
 
 func (m *browser) browserBodyY() int {
 	y := 2 // breadcrumb and spacer
-	if m.actionNotice != "" {
+	if m.actionNotice != "" && !m.writeDisabledNotice() {
 		y++
 	}
 	if m.profileState.status == requestFailed || m.profileState.status == requestStale {
