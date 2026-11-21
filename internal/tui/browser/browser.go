@@ -41,6 +41,7 @@ type Options struct {
 	Version                  string
 	LocalTenants             []string
 	AllowWrites              bool
+	AllowSecrets             bool
 	ListTickets              func(context.Context, string, string, bool) (client.TicketList, error)
 	GetTicket                func(context.Context, string, string) (client.Ticket, error)
 	GetTicketComments        func(context.Context, string, string) ([]client.TicketComment, error)
@@ -93,11 +94,12 @@ type Options struct {
 // RunBrowser opens the app browser using the caller's scoped clients.
 func RunBrowser(ctx context.Context, options Options) error {
 	options = gateWriteCallbacks(options)
+	options = gateSecretCallbacks(options)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := &browser{tenant: options.Tenant, version: options.Version, mode: connectionLabelLive, profile: options.Profile, ctx: ctx,
 		activityAlertStatusFilter: 1, activitySortAlertsDescending: true, activitySortNotificationsDescending: true,
-		allowWrites: options.AllowWrites, localTenants: append([]string(nil), options.LocalTenants...),
+		allowWrites: options.AllowWrites, allowSecrets: options.AllowSecrets, localTenants: append([]string(nil), options.LocalTenants...),
 		listApps: options.ListApps, logWrap: true, logTail: logDefaultTailSize}
 	if options.GetApp != nil {
 		m.getApp = options.GetApp
@@ -148,11 +150,20 @@ func RunBrowser(ctx context.Context, options Options) error {
 	return err
 }
 
+func gateSecretCallbacks(options Options) Options {
+	options.AllowSecrets = options.AllowSecrets || options.AllowWrites
+	if !options.AllowSecrets {
+		options.SecretEnvs, options.DeployToken = nil, nil
+	}
+	return options
+}
+
 // RunMockBrowser opens a browser backed only by the supplied local fixture.
-func RunMockBrowser(ctx context.Context, profile MockProfile, version string) error {
+func RunMockBrowser(ctx context.Context, profile MockProfile, version string, allowSecrets bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := newMockBrowser(profile)
+	m.allowSecrets = allowSecrets
 	m.version = version
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err

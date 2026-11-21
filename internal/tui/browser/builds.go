@@ -146,7 +146,7 @@ func (m *browser) customBuildLines(app client.App, notices []string) []string {
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
-	if m.cicdNotice != "" {
+	if m.cicdNotice != "" && m.cicdNotice != secretAccessDisabled {
 		lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
 	}
 	if m.cicdSettingsChanged() {
@@ -249,7 +249,7 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
-	if m.cicdNotice != "" {
+	if m.cicdNotice != "" && m.cicdNotice != secretAccessDisabled {
 		lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
 	}
 	lines = append(lines, m.cicdDarkubeSettingsLines(fields, value)...)
@@ -327,6 +327,9 @@ func (m *browser) cicdDarkubeArgumentLines(args []client.GitBuildArg) []string {
 }
 
 func (m *browser) deployTokenLine() string {
+	if !m.allowSecrets {
+		return summaryField("Deploy token", "Hidden · enable --allow-secrets")
+	}
 	value := "••••••••••••"
 	if m.cicdToken == "" {
 		value = "Loading…"
@@ -450,7 +453,13 @@ func buildArgs(raw json.RawMessage) []buildArg {
 	return args
 }
 
+const secretAccessDisabled = "Secret access disabled · relaunch with --allow-secrets"
+
 func (m *browser) requestCICDToken(copyToken bool) tea.Cmd {
+	if !m.allowSecrets {
+		m.cicdNotice = secretAccessDisabled
+		return nil
+	}
 	if m.cicdLoading {
 		return nil
 	}
