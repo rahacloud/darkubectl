@@ -511,6 +511,12 @@ func (m *browser) handleAppsWheel(msg tea.MouseWheelMsg, delta, bodyY, appsWidth
 	}
 	if msg.X >= appsRight+1 && msg.X < appsRight+1+summaryWidth+2 {
 		switch m.activeAppView {
+		case appViewBuilds:
+			if m.buildDetail != nil {
+				m.buildScroll = max(0, m.buildScroll+delta*3)
+			} else {
+				m.summaryScroll = max(0, m.summaryScroll+delta*3)
+			}
 		case appViewLogs:
 			m.logScroll = max(0, m.logScroll-delta*3)
 		case appViewUsage:
