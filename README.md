@@ -555,6 +555,10 @@ Everything else — listing, describing, logs, exec, terminals, create, edit, de
 
 ## Development
 
+Run `make help` to see the available development commands. `make check` runs the formatting check, `go vet`, lint, race tests and build; `make lint-md` checks Markdown when documentation changes. `make binary` builds the CLI in `bin/`, and `make install` installs it to the Go binary directory.
+
+The core build and checks can also be run directly:
+
 ```sh
 go build ./...
 go test -race ./...
