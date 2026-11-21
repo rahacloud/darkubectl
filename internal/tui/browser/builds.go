@@ -141,8 +141,10 @@ func (m *browser) unsupportedBuildLines(app client.App, notices []string) []stri
 
 func (m *browser) customBuildLines(app client.App, notices []string) []string {
 	lines := notices
-	lines = append(lines, sectionHeading("⚙ Custom CI/CD"), summaryField("Deployment type", "Custom CI/CD"), summaryField("App ID",
-		app.ID), m.deployTokenLine())
+	methodMarker := cicdChangeMarker(m.cicdSettingsOriginal.BuildMethod, m.cicdSettingsDraft.BuildMethod)
+	lines = append(lines, sectionHeading("⚙ Custom CI/CD"), summaryField(methodMarker+" Deployment type", "Custom CI/CD"),
+		summaryField("App ID",
+			app.ID), m.deployTokenLine())
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
@@ -244,8 +246,10 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	value := func(s string) string { return buildText(s, "—") }
 	fields := []cicdDisplayField{{"Repository", redactRepoURL(settings.RepoURL)}, {"Branch", settings.Branch}, {"Dockerfile path",
 		settings.Dockerfile}, {"Build context", settings.Context}, {"Workdir", settings.Workdir}}
-	lines := []string{sectionHeading("↻ Darkube · Settings"), summaryField("Deployment type", "Darkube"), summaryField("App ID",
+	methodMarker := cicdChangeMarker(m.cicdSettingsOriginal.BuildMethod, settings.BuildMethod)
+	lines := []string{sectionHeading("↻ Darkube · Settings"), summaryField(methodMarker+" Deployment type", "Darkube"), summaryField("App ID",
 		app.ID), m.deployTokenLine()}
+	lines[2], lines[3] = "    "+lines[2], "    "+lines[3]
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
@@ -254,7 +258,8 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	}
 	lines = append(lines, m.cicdDarkubeSettingsLines(fields, value)...)
 	auto := m.cicdAutodeployDisplay(settings.Autodeploy)
-	lines = append(lines, m.cicdSettingLine(cicdDarkubeInfoValue7, "Auto deploy", auto), "", sectionHeading("Build arguments"))
+	autoMarker := cicdAutoDeployMarker(m.cicdSettingsOriginal.Autodeploy, settings.Autodeploy)
+	lines = append(lines, m.cicdSettingLine(cicdDarkubeInfoValue7, autoMarker+" Auto deploy", auto), "", sectionHeading("Build arguments"))
 	lines = append(lines, m.cicdDarkubeArgumentLines(settings.Args)...)
 	if m.cicdSettingsChanged() {
 		lines = append(lines, "", paint(fmt.Sprintf("%d staged setting change(s)", m.cicdSettingsChangeCount()), browserAccent, false))
@@ -269,6 +274,10 @@ type cicdDisplayField struct{ name, value string }
 
 func (m *browser) cicdDarkubeSettingsLines(fields []cicdDisplayField, format func(string) string) []string {
 	editIndices := []int{0, 1, 4, 5, 6}
+	original := m.cicdSettingsOriginal
+	originalValues := []string{original.RepoURL, original.Branch, original.Dockerfile, original.Context, original.Workdir}
+	draft := m.cicdSettingsDraft
+	draftValues := []string{draft.RepoURL, draft.Branch, draft.Dockerfile, draft.Context, draft.Workdir}
 	lines := make([]string, 0, len(fields))
 	for i, field := range fields {
 		value := format(field.value)
@@ -279,9 +288,32 @@ func (m *browser) cicdDarkubeSettingsLines(fields []cicdDisplayField, format fun
 				value = redactRepoURL(value)
 			}
 		}
-		lines = append(lines, m.cicdSettingLine(editIndex, field.name, value))
+		lines = append(lines, m.cicdSettingLine(editIndex, cicdChangeMarker(originalValues[i], draftValues[i])+" "+field.name, value))
 	}
 	return lines
+}
+
+func cicdChangeMarker(original, draft string) string {
+	switch {
+	case original == draft:
+		return " "
+	case original == "":
+		return "+"
+	case draft == "":
+		return "-"
+	default:
+		return "~"
+	}
+}
+
+func cicdAutoDeployMarker(original, draft *bool) string {
+	value := func(v *bool) string {
+		if v == nil {
+			return ""
+		}
+		return autoDeployLabel(v)
+	}
+	return cicdChangeMarker(value(original), value(draft))
 }
 
 func (m *browser) cicdAutodeployDisplay(value *bool) string {
@@ -298,32 +330,62 @@ func (m *browser) cicdAutodeployDisplay(value *bool) string {
 	return display
 }
 
+const cicdArgumentWidth = 20
+const maskedValueGlyphs = "••••••••"
+
 func (m *browser) cicdDarkubeArgumentLines(args []client.GitBuildArg) []string {
-	lines := []string{}
+	lines := []string{"    " + portCell("KEY", false, false, false, cicdArgumentWidth) +
+		portCell("VALUE", false, false, false, cicdArgumentWidth)}
 	if len(args) == 0 {
-		lines = append(lines, m.cicdSettingLine(cicdSettingsFields, "No build arguments", ""))
+		lines = append(lines, "    "+paint("No build arguments", browserMuted, false))
 	}
 	for i, arg := range args {
-		value := "••••••••"
-		if m.cicdReveal {
+		change := "+"
+		for _, original := range m.cicdSettingsOriginal.Args {
+			if original.Key == arg.Key {
+				change = " "
+				if original.Value != arg.Value {
+					change = "~"
+				}
+				break
+			}
+		}
+		value := maskedValueGlyphs
+		if m.cicdRevealKey == arg.Key && m.cicdSettingsCursor == cicdSettingsFields+i && !m.cicdHistoryFocus {
 			value = safeText(arg.Value)
 		}
 		if m.cicdEditing && m.cicdEditArg && m.cicdEditField == cicdSettingsFields+i {
-			value = "••••••••▏"
+			value = safeText(m.cicdEditValue) + "▏"
 		}
-		lines = append(lines, m.cicdSettingLine(cicdSettingsFields+i, arg.Key, value))
+		lines = append(lines, m.cicdArgumentRow(cicdSettingsFields+i, change, arg.Key, value))
 	}
-	addValue := ""
+	addLabel, addValue := "Add build argument", ""
 	if m.cicdEditing && m.cicdEditAdding {
-		addValue = "••••••••▏"
+		addLabel = m.cicdEditKey
+		addValue = safeText(m.cicdEditValue) + "▏"
 		if m.cicdEditKey == "" {
-			addValue = m.cicdEditValue + "▏"
+			addLabel = m.cicdEditValue + "▏"
+			addValue = ""
 		}
 	}
 	if m.allowWrites {
-		lines = append(lines, m.cicdSettingLine(cicdSettingsFields+len(args), "+ Add build argument", addValue))
+		lines = append(lines, m.cicdArgumentRow(cicdSettingsFields+len(args), "+", addLabel, addValue))
+	}
+	for i, original := range m.cicdRemovedArgs() {
+		row := cicdSettingsFields + len(args) + 1 + i
+		value := maskedValueGlyphs
+		if m.cicdRevealKey == original.Key && m.cicdSettingsCursor == row && !m.cicdHistoryFocus {
+			value = safeText(original.Value)
+		}
+		lines = append(lines, m.cicdArgumentRow(row, "-", original.Key, value))
 	}
 	return lines
+}
+
+func (m *browser) cicdArgumentRow(row int, change, key, value string) string {
+	selected := m.allowWrites && row == m.cicdSettingsCursor && !m.cicdHistoryFocus
+	return cursorGlyph(selected) + " " + change + " " + portCell(key, selected, false, change != " ", cicdArgumentWidth) +
+		portCell(value, selected, false, change != " ", cicdArgumentWidth)
 }
 
 func (m *browser) deployTokenLine() string {

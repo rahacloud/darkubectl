@@ -13,7 +13,11 @@ func (m *browser) currentAppPaneMessage() string {
 	case appViewLogs:
 		return firstMessage(m.logCopyStatus, m.logNotice)
 	case appViewBuilds:
-		return firstMessage(m.buildCopyStatus, m.buildActionNotice, m.buildNotice, m.cicdNotice, m.cicdSettingsNotice)
+		message := firstMessage(m.buildCopyStatus, m.buildActionNotice, m.buildNotice, m.cicdNotice, m.cicdSettingsNotice)
+		if m.cicdSaving && message == m.cicdSettingsNotice {
+			return message + " " + m.spinnerGlyph()
+		}
+		return message
 	case appViewEnv:
 		return m.envMessage
 	case appViewDomains:

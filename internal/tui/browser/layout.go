@@ -853,6 +853,9 @@ func (m *browser) usageFooterHints() []keyHint {
 
 func (m *browser) buildsFooterHints() []keyHint {
 	if m.cicdEditing {
+		if m.cicdEditArg {
+			return []keyHint{{hintTextType, labelValue}, {"Tab/Enter", "next / stage"}, {hintEscape, hintCancelEdit}}
+		}
 		return []keyHint{{hintTextType, labelValue}, {hintEnter, hintStage}, {hintEscape, hintCancelEdit}}
 	}
 	if m.selectedApp().BuildMethod != buildModeCustom && m.selectedApp().BuildMethod != buildModeWebhook {
@@ -877,8 +880,14 @@ func (m *browser) buildsFooterHints() []keyHint {
 	if m.allowWrites && m.cicdSettingsChanged() {
 		hints = append(hints, keyHint{"x", ticketComposeDiscard})
 	}
-	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
-		hints = append(hints, keyHint{"V", "reveal args"})
+	_, selectedArgument := m.cicdSelectedArgument()
+	if !m.cicdHistoryFocus && selectedArgument {
+		if m.allowSecrets {
+			hints = append(hints, keyHint{"v", "reveal argument"})
+		}
+		if m.cicdSettingsCursor > cicdSettingsFields+len(m.cicdSettingsDraft.Args) {
+			hints = append(hints, keyHint{"d/Enter", "restore argument"})
+		}
 	}
 	if m.buildDetail != nil {
 		hints = []keyHint{{"/", hintSearch}, {hintNextPrevious, "match"}, {"c", hintCopy}, {hintEscape, hintList}, {"r", hintRefresh}}
@@ -1159,8 +1168,8 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 		hints = appendUniqueKeyHints(hints, keyHint{"e", "edit setting"}, keyHint{"+", "add argument"}, keyHint{"d", "delete argument"},
 			keyHint{"s", "review / save"})
 	}
-	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
-		hints = appendUniqueKeyHints(hints, keyHint{"V", "reveal / hide build arguments"})
+	if m.allowSecrets && len(m.cicdSettingsDraft.Args)+len(m.cicdRemovedArgs()) > 0 {
+		hints = appendUniqueKeyHints(hints, keyHint{"v", "reveal / hide selected argument"})
 	}
 	if m.buildDetail != nil {
 		hints = appendUniqueKeyHints(hints, keyHint{"/", "search output"}, keyHint{"n/N", "next / previous match"}, keyHint{"c",
