@@ -628,6 +628,9 @@ func sanitizeBuildOutput(value string) string {
 }
 
 func (m *browser) buildOutputWidth() int {
+	if m.buildMaximized && !m.writeDisabledNotice() {
+		return max(1, m.width-renderPaneValue2)
+	}
 	_, width, _ := m.paneWidths()
 	return max(1, width)
 }

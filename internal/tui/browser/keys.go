@@ -430,6 +430,11 @@ func (m *browser) handleKeyPressViewPart5(msg tea.KeyPressMsg) (tea.Model, tea.C
 		m.logMaximized = !m.logMaximized
 		return m, nil
 	}
+	if m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil {
+		m.buildMaximized = !m.buildMaximized
+		m.buildScroll = 0
+		return m, nil
+	}
 	if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 		m.cycleHistoryMetric()
 	}
@@ -646,6 +651,7 @@ func (m *browser) handleEscapeKey() {
 	case m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil:
 		m.cancelRequest(requestKey{kind: requestBuild})
 		m.buildDetail = nil
+		m.buildMaximized = false
 		m.buildDetailState.reset()
 		m.buildSearchEditing = false
 		m.buildSearch = ""

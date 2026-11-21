@@ -104,3 +104,22 @@ func TestBuildViewportScrollsWrappedOutput(t *testing.T) {
 		t.Fatalf("short viewport cannot scroll to last line: %q", short)
 	}
 }
+
+func TestBuildOutputMaximize(t *testing.T) {
+	t.Parallel()
+	m := &browser{page: pageApps, width: 120, height: 30, activeAppView: appViewBuilds, detail: true,
+		buildDetail: &client.Build{Log: strings.Repeat("x", 100)}, apps: []client.App{{ID: "app"}}}
+	regularWidth := m.buildOutputWidth()
+	m.handleKeyPressViewPart5(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if !m.appViewMaximized() || m.buildOutputWidth() <= regularWidth {
+		t.Fatal("maximize did not expand build output")
+	}
+	m.handleBrowserWheel(tea.MouseWheelMsg{X: 5, Y: m.browserBodyY() + 1, Button: tea.MouseWheelDown})
+	if m.buildScroll == 0 {
+		t.Fatal("wheel did not scroll maximized build output")
+	}
+	m.handleKeyPressViewPart5(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	if m.appViewMaximized() || m.buildOutputWidth() != regularWidth {
+		t.Fatal("restore did not return to the original width")
+	}
+}
