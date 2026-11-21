@@ -6,7 +6,7 @@ import (
 )
 
 func (m *browser) switchAppView(delta int) tea.Cmd {
-	if !m.detail || !m.selectedAppActive() {
+	if m.page != pageApps || m.contextFocused || m.selectingTenant || !m.selectedAppActive() {
 		return nil
 	}
 	wasLogs := m.activeAppView == appViewLogs

@@ -95,3 +95,23 @@ func TestResourcesReplacesUsageAndScalingTabs(t *testing.T) {
 		t.Fatal("h should return focus to Apps while preserving the selected app view")
 	}
 }
+
+func TestAppViewShortcutsFromAppsPane(t *testing.T) {
+	t.Parallel()
+	m := &browser{width: 120, height: 30}
+	applyAppsResult(m, []client.App{{ID: "app-1", Name: "api"}}, nil)
+	for _, tc := range []struct {
+		key  rune
+		want appView
+	}{{']', appViewUsage}, {']', appViewLogs}, {'[', appViewUsage}, {'[', appViewSummary}, {'[', appViewPorts}} {
+		m.Update(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key)})
+		if m.activeAppView != tc.want || m.detail {
+			t.Fatalf("%c: view = %v, detail focus = %v; want %v and Apps focus", tc.key, m.activeAppView, m.detail, tc.want)
+		}
+	}
+	m.contextFocused = true
+	m.Update(tea.KeyPressMsg{Code: ']', Text: "]"})
+	if m.activeAppView != appViewPorts {
+		t.Fatal("context focus should not change the app view")
+	}
+}
