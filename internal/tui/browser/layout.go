@@ -148,7 +148,7 @@ func (m *browser) appViewBodyLines(left, right []string, paneHeight, bodyHeight 
 		right = m.usageViewport(right, paneHeight)
 	case appViewLogs:
 		right = m.logsViewport(right, paneHeight)
-	case appViewEnv:
+	case appViewEnv, appViewBuilds:
 		right = m.summaryViewport(right, paneHeight)
 	case appViewPorts:
 		viewHeight := paneHeight
@@ -564,12 +564,15 @@ func (m *browser) summaryViewport(lines []string, height int) []string {
 		stickyLines = 0
 	}
 	sticky := min(stickyLines, min(len(lines), height))
+	if m.activeAppView == appViewBuilds && m.buildDetail != nil {
+		sticky = min(sticky, max(0, height-1))
+	}
 	bodyHeight := max(0, height-sticky)
 	maxScroll := max(0, len(lines)-sticky-bodyHeight)
 	for _, cursor := range m.viewportCursors(sticky, bodyHeight) {
 		keepRowVisible(scroll, bodyHeight, cursor)
 	}
-	if m.activeAppView == appViewBuilds && m.selectedAppActive() && m.selectedApp().BuildMethod == buildModeWebhook &&
+	if m.activeAppView == appViewBuilds && m.buildDetail == nil && m.selectedAppActive() && m.selectedApp().BuildMethod == buildModeWebhook &&
 		!m.cicdHistoryFocus && !m.cicdReview && bodyHeight > 0 {
 		keepRowVisible(scroll, bodyHeight, max(0, m.cicdCursorLine-sticky))
 	}
@@ -853,6 +856,9 @@ func (m *browser) usageFooterHints() []keyHint {
 
 func (m *browser) buildsFooterHints() []keyHint {
 	if m.cicdEditing {
+		if m.cicdEditArg {
+			return []keyHint{{hintTextType, labelValue}, {"Tab/Enter", "next / stage"}, {hintEscape, hintCancelEdit}}
+		}
 		return []keyHint{{hintTextType, labelValue}, {hintEnter, hintStage}, {hintEscape, hintCancelEdit}}
 	}
 	if m.selectedApp().BuildMethod != buildModeCustom && m.selectedApp().BuildMethod != buildModeWebhook {
@@ -877,11 +883,18 @@ func (m *browser) buildsFooterHints() []keyHint {
 	if m.allowWrites && m.cicdSettingsChanged() {
 		hints = append(hints, keyHint{"x", ticketComposeDiscard})
 	}
-	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
-		hints = append(hints, keyHint{"V", "reveal args"})
+	_, selectedArgument := m.cicdSelectedArgument()
+	if !m.cicdHistoryFocus && selectedArgument {
+		if m.allowSecrets {
+			hints = append(hints, keyHint{"v", "reveal argument"})
+		}
+		if m.cicdSettingsCursor > cicdSettingsFields+len(m.cicdSettingsDraft.Args) {
+			hints = append(hints, keyHint{"d/Enter", "restore argument"})
+		}
 	}
 	if m.buildDetail != nil {
-		hints = []keyHint{{"/", hintSearch}, {hintNextPrevious, "match"}, {"c", hintCopy}, {hintEscape, hintList}, {"r", hintRefresh}}
+		hints = []keyHint{{"b", "raw / grouped"}, {"/", hintSearch}, {hintNextPrevious, "match"}, {"c", hintCopy},
+			{hintEscape, hintList}, {"r", hintRefresh}}
 	}
 	return hints
 }
@@ -1159,12 +1172,13 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 		hints = appendUniqueKeyHints(hints, keyHint{"e", "edit setting"}, keyHint{"+", "add argument"}, keyHint{"d", "delete argument"},
 			keyHint{"s", "review / save"})
 	}
-	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
-		hints = appendUniqueKeyHints(hints, keyHint{"V", "reveal / hide build arguments"})
+	if m.allowSecrets && len(m.cicdSettingsDraft.Args)+len(m.cicdRemovedArgs()) > 0 {
+		hints = appendUniqueKeyHints(hints, keyHint{"v", "reveal / hide selected argument"})
 	}
 	if m.buildDetail != nil {
-		hints = appendUniqueKeyHints(hints, keyHint{"/", "search output"}, keyHint{"n/N", "next / previous match"}, keyHint{"c",
-			"copy build output"}, keyHint{hintEscape, "return to builds"})
+		hints = appendUniqueKeyHints(hints, keyHint{"b", "raw / grouped output"}, keyHint{"/", "search output"},
+			keyHint{"n/N", "next / previous match"}, keyHint{"c",
+				"copy build output"}, keyHint{hintEscape, "return to builds"})
 	}
 	if m.allowWrites && !m.cicdHistoryFocus && m.cicdSettingsChanged() {
 		hints = appendUniqueKeyHints(hints, keyHint{"x", "discard staged settings"})

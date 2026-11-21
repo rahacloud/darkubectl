@@ -37,7 +37,7 @@ func (m *browser) resetAppViewEditor(view appView) {
 	case appViewBuilds:
 		m.ensureCICDSettings()
 		m.cicdToken, m.cicdNotice = "", ""
-		m.cicdReveal, m.cicdTokenReveal, m.cicdLoading = false, false, false
+		m.cicdRevealKey, m.cicdTokenReveal, m.cicdLoading = "", false, false
 		m.cicdGeneration++
 		m.cicdSettingsOriginal, m.cicdSettingsDraft = client.GitBuildSettings{}, client.GitBuildSettings{}
 		m.cicdSettingsLoaded, m.cicdReview, m.cicdSaving = false, false, false

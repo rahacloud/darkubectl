@@ -125,7 +125,7 @@ func (m *browser) envPaneLines() []string {
 		if selected {
 			m.envCursorLine = len(lines)
 		}
-		value := "••••••••"
+		value := maskedValueGlyphs
 		if name == m.envRevealName {
 			value = safeText(m.envRevealValue)
 		}

@@ -30,6 +30,11 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *browser) handleKeyPressRoutes(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "b" && m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil {
+		m.buildRawOutput = !m.buildRawOutput
+		m.buildScroll = 0
+		return m, nil
+	}
 	switch msg.String() {
 	case "1", "2", "3", "4", inputKeyTab, inputKeyShiftTab, inputKeyBacktab, inputKeyCtrlC, "q", "a", "[", "]", browserKeyEscape,
 		keyEnter, "r":
@@ -130,8 +135,8 @@ func (m *browser) handleKeyModalMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, b
 }
 
 func (m *browser) handleKeyCICDMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.detail && m.activeAppView == appViewBuilds && m.selectedAppActive() && (m.selectedApp().BuildMethod == buildModeWebhook ||
-		m.selectedApp().BuildMethod == buildModeCustom) {
+	if m.detail && m.activeAppView == appViewBuilds && m.buildDetail == nil && m.selectedAppActive() &&
+		(m.selectedApp().BuildMethod == buildModeWebhook || m.selectedApp().BuildMethod == buildModeCustom) {
 		if cmd, handled := m.handleCICDSettingsKey(msg); handled {
 			return m, cmd, true
 		}
@@ -450,12 +455,33 @@ func (m *browser) handleKeyPressBuildPart0(msg tea.KeyPressMsg) (tea.Model, tea.
 		return m, nil
 	}
 	if m.detail && m.activeAppView == appViewBuilds && m.selectedAppActive() && m.buildDetail == nil {
+		if m.revealSelectedCICDArgument() {
+			return m, nil
+		}
 		return m, m.revealCICDToken()
 	}
 	if m.detail && m.activeAppView == appViewLogs {
 		return m, m.cycleLogPod(1)
 	}
 	return m, nil
+}
+
+func (m *browser) revealSelectedCICDArgument() bool {
+	m.ensureCICDSettings()
+	arg, selected := m.cicdSelectedArgument()
+	if m.cicdHistoryFocus || !selected {
+		return false
+	}
+	if !m.allowSecrets {
+		m.cicdNotice = secretAccessDisabled
+		return true
+	}
+	if m.cicdRevealKey == arg.Key {
+		m.cicdRevealKey = ""
+	} else {
+		m.cicdRevealKey = arg.Key
+	}
+	return true
 }
 
 func (m *browser) revealCICDToken() tea.Cmd {
@@ -474,14 +500,6 @@ func (m *browser) revealCICDToken() tea.Cmd {
 
 func (m *browser) handleKeyPressBuildPart1(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "V" {
-		if m.detail && m.activeAppView == appViewBuilds && m.selectedAppActive() {
-			if !m.allowSecrets {
-				m.cicdNotice = secretAccessDisabled
-				return m, nil
-			}
-			m.cicdReveal = !m.cicdReveal
-			return m, nil
-		}
 		if m.detail && m.activeAppView == appViewLogs {
 			return m, m.cycleLogPod(-1)
 		}

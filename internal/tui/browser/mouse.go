@@ -201,15 +201,20 @@ func (m *browser) selectBuildSettingsLine(line int) {
 		notices++
 	}
 	local := line + m.summaryScroll - notices
+	const argumentFirstLine = 12
+	removedStart := argumentFirstLine + max(1, len(m.cicdSettingsDraft.Args))
 	switch {
 	case local >= 1 && local <= cicdSettingsFields:
 		m.cicdSettingsCursor = local - 1
 		m.cicdHistoryFocus = false
-	case local >= 11 && local < 11+len(m.cicdSettingsDraft.Args):
-		m.cicdSettingsCursor = cicdSettingsFields + local - handleBrowserMouseValue11
+	case local >= argumentFirstLine && local < argumentFirstLine+len(m.cicdSettingsDraft.Args):
+		m.cicdSettingsCursor = cicdSettingsFields + local - argumentFirstLine
 		m.cicdHistoryFocus = false
-	case local == 12 && len(m.cicdSettingsDraft.Args) == 0 || local == 11+len(m.cicdSettingsDraft.Args) && len(m.cicdSettingsDraft.Args) > 0:
+	case local == 13 && len(m.cicdSettingsDraft.Args) == 0 || local == 12+len(m.cicdSettingsDraft.Args) && len(m.cicdSettingsDraft.Args) > 0:
 		m.cicdSettingsCursor = cicdSettingsFields + len(m.cicdSettingsDraft.Args)
+		m.cicdHistoryFocus = false
+	case m.allowWrites && local > removedStart && local <= removedStart+len(m.cicdRemovedArgs()):
+		m.cicdSettingsCursor = cicdSettingsFields + len(m.cicdSettingsDraft.Args) + local - removedStart
 		m.cicdHistoryFocus = false
 	}
 }
@@ -506,6 +511,12 @@ func (m *browser) handleAppsWheel(msg tea.MouseWheelMsg, delta, bodyY, appsWidth
 	}
 	if msg.X >= appsRight+1 && msg.X < appsRight+1+summaryWidth+2 {
 		switch m.activeAppView {
+		case appViewBuilds:
+			if m.buildDetail != nil {
+				m.buildScroll = max(0, m.buildScroll+delta*3)
+			} else {
+				m.summaryScroll = max(0, m.summaryScroll+delta*3)
+			}
 		case appViewLogs:
 			m.logScroll = max(0, m.logScroll-delta*3)
 		case appViewUsage:

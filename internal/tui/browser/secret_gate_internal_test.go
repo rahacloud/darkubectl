@@ -42,8 +42,11 @@ func TestSecretPermissionModes(t *testing.T) {
 			if cmd := m.copySelectedSecret(); (cmd != nil) != tc.allowed {
 				t.Fatal("secret copy does not match permission")
 			}
-			m.handleKeyPressBuildPart1(tea.KeyPressMsg{Code: 'V', Text: "V"})
-			if m.cicdReveal != tc.allowed {
+			m.cicdSettingsLoaded = true
+			m.cicdSettingsDraft.Args = []client.GitBuildArg{{Key: "ARG", Value: "value"}}
+			m.cicdSettingsCursor = cicdSettingsFields
+			m.handleKeyPressBuildPart0(tea.KeyPressMsg{Code: 'v', Text: "v"})
+			if (m.cicdRevealKey == "ARG") != tc.allowed {
 				t.Fatal("build argument reveal does not match permission")
 			}
 			if calls != 0 {
