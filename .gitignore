@@ -10,6 +10,7 @@
 
 # Built CLI binary
 /darkubectl
+/bin/
 
 # GoReleaser build output (`goreleaser release --snapshot`)
 /dist/
