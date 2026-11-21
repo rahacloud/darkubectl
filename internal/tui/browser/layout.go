@@ -854,7 +854,10 @@ func (m *browser) buildsFooterHints() []keyHint {
 	if m.selectedApp().BuildMethod != buildModeCustom && m.selectedApp().BuildMethod != buildModeWebhook {
 		return []keyHint{{"r", hintRefresh}}
 	}
-	hints := []keyHint{{"v", "reveal token"}, {"c", "copy token"}, {"y", "copy app ID"}}
+	hints := []keyHint{{"y", "copy app ID"}}
+	if m.allowSecrets {
+		hints = append(hints, keyHint{"v", "reveal token"}, keyHint{"c", "copy token"})
+	}
 	if m.allowWrites {
 		hints = append(hints, keyHint{"t", "toggle deployment type"}, keyHint{"s", "review/save"})
 	}
@@ -870,7 +873,7 @@ func (m *browser) buildsFooterHints() []keyHint {
 	if m.allowWrites && m.cicdSettingsChanged() {
 		hints = append(hints, keyHint{"x", ticketComposeDiscard})
 	}
-	if len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
+	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
 		hints = append(hints, keyHint{"V", "reveal args"})
 	}
 	if m.buildDetail != nil {
@@ -904,7 +907,10 @@ func (m *browser) portsFooterHints() []keyHint {
 }
 
 func (m *browser) envFooterHints() []keyHint {
-	hints := []keyHint{{"↑↓", hintSelect}, {"y", hintCopy}, {"v", "reveal"}, {"r", hintRefresh}}
+	hints := []keyHint{{"↑↓", hintSelect}, {"y", hintCopy}, {"r", hintRefresh}}
+	if m.allowSecrets {
+		hints = append(hints, keyHint{"v", "reveal secret"})
+	}
 	if m.allowWrites {
 		hints = append(hints, keyHint{"e", "edit"}, keyHint{hintAddEnv, "add plain / secret"}, keyHint{"d", "stage delete"}, keyHint{"s",
 			hintReviewSave})
@@ -1136,7 +1142,10 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 	if m.selectedApp().BuildMethod != buildModeCustom && m.selectedApp().BuildMethod != buildModeWebhook {
 		return appendUniqueKeyHints(hints, keyHint{"r", hintRefresh})
 	}
-	hints = appendUniqueKeyHints(hints, keyHint{"y", "copy app ID"}, keyHint{"v", "reveal / hide token"}, keyHint{"c", "copy token"})
+	hints = appendUniqueKeyHints(hints, keyHint{"y", "copy app ID"})
+	if m.allowSecrets {
+		hints = appendUniqueKeyHints(hints, keyHint{"v", "reveal / hide token"}, keyHint{"c", "copy token"})
+	}
 	if m.allowWrites {
 		hints = appendUniqueKeyHints(hints, keyHint{"t", "toggle deployment type"})
 	}
@@ -1146,7 +1155,7 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 		hints = appendUniqueKeyHints(hints, keyHint{"e", "edit setting"}, keyHint{"+", "add argument"}, keyHint{"d", "delete argument"},
 			keyHint{"s", "review / save"})
 	}
-	if len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
+	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
 		hints = appendUniqueKeyHints(hints, keyHint{"V", "reveal / hide build arguments"})
 	}
 	if m.buildDetail != nil {
@@ -1164,8 +1173,11 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 
 func (m *browser) appendEnvKeyHints(hints []keyHint) []keyHint {
 	hints = appendUniqueKeyHints(hints, keyHint{hintVerticalMovement, "move through Plain and Secret"}, keyHint{"y",
-		"copy selected value"}, keyHint{"v", "reveal / hide selected secret"}, keyHint{"r", hintRefresh}, keyHint{"m",
+		"copy selected value"}, keyHint{"r", hintRefresh}, keyHint{"m",
 		hintMaximizeRestore}, keyHint{"PgUp/Dn", hintScroll})
+	if m.allowSecrets {
+		hints = appendUniqueKeyHints(hints, keyHint{"v", "reveal / hide selected secret"})
+	}
 	if m.allowWrites {
 		hints = appendUniqueKeyHints(hints, keyHint{"e", "edit selected value"}, keyHint{"+ / A", "add Plain / Secret"}, keyHint{"d",
 			"stage delete"}, keyHint{"s", hintReviewAndSave})

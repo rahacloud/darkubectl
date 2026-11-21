@@ -29,6 +29,7 @@ func newTUIBrowserOptions(cmd *cli.Command, cfg *config.Config, credential *tuiC
 	deps := tuiAdapterDeps{newClient: newClient, credential: credential, baseURL: baseURL, org: org}
 	options := browserUI.Options{
 		Tenant: org, Version: buildVersion(), LocalTenants: append([]string(nil), cfg.Tenants...), AllowWrites: cmd.Bool(flagTUIAllowWrites),
+		AllowSecrets: cmd.Bool(flagAllowSecrets) || cmd.Bool(flagTUIAllowWrites),
 	}
 	addTUIAccountOptions(&options, deps)
 	addTUIDataOptions(&options, deps)
