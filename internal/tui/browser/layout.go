@@ -103,7 +103,7 @@ func (m *browser) viewHeaderLines() []string {
 	padding := max(1, m.width-ansi.StringWidth(header)-ansi.StringWidth(right))
 	header += strings.Repeat(" ", padding) + right
 	lines := []string{header, ""}
-	if m.actionNotice != "" {
+	if m.actionNotice != "" && !m.writeDisabledNotice() {
 		lines = append(lines, paint(safeText(m.actionNotice), browserNumber, false))
 	}
 	if m.profileState.status == requestFailed || m.profileState.status == requestStale {
@@ -159,7 +159,7 @@ func (m *browser) appViewBodyLines(left, right []string, paneHeight, bodyHeight 
 	default:
 		break
 	}
-	if m.detail && m.appViewMaximized() {
+	if m.detail && m.appViewMaximized() && !m.writeDisabledNotice() {
 		return renderPane(right, max(1, m.width-renderPaneValue2), bodyHeight-viewValue2, m.appViewBorderTitle(m.width-renderPaneValue2), true)
 	}
 	return m.splitPanes(left, right, bodyHeight)
@@ -386,7 +386,11 @@ func (m *browser) splitPanes(apps, summary []string, height int) []string {
 	contextPane = append(contextPane, strings.Repeat(" ", contextWidth+renderPaneValue2))
 	contextPane = append(contextPane, pages...)
 	appTitle, viewTitle := m.paneTitles(appsWidth, summaryWidth)
-	appsPane := renderPane(apps, appsWidth, height-splitPanesValue2, appTitle, !m.contextFocused && !m.detail)
+	appsFooter := ""
+	if m.page == pageApps && m.writeDisabledNotice() {
+		appsFooter = "Use --allow-writes"
+	}
+	appsPane := renderPaneWithFooter(apps, appsWidth, height-splitPanesValue2, appTitle, !m.contextFocused && !m.detail, appsFooter)
 	viewPane := renderPaneWithFooter(summary, summaryWidth, height-splitPanesValue2, viewTitle, m.detail, m.paneMessage)
 	lines := make([]string, height)
 	for i := range lines {
@@ -535,7 +539,7 @@ func renderPaneWithFooter(content []string, width, height int, title string, foc
 	bottom := "╰" + strings.Repeat("─", innerWidth) + "╯"
 	if footer != "" && innerWidth > 4 {
 		label := ansi.Truncate(" "+safeText(footer)+" ", innerWidth-renderPaneValue2, "…")
-		bottom = "╰─" + label + strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(label)-layoutBorderTitleRulePadding)) + "╯"
+		bottom = "╰─" + label + strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(label)-1)) + "╯"
 	}
 	lines = append(lines, paint(bottom, borderColor, focused))
 	return lines

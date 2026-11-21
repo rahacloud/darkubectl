@@ -3,7 +3,7 @@ package browser
 import "strings"
 
 func (m *browser) currentAppPaneMessage() string {
-	if m.actionNotice != "" {
+	if m.page == pageApps && m.actionNotice != "" && !m.writeDisabledNotice() {
 		return m.actionNotice
 	}
 	if m.page != pageApps || !m.detail || !m.selectedAppActive() {
@@ -23,6 +23,10 @@ func (m *browser) currentAppPaneMessage() string {
 	default:
 		return ""
 	}
+}
+
+func (m *browser) writeDisabledNotice() bool {
+	return m.actionNotice == errWriteActionsAreDisabledRelaunchWithAllow.Error()
 }
 
 func (m *browser) clearCurrentAppPaneMessage(message string) {
