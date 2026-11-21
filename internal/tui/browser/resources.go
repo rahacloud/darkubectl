@@ -146,16 +146,23 @@ func (m *browser) resourcesPaneLines() []string {
 
 func (m *browser) appendResourceSettings(lines []string, a client.App, changed []bool) []string {
 	d := m.resourceDraft
-	settings := []string{d.Plan, d.CPU, d.RAM, "not configured", strconv.Itoa(d.Replicas), map[bool]string{true: "● enabled",
-		false: "○ disabled"}[d.Autoscaling], strconv.Itoa(d.MinReplicas), strconv.Itoa(d.MaxReplicas), fmt.Sprintf("%d%%", d.CPUTarget)}
+	if !m.allowWrites && m.resourceCursor == 0 {
+		m.resourceCursor = 1
+	}
+	settings := []string{"", d.CPU, d.RAM, "not configured", strconv.Itoa(d.Replicas),
+		map[bool]string{true: "● enabled",
+			false: "○ disabled"}[d.Autoscaling], strconv.Itoa(d.MinReplicas), strconv.Itoa(d.MaxReplicas), fmt.Sprintf("%d%%", d.CPUTarget)}
 	if a.Disk != nil {
 		settings[3] = strconv.Itoa(d.DiskGi)
 	}
 	for i, label := range resourceFields {
-		value := settings[i]
-		if i == 0 && a.Plan != nil && a.Plan.Name != "" && d.Plan == a.Plan.ID {
-			value = a.Plan.Name
+		if i == 0 {
+			if !m.allowWrites {
+				continue
+			}
+			label = "Change plan"
 		}
+		value := settings[i]
 		if i == 5 && d.Autoscaling {
 			value = paint(value, browserSuccess, true)
 		}
@@ -190,11 +197,33 @@ func (m *browser) appendResourceSettings(lines []string, a client.App, changed [
 	return lines
 }
 
+func (m *browser) resourcePlanName(id string, app client.App) string {
+	if app.Plan != nil && app.Plan.ID == id && app.Plan.Name != "" {
+		return app.Plan.Name
+	}
+	for _, plan := range m.resourcePlans {
+		if plan.ID == id {
+			if plan.Name != "" {
+				return plan.Name
+			}
+			if plan.CodeName != "" {
+				return plan.CodeName
+			}
+		}
+	}
+	return "Unknown plan"
+}
+
 func (m *browser) resourceReviewLines(changed []bool) []string {
 	lines := []string{sectionHeading("Review resource changes"), ""}
 	for i, label := range resourceFields {
 		if changed[i] {
-			lines = append(lines, fmt.Sprintf("~ %s  %s → %s", label, resourceValue(m.resourceOriginal, i), resourceValue(m.resourceDraft, i)))
+			oldValue, newValue := resourceValue(m.resourceOriginal, i), resourceValue(m.resourceDraft, i)
+			if i == 0 {
+				app := m.selectedResourceApp()
+				oldValue, newValue = m.resourcePlanName(m.resourceOriginal.Plan, app), m.resourcePlanName(m.resourceDraft.Plan, app)
+			}
+			lines = append(lines, fmt.Sprintf("~ %s  %s → %s", label, oldValue, newValue))
 		}
 	}
 	lines = append(lines, "", paint("Saving may restart the app or change its billed plan.", browserNumber, true))
@@ -441,7 +470,11 @@ func (m *browser) handleResourceEditingKey(msg tea.KeyPressMsg) {
 func (m *browser) handleResourceBrowseKey(key string) tea.Cmd {
 	switch key {
 	case "up", "k":
-		m.resourceCursor = max(0, m.resourceCursor-1)
+		first := 0
+		if !m.allowWrites {
+			first = 1
+		}
+		m.resourceCursor = max(first, m.resourceCursor-1)
 	case keyDown, "j":
 		m.resourceCursor = min(len(resourceFields)-1, m.resourceCursor+1)
 	case "e":
