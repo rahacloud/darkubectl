@@ -146,7 +146,7 @@ func (m *browser) customBuildLines(app client.App, notices []string) []string {
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
-	if m.cicdNotice != "" {
+	if m.cicdNotice != "" && m.cicdNotice != secretAccessDisabled {
 		lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
 	}
 	if m.cicdSettingsChanged() {
@@ -249,7 +249,7 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
-	if m.cicdNotice != "" {
+	if m.cicdNotice != "" && m.cicdNotice != secretAccessDisabled {
 		lines = append(lines, paint(safeText(m.cicdNotice), browserMuted, false))
 	}
 	lines = append(lines, m.cicdDarkubeSettingsLines(fields, value)...)

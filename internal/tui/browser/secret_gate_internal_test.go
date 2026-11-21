@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -75,5 +76,19 @@ func TestOpeningBuildsDoesNotFetchTokenWithoutPermission(t *testing.T) {
 	}
 	if calls != 0 || m.cicdLoading {
 		t.Fatal("opening builds requested a deploy token without permission")
+	}
+}
+
+func TestSecretAccessNoticeOnlyInPaneBorder(t *testing.T) {
+	t.Parallel()
+	for _, view := range []appView{appViewEnv, appViewBuilds} {
+		m := &browser{detail: true, activeAppView: view, apps: []client.App{{ID: "app", BuildMethod: client.BuildMethodWebhook}},
+			envMessage: secretAccessDisabled, cicdNotice: secretAccessDisabled}
+		if got := m.currentAppPaneMessage(); got != secretAccessDisabled {
+			t.Fatalf("view %v: border message = %q", view, got)
+		}
+		if strings.Contains(strings.Join(m.summaryPaneLines(), "\n"), secretAccessDisabled) {
+			t.Fatalf("view %v: notice duplicated in pane body", view)
+		}
 	}
 }

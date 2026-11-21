@@ -138,7 +138,7 @@ func (m *browser) envPaneLines() []string {
 	if m.envHasChanges() {
 		lines = append(lines, "", paint(fmt.Sprintf("%d staged change(s)", m.envChangeCount()), browserAccent, false))
 	}
-	if m.envMessage != "" {
+	if m.envMessage != "" && m.envMessage != secretAccessDisabled {
 		lines = append(lines, "", paint(safeText(m.envMessage), browserMuted, false))
 	}
 	return m.appendEnvEditPrompt(lines)
