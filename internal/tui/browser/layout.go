@@ -535,7 +535,7 @@ func renderPaneWithFooter(content []string, width, height int, title string, foc
 	bottom := "╰" + strings.Repeat("─", innerWidth) + "╯"
 	if footer != "" && innerWidth > 4 {
 		label := ansi.Truncate(" "+safeText(footer)+" ", innerWidth-renderPaneValue2, "…")
-		bottom = "╰─" + label + strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(label)-layoutBorderTitleRulePadding)) + "╯"
+		bottom = "╰─" + label + strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(label)-1)) + "╯"
 	}
 	lines = append(lines, paint(bottom, borderColor, focused))
 	return lines
