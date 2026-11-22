@@ -2,6 +2,7 @@ binary := "darkubectl"
 bin_dir := "bin"
 
 # list the recipes
+[private]
 default:
     @just --list
 
@@ -30,12 +31,6 @@ clean:
 [group('develop')]
 fmt:
     gofmt -w .
-
-# pull the latest versions of the dependencies
-[group('develop')]
-update:
-    go get -u -t ./...
-    go mod tidy
 
 # run golangci-lint (CI uses v2.14.0)
 [group('quality')]
