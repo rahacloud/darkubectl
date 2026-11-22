@@ -6,7 +6,7 @@ import (
 )
 
 func (m *browser) switchAppView(delta int) tea.Cmd {
-	if !m.detail || !m.selectedAppActive() {
+	if m.page != pageApps || m.contextFocused || m.selectingTenant || !m.selectedAppActive() {
 		return nil
 	}
 	wasLogs := m.activeAppView == appViewLogs
@@ -107,7 +107,7 @@ func (m *browser) loadUsageView() tea.Cmd {
 func (m *browser) loadBuildsView() tea.Cmd {
 	app := m.selectedApp()
 	m.ensureCICDSettings()
-	if m.cicdToken == "" {
+	if m.allowSecrets && m.cicdToken == "" {
 		tokenCmd := m.requestCICDToken(false)
 		if app.BuildMethod == client.BuildMethodWebhook {
 			return tea.Batch(m.loadSelectedBuilds(), tokenCmd)

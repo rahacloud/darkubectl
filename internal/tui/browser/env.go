@@ -138,7 +138,7 @@ func (m *browser) envPaneLines() []string {
 	if m.envHasChanges() {
 		lines = append(lines, "", paint(fmt.Sprintf("%d staged change(s)", m.envChangeCount()), browserAccent, false))
 	}
-	if m.envMessage != "" {
+	if m.envMessage != "" && m.envMessage != secretAccessDisabled {
 		lines = append(lines, "", paint(safeText(m.envMessage), browserMuted, false))
 	}
 	return m.appendEnvEditPrompt(lines)
@@ -788,6 +788,10 @@ func (m *browser) clearPendingEnv() {
 }
 
 func (m *browser) copySelectedSecret() tea.Cmd {
+	if !m.allowSecrets {
+		m.envMessage = secretAccessDisabled
+		return nil
+	}
 	name := m.selectedEnv().name
 	if value, staged := m.envSecretValues[name]; staged {
 		return func() tea.Msg { return envCopyResult{err: clipboard.WriteAll(value)} }
@@ -804,6 +808,7 @@ func (m *browser) copySelectedSecret() tea.Cmd {
 			found := false
 			for _, e := range values {
 				if e.Name == name {
+					found = true
 					err = clipboard.WriteAll(e.Value)
 					break
 				}
@@ -822,6 +827,10 @@ func (m *browser) copySelectedPlain() tea.Cmd {
 }
 
 func (m *browser) revealSelectedSecret() tea.Cmd {
+	if !m.allowSecrets {
+		m.envMessage = secretAccessDisabled
+		return nil
+	}
 	name := m.selectedEnv().name
 	if value, staged := m.envSecretValues[name]; staged {
 		m.envRevealName, m.envRevealValue = name, value

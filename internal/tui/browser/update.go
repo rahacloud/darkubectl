@@ -35,7 +35,11 @@ func animationCmd() tea.Cmd {
 //nolint:nonamedreturns // The deferred pane-message update must adjust both returned values.
 func (m *browser) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 	previousPaneMessage := m.currentAppPaneMessage()
+	previousPage, previousTenant := m.page, m.tenant
 	defer func() {
+		if (m.page != previousPage || m.tenant != previousTenant) && m.writeDisabledNotice() {
+			m.actionNotice = ""
+		}
 		current := m.currentAppPaneMessage()
 		if current == previousPaneMessage {
 			return
@@ -86,6 +90,9 @@ func (m *browser) handleUpdateInput(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		return m, m.handleBrowserWheel(msg)
 	case tea.KeyPressMsg:
+		if m.writeDisabledNotice() {
+			m.actionNotice = ""
+		}
 		return m.handleKeyPress(msg)
 	case tea.PasteMsg:
 		m.handlePaste(msg.Content)

@@ -103,7 +103,7 @@ func (m *browser) viewHeaderLines() []string {
 	padding := max(1, m.width-ansi.StringWidth(header)-ansi.StringWidth(right))
 	header += strings.Repeat(" ", padding) + right
 	lines := []string{header, ""}
-	if m.actionNotice != "" {
+	if m.actionNotice != "" && !m.writeDisabledNotice() {
 		lines = append(lines, paint(safeText(m.actionNotice), browserNumber, false))
 	}
 	if m.profileState.status == requestFailed || m.profileState.status == requestStale {
@@ -159,7 +159,7 @@ func (m *browser) appViewBodyLines(left, right []string, paneHeight, bodyHeight 
 	default:
 		break
 	}
-	if m.detail && m.appViewMaximized() {
+	if m.detail && m.appViewMaximized() && !m.writeDisabledNotice() {
 		return renderPane(right, max(1, m.width-renderPaneValue2), bodyHeight-viewValue2, m.appViewBorderTitle(m.width-renderPaneValue2), true)
 	}
 	return m.splitPanes(left, right, bodyHeight)
@@ -386,7 +386,11 @@ func (m *browser) splitPanes(apps, summary []string, height int) []string {
 	contextPane = append(contextPane, strings.Repeat(" ", contextWidth+renderPaneValue2))
 	contextPane = append(contextPane, pages...)
 	appTitle, viewTitle := m.paneTitles(appsWidth, summaryWidth)
-	appsPane := renderPane(apps, appsWidth, height-splitPanesValue2, appTitle, !m.contextFocused && !m.detail)
+	appsFooter := ""
+	if m.page == pageApps && m.writeDisabledNotice() {
+		appsFooter = "Use --allow-writes"
+	}
+	appsPane := renderPaneWithFooter(apps, appsWidth, height-splitPanesValue2, appTitle, !m.contextFocused && !m.detail, appsFooter)
 	viewPane := renderPaneWithFooter(summary, summaryWidth, height-splitPanesValue2, viewTitle, m.detail, m.paneMessage)
 	lines := make([]string, height)
 	for i := range lines {
@@ -535,7 +539,7 @@ func renderPaneWithFooter(content []string, width, height int, title string, foc
 	bottom := "╰" + strings.Repeat("─", innerWidth) + "╯"
 	if footer != "" && innerWidth > 4 {
 		label := ansi.Truncate(" "+safeText(footer)+" ", innerWidth-renderPaneValue2, "…")
-		bottom = "╰─" + label + strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(label)-layoutBorderTitleRulePadding)) + "╯"
+		bottom = "╰─" + label + strings.Repeat("─", max(0, innerWidth-ansi.StringWidth(label)-1)) + "╯"
 	}
 	lines = append(lines, paint(bottom, borderColor, focused))
 	return lines
@@ -854,7 +858,10 @@ func (m *browser) buildsFooterHints() []keyHint {
 	if m.selectedApp().BuildMethod != buildModeCustom && m.selectedApp().BuildMethod != buildModeWebhook {
 		return []keyHint{{"r", hintRefresh}}
 	}
-	hints := []keyHint{{"v", "reveal token"}, {"c", "copy token"}, {"y", "copy app ID"}}
+	hints := []keyHint{{"y", "copy app ID"}}
+	if m.allowSecrets {
+		hints = append(hints, keyHint{"v", "reveal token"}, keyHint{"c", "copy token"})
+	}
 	if m.allowWrites {
 		hints = append(hints, keyHint{"t", "toggle deployment type"}, keyHint{"s", "review/save"})
 	}
@@ -870,7 +877,7 @@ func (m *browser) buildsFooterHints() []keyHint {
 	if m.allowWrites && m.cicdSettingsChanged() {
 		hints = append(hints, keyHint{"x", ticketComposeDiscard})
 	}
-	if len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
+	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
 		hints = append(hints, keyHint{"V", "reveal args"})
 	}
 	if m.buildDetail != nil {
@@ -904,7 +911,10 @@ func (m *browser) portsFooterHints() []keyHint {
 }
 
 func (m *browser) envFooterHints() []keyHint {
-	hints := []keyHint{{"↑↓", hintSelect}, {"y", hintCopy}, {"v", "reveal"}, {"r", hintRefresh}}
+	hints := []keyHint{{"↑↓", hintSelect}, {"y", hintCopy}, {"r", hintRefresh}}
+	if m.allowSecrets {
+		hints = append(hints, keyHint{"v", "reveal secret"})
+	}
 	if m.allowWrites {
 		hints = append(hints, keyHint{"e", "edit"}, keyHint{hintAddEnv, "add plain / secret"}, keyHint{"d", "stage delete"}, keyHint{"s",
 			hintReviewSave})
@@ -1136,7 +1146,10 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 	if m.selectedApp().BuildMethod != buildModeCustom && m.selectedApp().BuildMethod != buildModeWebhook {
 		return appendUniqueKeyHints(hints, keyHint{"r", hintRefresh})
 	}
-	hints = appendUniqueKeyHints(hints, keyHint{"y", "copy app ID"}, keyHint{"v", "reveal / hide token"}, keyHint{"c", "copy token"})
+	hints = appendUniqueKeyHints(hints, keyHint{"y", "copy app ID"})
+	if m.allowSecrets {
+		hints = appendUniqueKeyHints(hints, keyHint{"v", "reveal / hide token"}, keyHint{"c", "copy token"})
+	}
 	if m.allowWrites {
 		hints = appendUniqueKeyHints(hints, keyHint{"t", "toggle deployment type"})
 	}
@@ -1146,7 +1159,7 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 		hints = appendUniqueKeyHints(hints, keyHint{"e", "edit setting"}, keyHint{"+", "add argument"}, keyHint{"d", "delete argument"},
 			keyHint{"s", "review / save"})
 	}
-	if len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
+	if m.allowSecrets && len(buildArgs(m.selectedApp().GitBuildArgs)) > 0 {
 		hints = appendUniqueKeyHints(hints, keyHint{"V", "reveal / hide build arguments"})
 	}
 	if m.buildDetail != nil {
@@ -1164,8 +1177,11 @@ func (m *browser) appendBuildKeyHints(hints []keyHint) []keyHint {
 
 func (m *browser) appendEnvKeyHints(hints []keyHint) []keyHint {
 	hints = appendUniqueKeyHints(hints, keyHint{hintVerticalMovement, "move through Plain and Secret"}, keyHint{"y",
-		"copy selected value"}, keyHint{"v", "reveal / hide selected secret"}, keyHint{"r", hintRefresh}, keyHint{"m",
+		"copy selected value"}, keyHint{"r", hintRefresh}, keyHint{"m",
 		hintMaximizeRestore}, keyHint{"PgUp/Dn", hintScroll})
+	if m.allowSecrets {
+		hints = appendUniqueKeyHints(hints, keyHint{"v", "reveal / hide selected secret"})
+	}
 	if m.allowWrites {
 		hints = appendUniqueKeyHints(hints, keyHint{"e", "edit selected value"}, keyHint{"+ / A", "add Plain / Secret"}, keyHint{"d",
 			"stage delete"}, keyHint{"s", hintReviewAndSave})

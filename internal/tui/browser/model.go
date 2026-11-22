@@ -320,6 +320,7 @@ type browser struct {
 	activityScroll                           int
 	activityDetailScroll                     int
 	allowWrites                              bool
+	allowSecrets                             bool
 	actionMenu                               bool
 	actionCursor                             int
 	actionMenuMessage                        string
