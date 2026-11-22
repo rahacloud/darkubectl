@@ -669,7 +669,8 @@ func (m *browser) buildDetailLines() []string {
 			lines = append(lines, "No output was recorded for this build.")
 		}
 	} else {
-		lines = append(lines, strings.Split(output, "\n")...)
+		formatted, _ := formatBuildOutput(output, m.buildOutputWidth(), m.buildRawOutput)
+		lines = append(lines, formatted...)
 	}
 	return lines
 }
@@ -694,13 +695,33 @@ func sanitizeBuildOutput(value string) string {
 		value = value[:buildOutputLimit]
 	}
 	value = strings.ToValidUTF8(value, "�")
-	value = safeText(ansi.Strip(value))
 	value = strings.ReplaceAll(value, "\r\n", "\n")
 	value = strings.ReplaceAll(value, "\r", "\n")
+	parts := strings.Split(value, "\n")
+	for i := range parts {
+		parts[i] = safeText(parts[i])
+	}
+	value = strings.Join(parts, "\n")
 	if truncated {
 		value += "\n\n[Output truncated at 2 MiB]"
 	}
 	return value
+}
+
+func (m *browser) buildOutputWidth() int {
+	if m.buildMaximized && !m.writeDisabledNotice() {
+		return max(1, m.width-renderPaneValue2)
+	}
+	_, width, _ := m.paneWidths()
+	return max(1, width)
+}
+
+func wrapBuildOutput(output string, width int) []string {
+	result := make([]string, 0, strings.Count(output, "\n")+1)
+	for line := range strings.SplitSeq(output, "\n") {
+		result = append(result, strings.Split(ansi.Hardwrap(line, max(1, width), true), "\n")...)
+	}
+	return result
 }
 
 func boundedBuildError(value any) string {
@@ -840,21 +861,13 @@ func (m *browser) moveBuildMatch(delta int) {
 		return
 	}
 	m.buildMatch = (m.buildMatch + delta + len(matches)) % len(matches)
-	allLines := m.buildDetailLines()
-	outputStart := 0
-	for i, line := range allLines {
-		if ansi.Strip(line) == "Build output" {
-			outputStart = i + 1
-			break
-		}
-	}
-	if m.buildSearch != "" {
-		if outputStart < len(allLines) && strings.HasPrefix(ansi.Strip(allLines[outputStart]), "Search  ") {
-			outputStart++
-		}
-	}
-	m.buildScroll = max(0, outputStart+matches[m.buildMatch]-buildDetailStickyLines(allLines))
 	m.buildCopyStatus = fmt.Sprintf("Match %d of %d", m.buildMatch+1, len(matches))
+	allLines := m.buildDetailLines()
+	width := m.buildOutputWidth()
+	formatted, offsets := formatBuildOutput(sanitizeBuildOutput(m.buildDetail.Log), width, m.buildRawOutput)
+	outputStart := len(allLines) - len(formatted)
+	visualLine := offsets[matches[m.buildMatch]]
+	m.buildScroll = max(0, outputStart+visualLine-buildDetailStickyLines(allLines))
 }
 
 func (m *browser) copyBuildOutput() tea.Cmd {

@@ -406,6 +406,10 @@ func (m *browser) handleBrowserWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	if msg.Y < bodyY || msg.Y >= m.height-browserFooterHeight {
 		return nil
 	}
+	if m.maximizedBuildOutputVisible() {
+		m.buildScroll = max(0, m.buildScroll+delta*3)
+		return nil
+	}
 	appsWidth, summaryWidth, contextWidth := m.paneWidths()
 	switch m.page {
 	case pageActivity:
@@ -434,6 +438,11 @@ func (m *browser) handleBrowserWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	default:
 		return m.handleAppsWheel(msg, delta, bodyY, appsWidth, summaryWidth, contextWidth)
 	}
+}
+
+func (m *browser) maximizedBuildOutputVisible() bool {
+	return m.page == pageApps && m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil &&
+		m.buildMaximized && !m.writeDisabledNotice()
 }
 
 func browserWheelDelta(button tea.MouseButton) (int, bool) {
@@ -511,6 +520,12 @@ func (m *browser) handleAppsWheel(msg tea.MouseWheelMsg, delta, bodyY, appsWidth
 	}
 	if msg.X >= appsRight+1 && msg.X < appsRight+1+summaryWidth+2 {
 		switch m.activeAppView {
+		case appViewBuilds:
+			if m.buildDetail != nil {
+				m.buildScroll = max(0, m.buildScroll+delta*3)
+			} else {
+				m.summaryScroll = max(0, m.summaryScroll+delta*3)
+			}
 		case appViewLogs:
 			m.logScroll = max(0, m.logScroll-delta*3)
 		case appViewUsage:

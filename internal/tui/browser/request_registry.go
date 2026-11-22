@@ -91,6 +91,7 @@ func (m *browser) invalidateAppReads() {
 	m.buildDetailState.reset()
 	m.builds = nil
 	m.buildDetail = nil
+	m.buildMaximized = false
 	m.buildSelectedID = ""
 	m.buildListCursor = 0
 	m.buildScroll = 0

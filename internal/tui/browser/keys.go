@@ -30,6 +30,11 @@ func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *browser) handleKeyPressRoutes(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "b" && m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil {
+		m.buildRawOutput = !m.buildRawOutput
+		m.buildScroll = 0
+		return m, nil
+	}
 	switch msg.String() {
 	case "1", "2", "3", "4", inputKeyTab, inputKeyShiftTab, inputKeyBacktab, inputKeyCtrlC, "q", "a", "[", "]", browserKeyEscape,
 		keyEnter, "r":
@@ -130,8 +135,8 @@ func (m *browser) handleKeyModalMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, b
 }
 
 func (m *browser) handleKeyCICDMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.detail && m.activeAppView == appViewBuilds && m.selectedAppActive() && (m.selectedApp().BuildMethod == buildModeWebhook ||
-		m.selectedApp().BuildMethod == buildModeCustom) {
+	if m.detail && m.activeAppView == appViewBuilds && m.buildDetail == nil && m.selectedAppActive() &&
+		(m.selectedApp().BuildMethod == buildModeWebhook || m.selectedApp().BuildMethod == buildModeCustom) {
 		if cmd, handled := m.handleCICDSettingsKey(msg); handled {
 			return m, cmd, true
 		}
@@ -425,6 +430,11 @@ func (m *browser) handleKeyPressViewPart5(msg tea.KeyPressMsg) (tea.Model, tea.C
 		m.logMaximized = !m.logMaximized
 		return m, nil
 	}
+	if m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil {
+		m.buildMaximized = !m.buildMaximized
+		m.buildScroll = 0
+		return m, nil
+	}
 	if m.detail && m.activeAppView == appViewUsage && m.selectedAppActive() {
 		m.cycleHistoryMetric()
 	}
@@ -641,6 +651,7 @@ func (m *browser) handleEscapeKey() {
 	case m.detail && m.activeAppView == appViewBuilds && m.buildDetail != nil:
 		m.cancelRequest(requestKey{kind: requestBuild})
 		m.buildDetail = nil
+		m.buildMaximized = false
 		m.buildDetailState.reset()
 		m.buildSearchEditing = false
 		m.buildSearch = ""

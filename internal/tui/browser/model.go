@@ -413,6 +413,8 @@ type browser struct {
 	buildDetail                         *client.Build
 	buildDetailState                    requestState
 	buildScroll                         int
+	buildMaximized                      bool
+	buildRawOutput                      bool
 	buildSearch                         string
 	buildSearchBefore                   string
 	buildSearchEditing                  bool
