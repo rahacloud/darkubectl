@@ -166,339 +166,340 @@ type treeNode struct {
 }
 
 type browser struct {
-	listTickets                              func(context.Context, string, string, bool) (client.TicketList, error)
-	getTicket                                func(context.Context, string, string) (client.Ticket, error)
-	getTicketComments                        func(context.Context, string, string) ([]client.TicketComment, error)
-	getTicketCategories                      func(context.Context, string) ([]client.TicketCategory, error)
-	getTicketPriorities                      func(context.Context, string) ([]client.TicketPriority, error)
-	createTicket                             func(context.Context, string, client.NewTicket) (string, error)
-	replyTicket                              func(context.Context, string, string, string) error
-	ticketRows                               []client.Ticket
-	ticketComments                           []client.TicketComment
-	ticketCategories                         []client.TicketCategory
-	ticketPriorities                         []client.TicketPriority
-	ticketState                              requestState
-	ticketDetailState                        requestState
-	ticketSelection                          string
-	ticketCursor                             int
-	ticketDetail                             *client.Ticket
-	ticketStatus                             string
-	ticketMine                               bool
-	ticketCompose                            string
-	ticketComposeBeforeDiscard               string
-	ticketDraft                              string
-	ticketSummary                            string
-	ticketCategory                           string
-	ticketPriority                           string
-	ticketComposeField                       int
-	ticketSubmitting                         bool
-	ticketNotice                             string
-	ticketFilter                             string
-	ticketScroll                             int
-	paneMessage                              string
-	paneMessageID                            uint64
-	page                                     browserPage
-	listDatabases                            func(context.Context, string) ([]client.Database, error)
-	databases                                []client.Database
-	databaseState                            requestState
-	getDatabase                              func(context.Context, string, string) (*client.DatabaseDetail, error)
-	databaseDetail                           *client.DatabaseDetail
-	databaseDetailState                      requestState
-	databaseDetailTarget                     string
-	databaseConnectionRole                   dbConnectionRole
-	databaseNotice                           string
-	databaseCursor                           int
-	databaseSelected                         string
-	databaseFilter                           string
-	databaseFilterBefore                     string
-	databaseFilterEditing                    bool
-	databaseSortBy                           dbSort
-	databaseSortDescending                   bool
-	databaseScroll                           int
-	listRegistries                           func(context.Context, string) ([]client.Registry, error)
-	listRegistryRepositories                 func(context.Context, string, client.FlexID) ([]client.Repository, error)
-	listRegistryDigests                      func(context.Context, string, client.FlexID, string) ([]client.Digest, error)
-	deleteRegistryRepository                 func(context.Context, string, client.FlexID, string) error
-	deleteRegistryDigests                    func(context.Context, string, client.FlexID, string, []string) error
-	deleteRegistryTags                       func(context.Context, string, client.FlexID, string, string, []string) error
-	registryState                            requestState
-	registries                               []client.Registry
-	registryRepos                            map[string][]client.Repository
-	registryDigests                          map[string][]client.Digest
-	registryDigestErrors                     map[string]error
-	registryCursor                           int
-	registryRows                             []registryTreeRow
-	registryConfirm                          bool
-	registryConfirmText                      string
-	registryNotice                           string
-	registryBusy                             bool
-	registryTagMode                          bool
-	registryTagCursor                        int
-	registryDeleteTag                        bool
-	registryTagCopy                          bool
-	registryCollapsed                        map[string]bool
-	tenant                                   string
-	version                                  string
-	mode                                     string
-	listApps                                 func(context.Context, string) ([]client.App, error)
-	getApp                                   func(context.Context, string, string) (*client.App, error)
-	usage                                    func(context.Context, string, string) (*AppUsage, error)
-	listPVCs                                 func(context.Context, string, string, int) ([]client.PVC, error)
-	usageHistory                             func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
-	fetchPods                                func(context.Context, string, string) ([]appstate.Pod, error)
-	appLogs                                  func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
-	listBuilds                               func(context.Context, string, string, int) ([]client.Build, error)
-	getBuild                                 func(context.Context, string, client.BuildID) (*client.Build, error)
-	deployToken                              func(context.Context, string, string) (string, error)
-	updateGitBuildSettings                   func(context.Context, string, string, client.GitBuildSettings, client.GitBuildSettings) error
-	cicdToken, cicdNotice                    string
-	cicdReveal, cicdTokenReveal, cicdLoading bool
-	cicdGeneration                           uint64
-	cicdSettingsOriginal                     client.GitBuildSettings
-	cicdSettingsDraft                        client.GitBuildSettings
-	cicdSettingsCursor                       int
-	cicdEditField                            int
-	cicdEditValue                            string
-	cicdEditKey                              string
-	cicdEditArg                              bool
-	cicdEditAdding                           bool
-	cicdEditing                              bool
-	cicdReview                               bool
-	cicdSaving                               bool
-	cicdSettingsLoaded                       bool
-	cicdSettingsNotice                       string
-	cicdHistoryFocus                         bool
-	cicdCursorLine                           int
-	buildLatest                              func(context.Context, string, string) error
-	retryBuild                               func(context.Context, string, client.BuildID) (*client.Build, error)
-	stopBuild                                func(context.Context, string, client.BuildID) error
-	environment                              func(context.Context, string, string) ([]client.EnvVar, []string, error)
-	secretEnvs                               func(context.Context, string, string) ([]client.EnvVar, error)
-	updatePlainEnv                           func(context.Context, string, string, []client.EnvVar) error
-	updateSecretEnv                          func(context.Context, string, string, []client.EnvVar) error
-	domains                                  func(context.Context, string, string) (DomainConfig, error)
-	updateDomains                            func(context.Context, string, string, DomainConfig) error
-	ports                                    func(context.Context, string, string) (PortConfig, error)
-	updatePorts                              func(context.Context, string, string, PortConfig) error
-	terminal                                 func(context.Context, string, string, string, string, string) tea.ExecCommand
-	egressRoutes                             func(context.Context, string) (map[string]client.ClusterEgress, error)
-	listNamespaces                           func(context.Context, string) ([]client.Namespace, error)
-	profile                                  func(context.Context) (*client.Profile, error)
-	alerts                                   func(context.Context, string) ([]client.Alert, error)
-	notifications                            func(context.Context) ([]client.Notification, error)
-	ctx                                      context.Context //nolint:containedctx // Browser lifetime owns all in-flight requests.
-	now                                      func() time.Time
-	nextRequestID                            uint64
-	tenantGeneration                         uint64
-	selectionGeneration                      uint64
-	inFlight                                 map[requestKey]inFlightRequest
-	localTenants                             []string
-	tenants                                  []tenantOption
-	tenantCursor                             int
-	selectingTenant                          bool
-	contextFocused                           bool
-	contextRow                               int
-	activityTab                              activityTab
-	activityAlertsData                       []client.Alert
-	activityAlertsState                      requestState
-	activityAlertCursor                      int
-	activityAlertSelected                    string
-	activityAlertFilter                      string
-	activityAlertStatusFilter                int
-	activityNotificationsData                []client.Notification
-	activityNotificationsState               requestState
-	activityNotificationCursor               int
-	activityNotificationSelected             int
-	activityNotificationFilter               string
-	activityNotificationUnreadFilter         int
-	activityFilterEditing                    bool
-	activityFilterBefore                     string
-	activitySortAlerts                       activitySort
-	activitySortNotifications                activitySort
-	activitySortAlertsDescending             bool
-	activitySortNotificationsDescending      bool
-	activityScroll                           int
-	activityDetailScroll                     int
-	allowWrites                              bool
-	allowSecrets                             bool
-	actionMenu                               bool
-	actionCursor                             int
-	actionMenuMessage                        string
-	confirmAction                            appAction
-	confirmButton                            int
-	confirmName                              string
-	confirmError                             string
-	actionBusy                               bool
-	actionNotice                             string
-	actionTargetTenant                       string
-	actionTargetID                           string
-	actionTargetName                         string
-	restartApp                               func(string, string) error
-	deleteApp                                func(string, string) error
-	mockDeleteApp                            func(string, string)
-	profileState                             requestState
-	userEmail                                string
-	tenantStatus                             string
-	apps                                     []client.App
-	appsState                                requestState
-	selected                                 int
-	namespaceSelected                        bool
-	namespaceScope                           namespaceKey
-	namespaceScoped                          bool
-	namespaces                               []client.Namespace
-	namespaceFallback                        bool
-	namespaceState                           requestState
-	selectingNamespace                       bool
-	namespaceCursor                          int
-	namespaceQuery                           string
-	filterQuery                              string
-	filterBeforeEdit                         string
-	filterEditing                            bool
-	filterSelection                          string
-	collapsed                                map[namespaceKey]bool
-	detail                                   bool
-	activeAppView                            appView
-	detailState                              requestState
-	detailApp                                *client.App
-	detailUsage                              *AppUsage
-	usageAppID                               string
-	usageState                               requestState
-	pvcsState                                requestState
-	appPVCs                                  []client.PVC
-	historyState                             requestState
-	podsState                                requestState
-	podList                                  []appstate.Pod
-	egressState                              requestState
-	egressData                               map[string]client.ClusterEgress
-	history                                  *UsageHistory
-	historyRange                             int
-	historyMetric                            int
-	historyPod                               string
-	historyPodChosen                         bool
-	usageScroll                              int
-	summaryScroll                            int
-	logEntries                               []client.LogEntry
-	logState                                 requestState
-	logPod                                   string
-	logContainer                             string
-	logPrevious                              bool
-	logFollowing                             bool
-	logFollowPausedByUser                    bool
-	logPollInFlight                          bool
-	logRetryCount                            int
-	logRetryDelay                            int
-	logTargetPicker                          bool
-	logPickerColumn                          int
-	logPodCursor                             int
-	logContainerCursor                       int
-	logScroll                                int
-	logNewEntries                            int
-	logNotice                                string
-	logSearch                                string
-	logSearchBefore                          string
-	logSearchEditing                         bool
-	logMatch                                 int
-	logWrap                                  bool
-	logUTC                                   bool
-	logMaximized                             bool
-	logTail                                  int
-	logCopyStatus                            string
-	builds                                   []client.Build
-	buildsState                              requestState
-	buildSelectedID                          client.BuildID
-	buildListCursor                          int
-	buildLastClickRow                        int
-	buildLastClickAt                         time.Time
-	buildDetail                              *client.Build
-	buildDetailState                         requestState
-	buildScroll                              int
-	buildSearch                              string
-	buildSearchBefore                        string
-	buildSearchEditing                       bool
-	buildMatch                               int
-	buildCopyStatus                          string
-	buildNotice                              string
-	buildActionMenu                          bool
-	buildActionCursor                        int
-	buildConfirm                             buildAction
-	buildConfirmButton                       int
-	buildConfirmTenant                       string
-	buildConfirmAppID                        string
-	buildConfirmAppName                      string
-	buildConfirmBuildID                      client.BuildID
-	buildActionBusy                          bool
-	buildActionNotice                        string
-	buildActionAwaiting                      buildAction
-	buildActionAwaitingID                    client.BuildID
-	buildActionRetryID                       client.BuildID
-	envPlain                                 []client.EnvVar
-	envSecretNames                           []string
-	envState                                 requestState
-	envCursor                                int
-	envCursorLine                            int
-	envEditMode                              uint8
-	envEditName                              string
-	envEditValue                             string
-	envMessage                               string
-	envBusy                                  bool
-	envRevealName                            string
-	envRevealValue                           string
-	envConfirm                               bool
-	envOriginalPlain                         []client.EnvVar
-	envOriginalSecretNames                   []string
-	envSecretValues                          map[string]string
-	envDeletedPlain                          map[string]bool
-	envDeletedSecrets                        map[string]bool
-	envMaximized                             bool
-	domainConfig                             DomainConfig
-	domainOriginal                           DomainConfig
-	domainState                              requestState
-	domainCursor                             int
-	domainCursorLine                         int
-	domainEditing                            bool
-	domainEditSubdomain                      bool
-	domainConfirm                            bool
-	domainInput                              string
-	domainMessage                            string
-	domainBusy                               bool
-	domainMaximized                          bool
-	portConfig                               PortConfig
-	portOriginal                             PortConfig
-	portState                                requestState
-	portCursorRow                            int
-	portCursorCol                            int
-	portCursorLine                           int
-	portEditing                              bool
-	portEditValue                            string
-	portConfirm                              bool
-	portBusy                                 bool
-	portMessage                              string
-	portMaximized                            bool
-	resourceDraft                            ResourceConfig
-	resourceOriginal                         ResourceConfig
-	resourceCursor                           int
-	resourceEditing                          bool
-	resourceEditValue                        string
-	resourceReview                           bool
-	resourceBusy                             bool
-	resourceAwaitingRefresh                  bool
-	resourceMessage                          string
-	updateResources                          func(context.Context, string, string, ResourceConfig) error
-	listResourcePlans                        func(context.Context, string) ([]client.Plan, error)
-	resourcePlans                            []client.Plan
-	resourcePlanPicker                       bool
-	resourcePlanCursor                       int
-	resourcePlanErr                          string
-	terminalPod                              string
-	terminalContainer                        string
-	terminalChoosing                         bool
-	terminalRequestPending                   bool
-	sorting                                  bool
-	sortChoice                               int
-	sortBy                                   appSort
-	sortDescending                           bool
-	help                                     bool
-	spinnerFrame                             int
-	width                                    int
-	height                                   int
+	listTickets                         func(context.Context, string, string, bool) (client.TicketList, error)
+	getTicket                           func(context.Context, string, string) (client.Ticket, error)
+	getTicketComments                   func(context.Context, string, string) ([]client.TicketComment, error)
+	getTicketCategories                 func(context.Context, string) ([]client.TicketCategory, error)
+	getTicketPriorities                 func(context.Context, string) ([]client.TicketPriority, error)
+	createTicket                        func(context.Context, string, client.NewTicket) (string, error)
+	replyTicket                         func(context.Context, string, string, string) error
+	ticketRows                          []client.Ticket
+	ticketComments                      []client.TicketComment
+	ticketCategories                    []client.TicketCategory
+	ticketPriorities                    []client.TicketPriority
+	ticketState                         requestState
+	ticketDetailState                   requestState
+	ticketSelection                     string
+	ticketCursor                        int
+	ticketDetail                        *client.Ticket
+	ticketStatus                        string
+	ticketMine                          bool
+	ticketCompose                       string
+	ticketComposeBeforeDiscard          string
+	ticketDraft                         string
+	ticketSummary                       string
+	ticketCategory                      string
+	ticketPriority                      string
+	ticketComposeField                  int
+	ticketSubmitting                    bool
+	ticketNotice                        string
+	ticketFilter                        string
+	ticketScroll                        int
+	paneMessage                         string
+	paneMessageID                       uint64
+	page                                browserPage
+	listDatabases                       func(context.Context, string) ([]client.Database, error)
+	databases                           []client.Database
+	databaseState                       requestState
+	getDatabase                         func(context.Context, string, string) (*client.DatabaseDetail, error)
+	databaseDetail                      *client.DatabaseDetail
+	databaseDetailState                 requestState
+	databaseDetailTarget                string
+	databaseConnectionRole              dbConnectionRole
+	databaseNotice                      string
+	databaseCursor                      int
+	databaseSelected                    string
+	databaseFilter                      string
+	databaseFilterBefore                string
+	databaseFilterEditing               bool
+	databaseSortBy                      dbSort
+	databaseSortDescending              bool
+	databaseScroll                      int
+	listRegistries                      func(context.Context, string) ([]client.Registry, error)
+	listRegistryRepositories            func(context.Context, string, client.FlexID) ([]client.Repository, error)
+	listRegistryDigests                 func(context.Context, string, client.FlexID, string) ([]client.Digest, error)
+	deleteRegistryRepository            func(context.Context, string, client.FlexID, string) error
+	deleteRegistryDigests               func(context.Context, string, client.FlexID, string, []string) error
+	deleteRegistryTags                  func(context.Context, string, client.FlexID, string, string, []string) error
+	registryState                       requestState
+	registries                          []client.Registry
+	registryRepos                       map[string][]client.Repository
+	registryDigests                     map[string][]client.Digest
+	registryDigestErrors                map[string]error
+	registryCursor                      int
+	registryRows                        []registryTreeRow
+	registryConfirm                     bool
+	registryConfirmText                 string
+	registryNotice                      string
+	registryBusy                        bool
+	registryTagMode                     bool
+	registryTagCursor                   int
+	registryDeleteTag                   bool
+	registryTagCopy                     bool
+	registryCollapsed                   map[string]bool
+	tenant                              string
+	version                             string
+	mode                                string
+	listApps                            func(context.Context, string) ([]client.App, error)
+	getApp                              func(context.Context, string, string) (*client.App, error)
+	usage                               func(context.Context, string, string) (*AppUsage, error)
+	listPVCs                            func(context.Context, string, string, int) ([]client.PVC, error)
+	usageHistory                        func(context.Context, string, string, time.Duration, time.Duration) (*UsageHistory, error)
+	fetchPods                           func(context.Context, string, string) ([]appstate.Pod, error)
+	appLogs                             func(context.Context, string, string, client.LogOptions) ([]client.LogEntry, error)
+	listBuilds                          func(context.Context, string, string, int) ([]client.Build, error)
+	getBuild                            func(context.Context, string, client.BuildID) (*client.Build, error)
+	deployToken                         func(context.Context, string, string) (string, error)
+	updateGitBuildSettings              func(context.Context, string, string, client.GitBuildSettings, client.GitBuildSettings) error
+	cicdToken, cicdNotice               string
+	cicdTokenReveal, cicdLoading        bool
+	cicdRevealKey                       string
+	cicdGeneration                      uint64
+	cicdSettingsOriginal                client.GitBuildSettings
+	cicdSettingsDraft                   client.GitBuildSettings
+	cicdSettingsCursor                  int
+	cicdEditField                       int
+	cicdEditValue                       string
+	cicdEditKey                         string
+	cicdEditArg                         bool
+	cicdEditAdding                      bool
+	cicdEditing                         bool
+	cicdReview                          bool
+	cicdSaving                          bool
+	cicdSettingsLoaded                  bool
+	cicdSettingsNotice                  string
+	cicdHistoryFocus                    bool
+	cicdCursorLine                      int
+	buildLatest                         func(context.Context, string, string) error
+	retryBuild                          func(context.Context, string, client.BuildID) (*client.Build, error)
+	stopBuild                           func(context.Context, string, client.BuildID) error
+	environment                         func(context.Context, string, string) ([]client.EnvVar, []string, error)
+	secretEnvs                          func(context.Context, string, string) ([]client.EnvVar, error)
+	updatePlainEnv                      func(context.Context, string, string, []client.EnvVar) error
+	updateSecretEnv                     func(context.Context, string, string, []client.EnvVar) error
+	domains                             func(context.Context, string, string) (DomainConfig, error)
+	updateDomains                       func(context.Context, string, string, DomainConfig) error
+	ports                               func(context.Context, string, string) (PortConfig, error)
+	updatePorts                         func(context.Context, string, string, PortConfig) error
+	terminal                            func(context.Context, string, string, string, string, string) tea.ExecCommand
+	egressRoutes                        func(context.Context, string) (map[string]client.ClusterEgress, error)
+	listNamespaces                      func(context.Context, string) ([]client.Namespace, error)
+	profile                             func(context.Context) (*client.Profile, error)
+	alerts                              func(context.Context, string) ([]client.Alert, error)
+	notifications                       func(context.Context) ([]client.Notification, error)
+	ctx                                 context.Context //nolint:containedctx // Browser lifetime owns all in-flight requests.
+	now                                 func() time.Time
+	nextRequestID                       uint64
+	tenantGeneration                    uint64
+	selectionGeneration                 uint64
+	inFlight                            map[requestKey]inFlightRequest
+	localTenants                        []string
+	tenants                             []tenantOption
+	tenantCursor                        int
+	selectingTenant                     bool
+	contextFocused                      bool
+	contextRow                          int
+	activityTab                         activityTab
+	activityAlertsData                  []client.Alert
+	activityAlertsState                 requestState
+	activityAlertCursor                 int
+	activityAlertSelected               string
+	activityAlertFilter                 string
+	activityAlertStatusFilter           int
+	activityNotificationsData           []client.Notification
+	activityNotificationsState          requestState
+	activityNotificationCursor          int
+	activityNotificationSelected        int
+	activityNotificationFilter          string
+	activityNotificationUnreadFilter    int
+	activityFilterEditing               bool
+	activityFilterBefore                string
+	activitySortAlerts                  activitySort
+	activitySortNotifications           activitySort
+	activitySortAlertsDescending        bool
+	activitySortNotificationsDescending bool
+	activityScroll                      int
+	activityDetailScroll                int
+	allowWrites                         bool
+	allowSecrets                        bool
+	actionMenu                          bool
+	actionCursor                        int
+	actionMenuMessage                   string
+	confirmAction                       appAction
+	confirmButton                       int
+	confirmName                         string
+	confirmError                        string
+	actionBusy                          bool
+	actionNotice                        string
+	actionTargetTenant                  string
+	actionTargetID                      string
+	actionTargetName                    string
+	restartApp                          func(string, string) error
+	deleteApp                           func(string, string) error
+	mockDeleteApp                       func(string, string)
+	profileState                        requestState
+	userEmail                           string
+	tenantStatus                        string
+	apps                                []client.App
+	appsState                           requestState
+	selected                            int
+	namespaceSelected                   bool
+	namespaceScope                      namespaceKey
+	namespaceScoped                     bool
+	namespaces                          []client.Namespace
+	namespaceFallback                   bool
+	namespaceState                      requestState
+	selectingNamespace                  bool
+	namespaceCursor                     int
+	namespaceQuery                      string
+	filterQuery                         string
+	filterBeforeEdit                    string
+	filterEditing                       bool
+	filterSelection                     string
+	collapsed                           map[namespaceKey]bool
+	detail                              bool
+	activeAppView                       appView
+	detailState                         requestState
+	detailApp                           *client.App
+	detailUsage                         *AppUsage
+	usageAppID                          string
+	usageState                          requestState
+	pvcsState                           requestState
+	appPVCs                             []client.PVC
+	historyState                        requestState
+	podsState                           requestState
+	podList                             []appstate.Pod
+	egressState                         requestState
+	egressData                          map[string]client.ClusterEgress
+	history                             *UsageHistory
+	historyRange                        int
+	historyMetric                       int
+	historyPod                          string
+	historyPodChosen                    bool
+	usageScroll                         int
+	summaryScroll                       int
+	logEntries                          []client.LogEntry
+	logState                            requestState
+	logPod                              string
+	logContainer                        string
+	logPrevious                         bool
+	logFollowing                        bool
+	logFollowPausedByUser               bool
+	logPollInFlight                     bool
+	logRetryCount                       int
+	logRetryDelay                       int
+	logTargetPicker                     bool
+	logPickerColumn                     int
+	logPodCursor                        int
+	logContainerCursor                  int
+	logScroll                           int
+	logNewEntries                       int
+	logNotice                           string
+	logSearch                           string
+	logSearchBefore                     string
+	logSearchEditing                    bool
+	logMatch                            int
+	logWrap                             bool
+	logUTC                              bool
+	logMaximized                        bool
+	logTail                             int
+	logCopyStatus                       string
+	builds                              []client.Build
+	buildsState                         requestState
+	buildSelectedID                     client.BuildID
+	buildListCursor                     int
+	buildLastClickRow                   int
+	buildLastClickAt                    time.Time
+	buildDetail                         *client.Build
+	buildDetailState                    requestState
+	buildScroll                         int
+	buildSearch                         string
+	buildSearchBefore                   string
+	buildSearchEditing                  bool
+	buildMatch                          int
+	buildCopyStatus                     string
+	buildNotice                         string
+	buildActionMenu                     bool
+	buildActionCursor                   int
+	buildConfirm                        buildAction
+	buildConfirmButton                  int
+	buildConfirmTenant                  string
+	buildConfirmAppID                   string
+	buildConfirmAppName                 string
+	buildConfirmBuildID                 client.BuildID
+	buildActionBusy                     bool
+	buildActionNotice                   string
+	buildActionAwaiting                 buildAction
+	buildActionAwaitingID               client.BuildID
+	buildActionRetryID                  client.BuildID
+	envPlain                            []client.EnvVar
+	envSecretNames                      []string
+	envState                            requestState
+	envCursor                           int
+	envCursorLine                       int
+	envEditMode                         uint8
+	envEditName                         string
+	envEditValue                        string
+	envMessage                          string
+	envBusy                             bool
+	envRevealName                       string
+	envRevealValue                      string
+	envConfirm                          bool
+	envOriginalPlain                    []client.EnvVar
+	envOriginalSecretNames              []string
+	envSecretValues                     map[string]string
+	envDeletedPlain                     map[string]bool
+	envDeletedSecrets                   map[string]bool
+	envMaximized                        bool
+	domainConfig                        DomainConfig
+	domainOriginal                      DomainConfig
+	domainState                         requestState
+	domainCursor                        int
+	domainCursorLine                    int
+	domainEditing                       bool
+	domainEditSubdomain                 bool
+	domainConfirm                       bool
+	domainInput                         string
+	domainMessage                       string
+	domainBusy                          bool
+	domainMaximized                     bool
+	portConfig                          PortConfig
+	portOriginal                        PortConfig
+	portState                           requestState
+	portCursorRow                       int
+	portCursorCol                       int
+	portCursorLine                      int
+	portEditing                         bool
+	portEditValue                       string
+	portConfirm                         bool
+	portBusy                            bool
+	portMessage                         string
+	portMaximized                       bool
+	resourceDraft                       ResourceConfig
+	resourceOriginal                    ResourceConfig
+	resourceCursor                      int
+	resourceEditing                     bool
+	resourceEditValue                   string
+	resourceReview                      bool
+	resourceBusy                        bool
+	resourceAwaitingRefresh             bool
+	resourceMessage                     string
+	updateResources                     func(context.Context, string, string, ResourceConfig) error
+	listResourcePlans                   func(context.Context, string) ([]client.Plan, error)
+	resourcePlans                       []client.Plan
+	resourcePlanPicker                  bool
+	resourcePlanCursor                  int
+	resourcePlanErr                     string
+	terminalPod                         string
+	terminalContainer                   string
+	terminalChoosing                    bool
+	terminalRequestPending              bool
+	sorting                             bool
+	sortChoice                          int
+	sortBy                              appSort
+	sortDescending                      bool
+	help                                bool
+	spinnerFrame                        int
+	width                               int
+	height                              int
 }

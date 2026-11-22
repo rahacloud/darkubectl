@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -69,9 +68,41 @@ func (m *browser) cicdSettingsChanged() bool {
 	return !m.cicdSettingsOriginal.Equal(m.cicdSettingsDraft)
 }
 
+func (m *browser) cicdRemovedArgs() []client.GitBuildArg {
+	var removed []client.GitBuildArg
+	for _, original := range m.cicdSettingsOriginal.Args {
+		found := false
+		for _, arg := range m.cicdSettingsDraft.Args {
+			if arg.Key == original.Key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			removed = append(removed, original)
+		}
+	}
+	return removed
+}
+
+func (m *browser) cicdSelectedArgument() (client.GitBuildArg, bool) {
+	i := m.cicdSettingsCursor - cicdSettingsFields
+	if i >= 0 && i < len(m.cicdSettingsDraft.Args) {
+		return m.cicdSettingsDraft.Args[i], true
+	}
+	i -= len(m.cicdSettingsDraft.Args) + 1
+	removed := m.cicdRemovedArgs()
+	if m.allowWrites && i >= 0 && i < len(removed) {
+		return removed[i], true
+	}
+	return client.GitBuildArg{}, false
+}
+
 func (m *browser) cicdSettingsRows() int {
-	rows := cicdSettingsFields + max(1, len(m.cicdSettingsDraft.Args))
+	rows := cicdSettingsFields + len(m.cicdSettingsDraft.Args)
 	if m.allowWrites {
+		rows += 1 + len(m.cicdRemovedArgs())
+	} else if len(m.cicdSettingsDraft.Args) == 0 {
 		rows++
 	}
 	return rows
@@ -79,7 +110,7 @@ func (m *browser) cicdSettingsRows() int {
 
 func (m *browser) moveCICDSettings(delta int) {
 	rows := []int{0, 1, 4, 5, 6, 7}
-	if len(m.cicdSettingsDraft.Args) == 0 {
+	if len(m.cicdSettingsDraft.Args) == 0 && !m.allowWrites {
 		rows = append(rows, cicdSettingsFields)
 	} else {
 		for i := range len(m.cicdSettingsDraft.Args) {
@@ -88,6 +119,9 @@ func (m *browser) moveCICDSettings(delta int) {
 	}
 	if m.allowWrites {
 		rows = append(rows, cicdSettingsFields+len(m.cicdSettingsDraft.Args))
+		for i := range m.cicdRemovedArgs() {
+			rows = append(rows, cicdSettingsFields+len(m.cicdSettingsDraft.Args)+1+i)
+		}
 	}
 	index := 0
 	for i, row := range rows {
@@ -131,13 +165,16 @@ func (m *browser) handleCICDEditingKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			r := []rune(m.cicdEditValue)
 			m.cicdEditValue = string(r[:len(r)-1])
 		}
-	case keyEnter:
+	case keyEnter, inputKeyTab:
 		if m.cicdEditAdding && m.cicdEditKey == "" {
 			if strings.TrimSpace(m.cicdEditValue) == "" {
 				m.cicdSettingsNotice = "Argument key cannot be empty"
 				return nil, true
 			}
 			m.cicdEditKey, m.cicdEditValue = strings.TrimSpace(m.cicdEditValue), ""
+			return nil, true
+		}
+		if msg.String() == inputKeyTab && !m.cicdEditArg {
 			return nil, true
 		}
 		m.applyCICDEdit()
@@ -242,11 +279,14 @@ func (m *browser) handleCICDNavigationKey(key string) (tea.Cmd, bool) {
 		m.cicdSettingsCursor = 0
 		return m.loadSelectedSummary(), true
 	case keyEnter:
-		if m.allowWrites && m.cicdSettingsCursor == cicdSettingsFields+len(m.cicdSettingsDraft.Args) {
-			m.cicdSettingsCursor = m.cicdSettingsRows() - 1
+		switch {
+		case m.allowWrites && m.cicdSettingsCursor == cicdSettingsFields+len(m.cicdSettingsDraft.Args):
+			m.cicdSettingsCursor = cicdSettingsFields + len(m.cicdSettingsDraft.Args)
 			m.cicdEditAdding, m.cicdEditArg, m.cicdEditing = true, true, true
 			m.cicdEditKey, m.cicdEditValue, m.cicdEditField = "", "", cicdNewArgumentFieldIndex
-		} else {
+		case m.allowWrites && m.cicdSettingsCursor > cicdSettingsFields+len(m.cicdSettingsDraft.Args):
+			m.restoreCICDArgument()
+		default:
 			m.beginCICDEdit()
 		}
 		return nil, true
@@ -267,14 +307,18 @@ func (m *browser) handleCICDWriteKey(key string) bool {
 		}
 	case "+":
 		if m.allowWrites {
-			m.cicdSettingsCursor = m.cicdSettingsRows() - 1
+			m.cicdSettingsCursor = cicdSettingsFields + len(m.cicdSettingsDraft.Args)
 			m.cicdEditAdding, m.cicdEditArg = true, true
 			m.cicdEditKey, m.cicdEditValue, m.cicdEditField = "", "", cicdNewArgumentFieldIndex
 			m.cicdEditing = true
 		}
 	case "d":
 		if m.allowWrites {
-			m.deleteCICDArgument()
+			if m.cicdSettingsCursor > cicdSettingsFields+len(m.cicdSettingsDraft.Args) {
+				m.restoreCICDArgument()
+			} else {
+				m.deleteCICDArgument()
+			}
 		}
 	case "s":
 		if m.allowWrites {
@@ -293,6 +337,31 @@ func (m *browser) handleCICDWriteKey(key string) bool {
 		return false
 	}
 	return true
+}
+
+func (m *browser) restoreCICDArgument() {
+	arg, ok := m.cicdSelectedArgument()
+	if !ok {
+		return
+	}
+	position := len(m.cicdSettingsDraft.Args)
+	for i, original := range m.cicdSettingsOriginal.Args {
+		if original.Key != arg.Key {
+			continue
+		}
+		for _, next := range m.cicdSettingsOriginal.Args[i+1:] {
+			for j, draft := range m.cicdSettingsDraft.Args {
+				if draft.Key == next.Key && j < position {
+					position = j
+				}
+			}
+		}
+		break
+	}
+	m.cicdSettingsDraft.Args = append(m.cicdSettingsDraft.Args, client.GitBuildArg{})
+	copy(m.cicdSettingsDraft.Args[position+1:], m.cicdSettingsDraft.Args[position:])
+	m.cicdSettingsDraft.Args[position] = arg
+	m.cicdSettingsCursor = cicdSettingsFields + position
 }
 
 func (m *browser) beginCICDEdit() {
@@ -449,7 +518,7 @@ func (m *browser) saveCICDSettings() tea.Cmd {
 	}
 	tenant, id := m.tenant, m.selectedDetailTarget()
 	expected, desired := cloneGitSettings(m.cicdSettingsOriginal), cloneGitSettings(m.cicdSettingsDraft)
-	m.cicdSaving, m.cicdSettingsNotice = true, "Saving and verifying settings…"
+	m.cicdSaving, m.cicdSettingsNotice = true, "Saving and verifying settings"
 	return func() tea.Msg {
 		if m.actionIsMock() {
 			return cicdSettingsWriteResult{tenant: tenant, appID: id, mock: true}
@@ -509,42 +578,69 @@ func (m *browser) cicdSettingsReviewLines() []string {
 	add("Context", a.Context, b.Context)
 	add("Workdir", a.Workdir, b.Workdir)
 	add("Auto deploy", autoDeployLabel(a.Autodeploy), autoDeployLabel(b.Autodeploy))
-	if len(a.Args) != len(b.Args) || fmt.Sprint(a.Args) != fmt.Sprint(b.Args) {
+	if cicdBuildArgsChanged(a.Args, b.Args) {
 		lines = append(lines, sectionHeading("Build arguments"))
-		oldArgs := map[string]string{}
-		newArgs := map[string]string{}
-		for _, arg := range a.Args {
-			oldArgs[arg.Key] = arg.Value
-		}
-		for _, arg := range b.Args {
-			newArgs[arg.Key] = arg.Value
-		}
-		keys := map[string]bool{}
-		for k := range oldArgs {
-			keys[k] = true
-		}
-		for k := range newArgs {
-			keys[k] = true
-		}
-		ordered := make([]string, 0, len(keys))
-		for key := range keys {
-			ordered = append(ordered, key)
-		}
-		sort.Strings(ordered)
-		for _, key := range ordered {
-			old, hadOld := oldArgs[key]
-			next, hasNext := newArgs[key]
-			if hadOld && hasNext && old == next {
-				continue
-			}
-			if hadOld {
-				lines = append(lines, "− "+safeText(key)+" = ••••••••")
-			}
-			if hasNext {
-				lines = append(lines, "+ "+safeText(key)+" = ••••••••")
-			}
-		}
+		lines = append(lines, cicdSettingsReviewArgumentLines(a.Args, b.Args, m.allowSecrets)...)
 	}
 	lines = append(lines, "", summaryField("Save", "write settings and verify read-back"))
 	return lines
+}
+
+func cicdBuildArgsChanged(old, next []client.GitBuildArg) bool {
+	if len(old) != len(next) {
+		return true
+	}
+	values := buildArgumentValues(old)
+	for _, arg := range next {
+		if value, ok := values[arg.Key]; !ok || value != arg.Value {
+			return true
+		}
+	}
+	return false
+}
+
+func cicdSettingsReviewArgumentLines(old, next []client.GitBuildArg, reveal bool) []string {
+	oldValues, nextValues := buildArgumentValues(old), buildArgumentValues(next)
+	keys := make(map[string]bool, len(oldValues)+len(nextValues))
+	for key := range oldValues {
+		keys[key] = true
+	}
+	for key := range nextValues {
+		keys[key] = true
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	var lines []string
+	for _, key := range ordered {
+		oldValue, hadOld := oldValues[key]
+		nextValue, hasNext := nextValues[key]
+		if hadOld && hasNext && oldValue == nextValue {
+			continue
+		}
+		if hadOld {
+			lines = append(lines, "− "+safeText(key)+" = "+cicdReviewArgumentValue(oldValue, reveal))
+		}
+		if hasNext {
+			lines = append(lines, "+ "+safeText(key)+" = "+cicdReviewArgumentValue(nextValue, reveal))
+		}
+	}
+	return lines
+}
+
+func buildArgumentValues(args []client.GitBuildArg) map[string]string {
+	values := make(map[string]string, len(args))
+	for _, arg := range args {
+		values[arg.Key] = arg.Value
+	}
+	return values
+}
+
+func cicdReviewArgumentValue(value string, reveal bool) string {
+	if !reveal {
+		return maskedValueGlyphs
+	}
+	return safeText(value)
 }

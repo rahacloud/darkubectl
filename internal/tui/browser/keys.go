@@ -450,12 +450,33 @@ func (m *browser) handleKeyPressBuildPart0(msg tea.KeyPressMsg) (tea.Model, tea.
 		return m, nil
 	}
 	if m.detail && m.activeAppView == appViewBuilds && m.selectedAppActive() && m.buildDetail == nil {
+		if m.revealSelectedCICDArgument() {
+			return m, nil
+		}
 		return m, m.revealCICDToken()
 	}
 	if m.detail && m.activeAppView == appViewLogs {
 		return m, m.cycleLogPod(1)
 	}
 	return m, nil
+}
+
+func (m *browser) revealSelectedCICDArgument() bool {
+	m.ensureCICDSettings()
+	arg, selected := m.cicdSelectedArgument()
+	if m.cicdHistoryFocus || !selected {
+		return false
+	}
+	if !m.allowSecrets {
+		m.cicdNotice = secretAccessDisabled
+		return true
+	}
+	if m.cicdRevealKey == arg.Key {
+		m.cicdRevealKey = ""
+	} else {
+		m.cicdRevealKey = arg.Key
+	}
+	return true
 }
 
 func (m *browser) revealCICDToken() tea.Cmd {
@@ -474,14 +495,6 @@ func (m *browser) revealCICDToken() tea.Cmd {
 
 func (m *browser) handleKeyPressBuildPart1(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "V" {
-		if m.detail && m.activeAppView == appViewBuilds && m.selectedAppActive() {
-			if !m.allowSecrets {
-				m.cicdNotice = secretAccessDisabled
-				return m, nil
-			}
-			m.cicdReveal = !m.cicdReveal
-			return m, nil
-		}
 		if m.detail && m.activeAppView == appViewLogs {
 			return m, m.cycleLogPod(-1)
 		}
