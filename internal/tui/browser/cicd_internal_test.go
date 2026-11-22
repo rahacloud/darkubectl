@@ -69,11 +69,14 @@ func TestBuildArgumentChangeMarkers(t *testing.T) {
 
 func TestBuildArgumentColumnsAlign(t *testing.T) {
 	t.Parallel()
-	m := &browser{allowWrites: true, cicdSettingsCursor: cicdSettingsFields}
-	m.cicdSettingsDraft.Args = []client.GitBuildArg{{Key: "A_LONG_ARGUMENT_NAME_EXCEEDING_WIDTH", Value: "value"}}
+	m := &browser{allowWrites: true, cicdSettingsCursor: cicdSettingsFields, width: 150}
+	m.cicdSettingsDraft.Args = []client.GitBuildArg{
+		{Key: "NEXT_PUBLIC_METRIX_TOKEN", Value: "value"},
+		{Key: "NEXT_PUBLIC_METRIX_URL", Value: "other"},
+	}
 	m.cicdSettingsOriginal.Args = append([]client.GitBuildArg(nil), m.cicdSettingsDraft.Args...)
 	lines := m.cicdDarkubeArgumentLines(m.cicdSettingsDraft.Args)
-	header, argument, add := ansi.Strip(lines[0]), ansi.Strip(lines[1]), ansi.Strip(lines[2])
+	header, argument, second, add := ansi.Strip(lines[0]), ansi.Strip(lines[1]), ansi.Strip(lines[2]), ansi.Strip(lines[3])
 	column := func(line, value string) int {
 		prefix, _, found := strings.Cut(line, value)
 		if !found {
@@ -83,9 +86,70 @@ func TestBuildArgumentColumnsAlign(t *testing.T) {
 	}
 	keyColumn := column(header, "KEY")
 	valueColumn := column(header, "VALUE")
-	if column(argument, "A_LONG") != keyColumn || column(argument, maskedValueGlyphs) != valueColumn ||
-		column(add, "Add build argument") != keyColumn {
+	if column(argument, "NEXT_PUBLIC_METRIX_TOKEN") != keyColumn || column(second, "NEXT_PUBLIC_METRIX_URL") != keyColumn ||
+		column(argument, maskedValueGlyphs) != valueColumn || column(add, "Add build argument") != keyColumn {
 		t.Fatalf("misaligned columns:\n%s\n%s\n%s", header, argument, add)
+	}
+}
+
+func TestBuildArgumentEditKeepsValueEndVisible(t *testing.T) {
+	t.Parallel()
+	const value = "https://api.example.com/a/very/long/path/endpoint"
+	m := &browser{allowWrites: true, width: 150, cicdSettingsCursor: cicdSettingsFields,
+		cicdEditing: true, cicdEditArg: true, cicdEditField: cicdSettingsFields, cicdEditValue: value}
+	m.cicdSettingsDraft.Args = []client.GitBuildArg{{Key: "API_URL", Value: value}}
+	line := ansi.Strip(m.cicdDarkubeArgumentLines(m.cicdSettingsDraft.Args)[1])
+	if !strings.Contains(line, "/endpoint█") || !strings.Contains(line, "…") || strings.Contains(line, "https://api.example.com") {
+		t.Fatalf("edited value end/cursor not visible: %q", line)
+	}
+}
+
+func TestCICDSettingsCountEachArgumentChange(t *testing.T) {
+	t.Parallel()
+	m := &browser{}
+	m.cicdSettingsOriginal.Args = []client.GitBuildArg{{Key: "EDITED", Value: "old"}, {Key: "REMOVED", Value: "gone"}}
+	m.cicdSettingsDraft.Args = []client.GitBuildArg{{Key: "EDITED", Value: "new"}, {Key: "ADDED", Value: "fresh"}}
+	if got := m.cicdSettingsChangeCount(); got != 3 {
+		t.Fatalf("change count = %d, want 3", got)
+	}
+}
+
+func TestCICDSettingsSummaryRowsAlign(t *testing.T) {
+	t.Parallel()
+	m := &browser{allowSecrets: true}
+	app := client.App{ID: "app-id", BuildMethod: client.BuildMethodWebhook}
+	lines := m.cicdDarkubeInfo(app)
+	valueColumn := func(line, value string) int {
+		prefix, _, found := strings.Cut(ansi.Strip(line), value)
+		if !found {
+			return -1
+		}
+		return ansi.StringWidth(prefix)
+	}
+	if valueColumn(lines[1], "Darkube") != valueColumn(lines[2], "app-id") ||
+		valueColumn(lines[2], "app-id") != valueColumn(lines[3], "Unavailable") {
+		t.Fatalf("summary value columns differ:\n%s\n%s\n%s", ansi.Strip(lines[1]), ansi.Strip(lines[2]), ansi.Strip(lines[3]))
+	}
+}
+
+func TestCICDReviewShowsArgumentValuesOnlyWithSecretAccess(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		secrets bool
+		want    string
+		avoid   string
+	}{{"masked", false, maskedValueGlyphs, "new-secret"}, {"revealed", true, "new-secret", maskedValueGlyphs}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := &browser{allowSecrets: tc.secrets, cicdReview: true}
+			m.cicdSettingsOriginal.Args = []client.GitBuildArg{{Key: "API_URL", Value: "old-secret"}}
+			m.cicdSettingsDraft.Args = []client.GitBuildArg{{Key: "API_URL", Value: "new-secret"}}
+			text := ansi.Strip(strings.Join(m.cicdSettingsReviewLines(), "\n"))
+			if !strings.Contains(text, tc.want) || strings.Contains(text, tc.avoid) {
+				t.Fatalf("unexpected review values: %q", text)
+			}
+		})
 	}
 }
 
@@ -97,6 +161,21 @@ func TestBuildArgumentAddRendersKeyAndValueColumns(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q in %q", want, text)
 		}
+	}
+}
+
+func TestBuildArgumentKeyEntryResizesToTypedKey(t *testing.T) {
+	t.Parallel()
+	const key = "NEXT_PUBLIC_METRIX_TOKEN"
+	m := &browser{allowWrites: true, width: 150, cicdEditing: true, cicdEditAdding: true, cicdEditValue: key}
+	lines := m.cicdDarkubeArgumentLines(nil)
+	if got := ansi.Strip(lines[2]); !strings.Contains(got, key+"█") {
+		t.Fatalf("typed key is clipped before completion: %q", got)
+	}
+	m.handleCICDEditingKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	lines = m.cicdDarkubeArgumentLines(nil)
+	if got := ansi.Strip(lines[2]); !strings.Contains(got, key) {
+		t.Fatalf("staged key is clipped while entering its value: %q", got)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
@@ -247,9 +248,8 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	fields := []cicdDisplayField{{"Repository", redactRepoURL(settings.RepoURL)}, {"Branch", settings.Branch}, {"Dockerfile path",
 		settings.Dockerfile}, {"Build context", settings.Context}, {"Workdir", settings.Workdir}}
 	methodMarker := cicdChangeMarker(m.cicdSettingsOriginal.BuildMethod, settings.BuildMethod)
-	lines := []string{sectionHeading("↻ Darkube · Settings"), summaryField(methodMarker+" Deployment type", "Darkube"), summaryField("App ID",
-		app.ID), m.deployTokenLine()}
-	lines[2], lines[3] = "    "+lines[2], "    "+lines[3]
+	lines := []string{sectionHeading("↻ Darkube · Settings"), m.cicdSummaryLine(methodMarker+" Deployment type", "Darkube"),
+		m.cicdSummaryLine("App ID", app.ID), m.cicdSummaryLine("Deploy token", m.deployTokenValue())}
 	if m.cicdLoading {
 		lines = append(lines, m.loadingMessage("Loading deploy token…"))
 	}
@@ -262,7 +262,12 @@ func (m *browser) cicdDarkubeInfo(app client.App) []string {
 	lines = append(lines, m.cicdSettingLine(cicdDarkubeInfoValue7, autoMarker+" Auto deploy", auto), "", sectionHeading("Build arguments"))
 	lines = append(lines, m.cicdDarkubeArgumentLines(settings.Args)...)
 	if m.cicdSettingsChanged() {
-		lines = append(lines, "", paint(fmt.Sprintf("%d staged setting change(s)", m.cicdSettingsChangeCount()), browserAccent, false))
+		count := m.cicdSettingsChangeCount()
+		unit := "changes"
+		if count == 1 {
+			unit = "change"
+		}
+		lines = append(lines, "", paint(fmt.Sprintf("%d staged setting %s", count, unit), browserAccent, false))
 	}
 	if m.cicdSettingsNotice != "" {
 		lines = append(lines, paint(safeText(m.cicdSettingsNotice), browserMuted, false))
@@ -330,67 +335,122 @@ func (m *browser) cicdAutodeployDisplay(value *bool) string {
 	return display
 }
 
-const cicdArgumentWidth = 20
 const maskedValueGlyphs = "••••••••"
 
+const (
+	cicdArgumentRowPrefixWidth = 4
+	cicdArgumentCellPadding    = 2
+	cicdArgumentMinimumTotal   = 12
+	cicdArgumentMinimumKey     = 8
+	cicdArgumentMaximumKey     = 50
+	cicdArgumentMinimumValue   = 4
+	cicdArgumentLabelWidth     = 20
+)
+
 func (m *browser) cicdDarkubeArgumentLines(args []client.GitBuildArg) []string {
-	lines := []string{"    " + portCell("KEY", false, false, false, cicdArgumentWidth) +
-		portCell("VALUE", false, false, false, cicdArgumentWidth)}
+	keyWidth, valueWidth := m.cicdArgumentColumnWidths(args)
+	lines := []string{"    " + portCell("KEY", false, false, false, keyWidth) +
+		portCell("VALUE", false, false, false, valueWidth)}
 	if len(args) == 0 {
 		lines = append(lines, "    "+paint("No build arguments", browserMuted, false))
 	}
 	for i, arg := range args {
-		change := "+"
-		for _, original := range m.cicdSettingsOriginal.Args {
-			if original.Key == arg.Key {
-				change = " "
-				if original.Value != arg.Value {
-					change = "~"
-				}
-				break
-			}
-		}
-		value := maskedValueGlyphs
-		if m.cicdRevealKey == arg.Key && m.cicdSettingsCursor == cicdSettingsFields+i && !m.cicdHistoryFocus {
-			value = safeText(arg.Value)
-		}
-		if m.cicdEditing && m.cicdEditArg && m.cicdEditField == cicdSettingsFields+i {
-			value = safeText(m.cicdEditValue) + "▏"
-		}
-		lines = append(lines, m.cicdArgumentRow(cicdSettingsFields+i, change, arg.Key, value))
-	}
-	addLabel, addValue := "Add build argument", ""
-	if m.cicdEditing && m.cicdEditAdding {
-		addLabel = m.cicdEditKey
-		addValue = safeText(m.cicdEditValue) + "▏"
-		if m.cicdEditKey == "" {
-			addLabel = m.cicdEditValue + "▏"
-			addValue = ""
-		}
+		lines = append(lines, m.cicdDraftArgumentLine(i, arg, keyWidth, valueWidth))
 	}
 	if m.allowWrites {
-		lines = append(lines, m.cicdArgumentRow(cicdSettingsFields+len(args), "+", addLabel, addValue))
+		lines = append(lines, m.cicdAddArgumentLine(len(args), keyWidth, valueWidth))
 	}
 	for i, original := range m.cicdRemovedArgs() {
-		row := cicdSettingsFields + len(args) + 1 + i
-		value := maskedValueGlyphs
-		if m.cicdRevealKey == original.Key && m.cicdSettingsCursor == row && !m.cicdHistoryFocus {
-			value = safeText(original.Value)
-		}
-		lines = append(lines, m.cicdArgumentRow(row, "-", original.Key, value))
+		lines = append(lines, m.cicdRemovedArgumentLine(i, len(args), original, keyWidth, valueWidth))
 	}
 	return lines
 }
 
-func (m *browser) cicdArgumentRow(row int, change, key, value string) string {
+func (m *browser) cicdDraftArgumentLine(index int, arg client.GitBuildArg, keyWidth, valueWidth int) string {
+	row := cicdSettingsFields + index
+	change := cicdBuildArgumentChange(m.cicdSettingsOriginal.Args, arg)
+	value, editing := maskedValueGlyphs, false
+	if m.cicdRevealKey == arg.Key && m.cicdSettingsCursor == row && !m.cicdHistoryFocus {
+		value = safeText(arg.Value)
+	}
+	if m.cicdEditing && m.cicdEditArg && m.cicdEditField == row {
+		value, editing = safeText(m.cicdEditValue), true
+	}
+	return m.cicdArgumentRow(row, change, arg.Key, value, keyWidth, valueWidth, false, editing)
+}
+
+func cicdBuildArgumentChange(original []client.GitBuildArg, arg client.GitBuildArg) string {
+	for _, old := range original {
+		if old.Key == arg.Key {
+			if old.Value != arg.Value {
+				return "~"
+			}
+			return " "
+		}
+	}
+	return "+"
+}
+
+func (m *browser) cicdAddArgumentLine(count, keyWidth, valueWidth int) string {
+	key, value := "Add build argument", ""
+	keyEditing := false
+	if m.cicdEditing && m.cicdEditAdding {
+		key, value = m.cicdEditKey, safeText(m.cicdEditValue)
+		if m.cicdEditKey == "" {
+			key, value, keyEditing = m.cicdEditValue, "", true
+		}
+	}
+	valueEditing := m.cicdEditing && m.cicdEditAdding && m.cicdEditKey != ""
+	return m.cicdArgumentRow(cicdSettingsFields+count, "+", key, value, keyWidth, valueWidth, keyEditing, valueEditing)
+}
+
+func (m *browser) cicdRemovedArgumentLine(index, count int, arg client.GitBuildArg, keyWidth, valueWidth int) string {
+	row := cicdSettingsFields + count + 1 + index
+	value := maskedValueGlyphs
+	if m.cicdRevealKey == arg.Key && m.cicdSettingsCursor == row && !m.cicdHistoryFocus {
+		value = safeText(arg.Value)
+	}
+	return m.cicdArgumentRow(row, "-", arg.Key, value, keyWidth, valueWidth, false, false)
+}
+
+func (m *browser) cicdArgumentColumnWidths(args []client.GitBuildArg) (int, int) {
+	_, paneWidth, _ := m.paneWidths()
+	if m.width <= 0 {
+		paneWidth = 62
+	}
+	if m.appViewMaximized() {
+		paneWidth = m.width - buildsPaneLinesValue2
+	}
+	// The row prefix takes four cells and each portCell adds two padding cells.
+	total := max(cicdArgumentMinimumTotal, paneWidth-cicdArgumentRowPrefixWidth-2*cicdArgumentCellPadding)
+	longest := utf8.RuneCountInString("Add build argument")
+	for _, arg := range args {
+		longest = max(longest, utf8.RuneCountInString(arg.Key))
+	}
+	if m.cicdEditing && m.cicdEditAdding {
+		if m.cicdEditKey != "" {
+			longest = max(longest, utf8.RuneCountInString(m.cicdEditKey))
+		} else {
+			longest = max(longest, utf8.RuneCountInString(m.cicdEditValue)+1)
+		}
+	}
+	keyWidth := min(max(cicdArgumentMinimumKey, longest), min(cicdArgumentMaximumKey, total-cicdArgumentMinimumValue))
+	return keyWidth, max(cicdArgumentMinimumValue, total-keyWidth)
+}
+
+func (m *browser) cicdArgumentRow(row int, change, key, value string, keyWidth, valueWidth int, keyEditing, valueEditing bool) string {
 	selected := m.allowWrites && row == m.cicdSettingsCursor && !m.cicdHistoryFocus
-	return cursorGlyph(selected) + " " + change + " " + portCell(key, selected, false, change != " ", cicdArgumentWidth) +
-		portCell(value, selected, false, change != " ", cicdArgumentWidth)
+	return cursorGlyph(selected) + " " + change + " " + portCell(key, selected, keyEditing, change != " ", keyWidth) +
+		portCell(value, selected, valueEditing, change != " ", valueWidth)
 }
 
 func (m *browser) deployTokenLine() string {
+	return summaryField("Deploy token", m.deployTokenValue())
+}
+
+func (m *browser) deployTokenValue() string {
 	if !m.allowSecrets {
-		return summaryField("Deploy token", "Hidden · enable --allow-secrets")
+		return "Hidden · enable --allow-secrets"
 	}
 	value := "••••••••••••"
 	if m.cicdToken == "" {
@@ -402,7 +462,12 @@ func (m *browser) deployTokenLine() string {
 	if m.cicdTokenReveal && m.cicdToken != "" {
 		value = safeText(m.cicdToken)
 	}
-	return summaryField("Deploy token", value)
+	return value
+}
+
+func (m *browser) cicdSummaryLine(label, value string) string {
+	labelCell := paint(fmt.Sprintf("%-*s ", cicdArgumentLabelWidth, safeText(label)), browserMuted, true)
+	return "  " + labelCell + paint(safeText(value), browserValue, false)
 }
 
 func (m *browser) cicdSettingLine(row int, label, value string) string {
@@ -411,7 +476,8 @@ func (m *browser) cicdSettingLine(row int, label, value string) string {
 	if selected {
 		marker = "›"
 	}
-	line := fmt.Sprintf("%s %s", marker, summaryField(safeText(label), safeText(value)))
+	labelCell := paint(fmt.Sprintf("%-*s ", cicdArgumentLabelWidth, safeText(label)), browserMuted, true)
+	line := fmt.Sprintf("%s %s", marker, labelCell+paint(safeText(value), browserValue, false))
 	if selected {
 		return selectedRowStyle().Render(line)
 	}
@@ -448,8 +514,23 @@ func (m *browser) cicdSettingsChangeCount() int {
 	if autoDeployLabel(a.Autodeploy) != autoDeployLabel(b.Autodeploy) {
 		n++
 	}
-	if len(a.Args) != len(b.Args) || fmt.Sprint(a.Args) != fmt.Sprint(b.Args) {
-		n++
+	oldArgs := make(map[string]string, len(a.Args))
+	newArgs := make(map[string]string, len(b.Args))
+	for _, arg := range a.Args {
+		oldArgs[arg.Key] = arg.Value
+	}
+	for _, arg := range b.Args {
+		newArgs[arg.Key] = arg.Value
+	}
+	for key, old := range oldArgs {
+		if next, ok := newArgs[key]; !ok || next != old {
+			n++
+		}
+	}
+	for key := range newArgs {
+		if _, ok := oldArgs[key]; !ok {
+			n++
+		}
 	}
 	return n
 }

@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -579,42 +578,69 @@ func (m *browser) cicdSettingsReviewLines() []string {
 	add("Context", a.Context, b.Context)
 	add("Workdir", a.Workdir, b.Workdir)
 	add("Auto deploy", autoDeployLabel(a.Autodeploy), autoDeployLabel(b.Autodeploy))
-	if len(a.Args) != len(b.Args) || fmt.Sprint(a.Args) != fmt.Sprint(b.Args) {
+	if cicdBuildArgsChanged(a.Args, b.Args) {
 		lines = append(lines, sectionHeading("Build arguments"))
-		oldArgs := map[string]string{}
-		newArgs := map[string]string{}
-		for _, arg := range a.Args {
-			oldArgs[arg.Key] = arg.Value
-		}
-		for _, arg := range b.Args {
-			newArgs[arg.Key] = arg.Value
-		}
-		keys := map[string]bool{}
-		for k := range oldArgs {
-			keys[k] = true
-		}
-		for k := range newArgs {
-			keys[k] = true
-		}
-		ordered := make([]string, 0, len(keys))
-		for key := range keys {
-			ordered = append(ordered, key)
-		}
-		sort.Strings(ordered)
-		for _, key := range ordered {
-			old, hadOld := oldArgs[key]
-			next, hasNext := newArgs[key]
-			if hadOld && hasNext && old == next {
-				continue
-			}
-			if hadOld {
-				lines = append(lines, "− "+safeText(key)+" = ••••••••")
-			}
-			if hasNext {
-				lines = append(lines, "+ "+safeText(key)+" = ••••••••")
-			}
-		}
+		lines = append(lines, cicdSettingsReviewArgumentLines(a.Args, b.Args, m.allowSecrets)...)
 	}
 	lines = append(lines, "", summaryField("Save", "write settings and verify read-back"))
 	return lines
+}
+
+func cicdBuildArgsChanged(old, next []client.GitBuildArg) bool {
+	if len(old) != len(next) {
+		return true
+	}
+	values := buildArgumentValues(old)
+	for _, arg := range next {
+		if value, ok := values[arg.Key]; !ok || value != arg.Value {
+			return true
+		}
+	}
+	return false
+}
+
+func cicdSettingsReviewArgumentLines(old, next []client.GitBuildArg, reveal bool) []string {
+	oldValues, nextValues := buildArgumentValues(old), buildArgumentValues(next)
+	keys := make(map[string]bool, len(oldValues)+len(nextValues))
+	for key := range oldValues {
+		keys[key] = true
+	}
+	for key := range nextValues {
+		keys[key] = true
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	var lines []string
+	for _, key := range ordered {
+		oldValue, hadOld := oldValues[key]
+		nextValue, hasNext := nextValues[key]
+		if hadOld && hasNext && oldValue == nextValue {
+			continue
+		}
+		if hadOld {
+			lines = append(lines, "− "+safeText(key)+" = "+cicdReviewArgumentValue(oldValue, reveal))
+		}
+		if hasNext {
+			lines = append(lines, "+ "+safeText(key)+" = "+cicdReviewArgumentValue(nextValue, reveal))
+		}
+	}
+	return lines
+}
+
+func buildArgumentValues(args []client.GitBuildArg) map[string]string {
+	values := make(map[string]string, len(args))
+	for _, arg := range args {
+		values[arg.Key] = arg.Value
+	}
+	return values
+}
+
+func cicdReviewArgumentValue(value string, reveal bool) string {
+	if !reveal {
+		return maskedValueGlyphs
+	}
+	return safeText(value)
 }
