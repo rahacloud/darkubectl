@@ -557,6 +557,10 @@ Everything else — listing, describing, logs, exec, terminals, create, edit, de
 
 ## Development
 
+The recipes are in the `justfile` ([`just`](https://github.com/casey/just)); run `just` to list them. `just check` runs what CI runs: the format check, `golangci-lint`, the build and the race tests. `just lint-md` checks Markdown when documentation changes. `just binary` builds the CLI in `bin/`, and `just install` installs it to the Go binary directory.
+
+The same checks without `just`:
+
 ```sh
 go build ./...
 go test -race ./...
