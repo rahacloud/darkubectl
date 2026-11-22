@@ -19,25 +19,26 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.filter.outputs.go }}
-      embedded: ${{ steps.filter.outputs.embedded }}
       markdown: ${{ steps.filter.outputs.markdown }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
+      # Third-party, and it decides whether the required checks run: pinned to a commit.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           base: ${{ github.event.before }}
           predicate-quantifier: some-with-excludes
           filters: |
+            # Everything is Go input unless it is known documentation. A Markdown file
+            # anywhere else (for example one read by //go:embed) still runs the Go jobs.
             go:
               - '**'
-              - '!**/*.md'
+              - '!*.md'
+              - '!docs/**'
+              - '!internal/tui/*.md'
               - '!.gitignore'
               - '!.markdownlint.jsonc'
-              - '!Makefile'
-            embedded:
-              - 'internal/agentsetup/instructions.md'
-              - 'internal/agentsetup/skill.md'
+              - '!justfile'
             markdown:
               - '**/*.md'
               - '.markdownlint.jsonc'
@@ -48,7 +49,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (needs.changes.result != 'success' ||
-      needs.changes.outputs.go == 'true' || needs.changes.outputs.embedded == 'true')
+      needs.changes.outputs.go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -68,7 +69,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (needs.changes.result != 'success' ||
-      needs.changes.outputs.go == 'true' || needs.changes.outputs.embedded == 'true')
+      needs.changes.outputs.go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
