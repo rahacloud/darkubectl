@@ -557,9 +557,9 @@ Everything else — listing, describing, logs, exec, terminals, create, edit, de
 
 ## Development
 
-Run `make help` to see the available development commands. `make check` runs the formatting check, `go vet`, lint, race tests and build; `make lint-md` checks Markdown when documentation changes. `make binary` builds the CLI in `bin/`, and `make install` installs it to the Go binary directory.
+The recipes are in the `justfile` ([`just`](https://github.com/casey/just)); run `just` to list them. `just check` runs what CI runs: the format check, `golangci-lint`, the build and the race tests. `just lint-md` checks Markdown when documentation changes. `just binary` builds the CLI in `bin/`, and `just install` installs it to the Go binary directory.
 
-The core build and checks can also be run directly:
+The same checks without `just`:
 
 ```sh
 go build ./...

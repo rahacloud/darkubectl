@@ -15,12 +15,12 @@ This guide tells you how to write a change that we can merge quickly. [`README.m
 
 You need the Go version in `go.mod` and [`golangci-lint`](https://golangci-lint.run) v2 (CI uses v2.14.0).
 
+The recipes are in the `justfile`; [`just`](https://github.com/casey/just) is optional, and each recipe is one plain command that you can run by hand.
+
 ```sh
-go build ./...
-go test -race ./...
-golangci-lint run ./...   # must report 0 issues
-gofmt -w .
-npx markdownlint-cli2 "**/*.md"   # only if you changed Markdown
+just check     # format check, golangci-lint (must report 0 issues), build, race tests
+just fmt       # gofmt -w .
+just lint-md   # only if you changed Markdown
 ```
 
 The tests do not need a Hamravesh account and do not use the network. To try a command against the real API, you need your own Darkube tenant (see "Changes that touch the API").
