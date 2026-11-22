@@ -7,17 +7,55 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      markdown: ${{ steps.filter.outputs.markdown }}
+    steps:
+      - uses: actions/checkout@v7
+      # Third-party, and it decides whether the required checks run: pinned to a commit.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          base: ${{ github.event.before }}
+          predicate-quantifier: some-with-excludes
+          filters: |
+            # Everything is Go input unless it is known documentation. A Markdown file
+            # anywhere else (for example one read by //go:embed) still runs the Go jobs.
+            go:
+              - '**'
+              - '!*.md'
+              - '!docs/**'
+              - '!internal/tui/*.md'
+              - '!.gitignore'
+              - '!.markdownlint.jsonc'
+              - '!justfile'
+            markdown:
+              - '**/*.md'
+              - '.markdownlint.jsonc'
+              - '.github/workflows/ci.yml'
+
   lint:
     name: golangci-lint
+    needs: changes
+    if: >-
+      !cancelled() && (needs.changes.result != 'success' ||
+      needs.changes.outputs.go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Require successful change detection
+        if: needs.changes.result != 'success'
+        run: exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
@@ -28,12 +66,37 @@ jobs:
 
   test:
     name: build & test
+    needs: changes
+    if: >-
+      !cancelled() && (needs.changes.result != 'success' ||
+      needs.changes.outputs.go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require successful change detection
+        if: needs.changes.result != 'success'
+        run: exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go build ./...
       - run: go test -race ./...
+
+  markdown:
+    name: markdownlint
+    needs: changes
+    if: >-
+      !cancelled() && (needs.changes.result != 'success' ||
+      needs.changes.outputs.markdown == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful change detection
+        if: needs.changes.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npx --yes markdownlint-cli2@0.23.3 "**/*.md"
