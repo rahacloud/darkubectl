@@ -26,7 +26,12 @@ func (m *browser) storageSaveModalLines() []string {
 	lines := []string{paint(storageIconKey+"  SAVE CREDENTIALS", browserAccent, true), "", "Destination path"}
 	if m.storageDialog == storageDialogSavePath {
 		width := max(1, min(storageModalWidth, m.width-dialogOuterMargin)-dialogInnerPadding)
-		lines = append(lines, paint(ansi.TruncateLeft(safeText(m.storageDraft.text)+"▏", width, "…"), browserBranch, true))
+		input := safeText(m.storageDraft.text) + "▏"
+		if inputWidth := ansi.StringWidth(input); inputWidth > width {
+			remove := inputWidth - width + ansi.StringWidth("…")
+			input = ansi.TruncateLeft(input, remove, "…")
+		}
+		lines = append(lines, paint(input, browserBranch, true))
 		if strings.TrimSpace(m.storageDraft.text) == "" {
 			return append(lines, "", paint("Use .json, .yaml, .yml or .env", browserMuted, false))
 		}
