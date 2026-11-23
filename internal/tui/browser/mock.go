@@ -33,7 +33,7 @@ func newMockBrowser(profile MockProfile) *browser {
 	tenantProfiles := append([]MockTenant(nil), profile.Tenants...)
 	if len(tenantProfiles) == 0 {
 		tenantProfiles = []MockTenant{{Name: profile.Tenant, Apps: profile.Apps, Alerts: profile.Alerts, Namespaces: profile.Namespaces,
-			AppData: profile.AppData, Registries: profile.Registries, Databases: profile.Databases}}
+			AppData: profile.AppData, Registries: profile.Registries, Databases: profile.Databases, Storages: profile.Storages}}
 	}
 	state, options := newMockBrowserData(tenantProfiles)
 	initializeMockBuildData(state)
@@ -55,6 +55,7 @@ func newMockBrowser(profile MockProfile) *browser {
 	setupMockAppsCallbacks(m, state)
 	setupMockBuildsCallbacks(m, state)
 	setupMockRegistryCallbacks(m, state)
+	setupMockStorageCallbacks(m, state)
 	setupMockEnvironmentCallbacks(m, state)
 	setupMockDomainsCallbacks(m, state)
 	setupMockPortsCallbacks(m, state)
@@ -116,6 +117,7 @@ func newMockBrowserData(tenants []MockTenant) (*mockBrowserData, []tenantOption)
 		dataByTenant:            make(map[string]map[string]MockAppData, len(tenants)),
 		namespacesByTenant:      make(map[string][]client.Namespace, len(tenants)),
 		registriesByTenant:      make(map[string][]client.Registry, len(tenants)),
+		storagesByTenant:        make(map[string][]client.Storage, len(tenants)),
 		databasesByTenant:       make(map[string][]client.Database, len(tenants)),
 		registryReposByTenant:   make(map[string]map[string][]client.Repository, len(tenants)),
 		registryDigestsByTenant: make(map[string]map[string][]client.Digest, len(tenants)),
@@ -163,6 +165,7 @@ func populateMockTenantData(state *mockBrowserData, tenant MockTenant) {
 	state.alertsByTenant[tenant.Name] = append([]client.Alert(nil), tenant.Alerts...)
 	state.dataByTenant[tenant.Name] = copyTenantMockAppData(tenant.AppData)
 	state.namespacesByTenant[tenant.Name] = append([]client.Namespace(nil), tenant.Namespaces...)
+	state.storagesByTenant[tenant.Name] = cloneMockStorages(tenant.Storages)
 	populateMockTenantRegistryData(state, tenant)
 	state.egressByTenant[tenant.Name] = make(map[string]client.ClusterEgress)
 	state.domainsByTenant[tenant.Name] = make(map[string]DomainConfig)
@@ -318,6 +321,7 @@ type mockBrowserData struct {
 	dataByTenant            map[string]map[string]MockAppData
 	namespacesByTenant      map[string][]client.Namespace
 	registriesByTenant      map[string][]client.Registry
+	storagesByTenant        map[string][]client.Storage
 	databasesByTenant       map[string][]client.Database
 	registryReposByTenant   map[string]map[string][]client.Repository
 	registryDigestsByTenant map[string]map[string][]client.Digest
@@ -696,6 +700,33 @@ func setupMockRegistryCallbacks(m *browser, state *mockBrowserData) {
 	m.deleteRegistryTags = func(_ context.Context, tenant string, id client.FlexID, image, digest string, tags []string) error {
 		return deleteMockRegistryTags(registryDigestsByTenant, tenant, id, image, digest, tags)
 	}
+}
+
+func setupMockStorageCallbacks(m *browser, state *mockBrowserData) {
+	rows := state.storagesByTenant
+	m.getStorageTraffic = func(context.Context, string, string) ([]client.StorageTrafficSample, error) { return nil, nil }
+	m.saveMockStorages = func(tenant string, current []client.Storage) { rows[tenant] = cloneMockStorages(current) }
+	m.listStorages = func(_ context.Context, tenant string) ([]client.Storage, error) {
+		list, ok := rows[tenant]
+		if !ok {
+			return nil, fmt.Errorf("%w: tenant %q", errTenantQIsNotPresentInThis, tenant)
+		}
+		return cloneMockStorages(list), nil
+	}
+}
+
+func cloneMockStorages(rows []client.Storage) []client.Storage {
+	copyRows := append([]client.Storage(nil), rows...)
+	for i, row := range rows {
+		copyRows[i].Buckets = append([]client.Bucket(nil), row.Buckets...)
+		copyRows[i].Keys = append([]client.StorageKey(nil), row.Keys...)
+		for j, key := range row.Keys {
+			copyRows[i].Keys[j].Actions = append([]string(nil), key.Actions...)
+			copyRows[i].Keys[j].Buckets = append([]string(nil), key.Buckets...)
+		}
+		copyRows[i].Domains = append([]client.StorageDomain(nil), row.Domains...)
+	}
+	return copyRows
 }
 
 func deleteMockRegistryRepository(repositories map[string]map[string][]client.Repository,
