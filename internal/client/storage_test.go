@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rahacloud/darkubectl/internal/client"
 )
@@ -38,6 +39,48 @@ func TestStorageEndpoint(t *testing.T) {
 				t.Errorf("Endpoint() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestStoragePlanAllowancesJoinsAssignments(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/storage/v2/storage/plans/":
+			_, _ = w.Write([]byte(`[{"id":"private","current_plan_id":1},{"id":"missing","current_plan_id":9}]`))
+		case "/storage/v2/billing/plans/":
+			_, _ = w.Write([]byte(`[{"id":1,"disk_capacity":100,"traffic_capacity":400},{"id":2,"disk_capacity":500}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := client.New(srv.URL, client.BearerToken("t"), "acme")
+	got, err := c.StoragePlanAllowances(context.Background())
+	if err != nil || len(got) != 1 || got["private"].DiskGB == nil || *got["private"].DiskGB != 100 ||
+		got["private"].TrafficGB == nil || *got["private"].TrafficGB != 400 {
+		t.Fatalf("plan capacity join = %v, %v", got, err)
+	}
+}
+
+func TestStorageTrafficRatesReadsLatestPerDomain(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/storage/v2/metrics/traffic" || r.URL.Query().Get("storage_id") != "s1" ||
+			r.URL.Query().Get("start_time") == "" || r.URL.Query().Get("end_time") == "" {
+			t.Errorf("unexpected traffic request: %s", r.URL.String())
+		}
+		_, _ = w.Write([]byte(`[{"id":"s1","domains":[{"url":"one.example","traffic_usage":[{"values":[` +
+			`[100,"12"],[110,"20.5"],[115,"NaN"],[105,"5"]]}]},` +
+			`{"url":"two.example","traffic_usage":[{"values":[[109,"30"]]}]}]},` +
+			`{"id":"other","domains":[{"url":"wrong","traffic_usage":[{"values":[[120,"99"]]}]}]}]`))
+	}))
+	defer srv.Close()
+	c := client.New(srv.URL, client.BearerToken("t"), "acme")
+	samples, err := c.StorageTrafficRates(context.Background(), "s1", time.Unix(1, 0), time.Unix(200, 0))
+	if err != nil || len(samples) != 2 || samples[0].Domain != "one.example" || samples[0].BytesPerSecond != 20.5 ||
+		samples[0].ObservedAt.Unix() != 110 || samples[1].Domain != "two.example" || samples[1].BytesPerSecond != 30 {
+		t.Fatalf("traffic samples = %+v, %v", samples, err)
 	}
 }
 
