@@ -323,7 +323,11 @@ func (m *browser) submitStorageWrite() tea.Cmd {
 			}
 			m.storageSecretEndpoint = endpoint
 			m.storageSecretVisible = false
-			m.storageNotice = "Mock key created; credentials are synthetic and shown once"
+			verb := "created"
+			if action == storageOpKeyRotate {
+				verb = "rotated"
+			}
+			m.storageNotice = "Mock key " + verb + "; credentials are synthetic and shown once"
 		} else {
 			m.storageNotice = "Mock storage updated in memory"
 		}
