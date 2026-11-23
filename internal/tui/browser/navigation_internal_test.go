@@ -88,16 +88,16 @@ func TestPageMenuKeepsFocusAndWrapsWithoutEnteringTenantPane(t *testing.T) {
 	t.Parallel()
 	m := &browser{page: pageApps, contextFocused: true, contextRow: 1}
 	m.handleKeyPress(tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.page != pageRegistry || !m.contextFocused || m.contextRow != 5 {
-		t.Fatalf("Up from Apps should wrap within Pages: page=%v focused=%t row=%d", m.page, m.contextFocused, m.contextRow)
+	if m.page != pageStorage || !m.contextFocused || m.contextRow != 6 {
+		t.Fatalf("Up from Apps should wrap to Storage and retain page focus: page=%v focused=%t row=%d", m.page, m.contextFocused, m.contextRow)
 	}
 	m.handleKeyPress(tea.KeyPressMsg{Code: '2', Text: "2"})
-	if !m.contextFocused || m.contextRow != 5 {
+	if !m.contextFocused || m.contextRow != 6 {
 		t.Fatalf("pane 2 shortcut did not focus Pages: focused=%t row=%d", m.contextFocused, m.contextRow)
 	}
 	m.handleKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.page != pageApps || !m.contextFocused || m.contextRow != 1 {
-		t.Fatalf("Down from Registry should wrap to Apps and retain focus: page=%v focused=%t row=%d", m.page, m.contextFocused, m.contextRow)
+		t.Fatalf("Down from Storage should wrap to Apps and retain focus: page=%v focused=%t row=%d", m.page, m.contextFocused, m.contextRow)
 	}
 }
 

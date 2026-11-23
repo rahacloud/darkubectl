@@ -9,9 +9,46 @@ import (
 
 // gateWriteCallbacks keeps the browser's write adapters behind the launch-time
 // opt-in, even when a view or callback is reached without its normal UI guard.
+//
+//nolint:gocyclo,cyclop,funlen // Every callback is wrapped so no storage write bypasses the launch gate.
 func gateWriteCallbacks(options Options) Options {
 	if options.AllowWrites {
 		return options
+	}
+	if options.CreateStorageBucket != nil {
+		options.CreateStorageBucket = func(context.Context, string, string, string) (string, error) {
+			return "", errWriteActionsAreDisabledRelaunchWithAllow
+		}
+	}
+	if options.DeleteStorageBucket != nil {
+		options.DeleteStorageBucket = func(context.Context, string, string, string) error {
+			return errWriteActionsAreDisabledRelaunchWithAllow
+		}
+	}
+	if options.SetStorageBucketPublic != nil {
+		options.SetStorageBucketPublic = func(context.Context, string, string, bool, string) error {
+			return errWriteActionsAreDisabledRelaunchWithAllow
+		}
+	}
+	if options.CreateStorageKey != nil {
+		options.CreateStorageKey = func(context.Context, string, string, []string, []string, string) (*client.StorageKeySecret, error) {
+			return nil, errWriteActionsAreDisabledRelaunchWithAllow
+		}
+	}
+	if options.UpdateStorageKey != nil {
+		options.UpdateStorageKey = func(context.Context, string, string, []string, []string, string) error {
+			return errWriteActionsAreDisabledRelaunchWithAllow
+		}
+	}
+	if options.RotateStorageKey != nil {
+		options.RotateStorageKey = func(context.Context, string, string, string) (*client.StorageKeySecret, error) {
+			return nil, errWriteActionsAreDisabledRelaunchWithAllow
+		}
+	}
+	if options.DeleteStorageKey != nil {
+		options.DeleteStorageKey = func(context.Context, string, string, string) error {
+			return errWriteActionsAreDisabledRelaunchWithAllow
+		}
 	}
 	if options.CreateTicket != nil {
 		options.CreateTicket = func(context.Context, string, client.NewTicket) (string, error) {

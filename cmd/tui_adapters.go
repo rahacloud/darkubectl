@@ -16,6 +16,7 @@ import (
 
 const (
 	newTUIBrowserOptionsValue50 = 50
+	tuiStoragePlanTimeout       = 15 * time.Second
 )
 
 func newTUIBrowserOptions(cmd *cli.Command, cfg *config.Config, credential *tuiCredential, baseURL, org string) browserUI.Options {
@@ -332,7 +333,109 @@ func addTUIAppMutationOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 func addTUIOtherOptions(options *browserUI.Options, deps tuiAdapterDeps) {
 	addTUIClusterOptions(options, deps)
 	addTUIRegistryOptions(options, deps.newClient)
+	addTUIStorageOptions(options, deps.newClient)
 	addTUIAppActionsOptions(options, deps.newClient)
+}
+
+func addTUIStorageOptions(options *browserUI.Options, newClient func(context.Context, string) (*client.Client, error)) {
+	addTUIStorageReadOptions(options, newClient)
+	addTUIStorageWriteOptions(options, newClient)
+}
+
+func addTUIStorageReadOptions(options *browserUI.Options, newClient func(context.Context, string) (*client.Client, error)) {
+	options.GetStoragePlans = func(ctx context.Context, tenant string) (map[string]client.StoragePlanAllowance, error) {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = c.Close() }()
+		planCtx, cancel := context.WithTimeout(ctx, tuiStoragePlanTimeout)
+		defer cancel()
+		return c.StoragePlanAllowances(planCtx)
+	}
+	options.GetStorageTraffic = func(ctx context.Context, tenant, storageID string) ([]client.StorageTrafficSample, error) {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = c.Close() }()
+		now := time.Now()
+		rows, err := c.StorageTrafficRates(ctx, storageID, now.Add(-time.Hour), now)
+		return rows, tuiAuthError(err)
+	}
+	options.ListStorages = func(ctx context.Context, tenant string) ([]client.Storage, error) {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = c.Close() }()
+		rows, err := c.Storages(ctx)
+		return rows, tuiAuthError(err)
+	}
+}
+
+func addTUIStorageWriteOptions(options *browserUI.Options, newClient func(context.Context, string) (*client.Client, error)) {
+	options.CreateStorageBucket = func(ctx context.Context, tenant, storageID, name string) (string, error) {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = c.Close() }()
+		id, err := c.CreateBucket(ctx, storageID, name)
+		return id, tuiAuthError(err)
+	}
+	options.DeleteStorageBucket = func(ctx context.Context, tenant, id, otp string) error {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = c.Close() }()
+		return tuiAuthError(c.DeleteBucket(ctx, id, otp))
+	}
+	options.SetStorageBucketPublic = func(ctx context.Context, tenant, id string, public bool, otp string) error {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = c.Close() }()
+		return tuiAuthError(c.SetBucketPublic(ctx, id, public, otp))
+	}
+	options.CreateStorageKey = func(
+		ctx context.Context, tenant, name string, actions, buckets []string, otp string,
+	) (*client.StorageKeySecret, error) {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = c.Close() }()
+		key, err := c.CreateStorageKey(ctx, name, actions, buckets, otp)
+		return key, tuiAuthError(err)
+	}
+	options.UpdateStorageKey = func(ctx context.Context, tenant, name string, actions, buckets []string, otp string) error {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = c.Close() }()
+		return tuiAuthError(c.UpdateStorageKey(ctx, name, actions, buckets, otp))
+	}
+	options.RotateStorageKey = func(ctx context.Context, tenant, name, otp string) (*client.StorageKeySecret, error) {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = c.Close() }()
+		key, err := c.RotateStorageKey(ctx, name, otp)
+		return key, tuiAuthError(err)
+	}
+	options.DeleteStorageKey = func(ctx context.Context, tenant, name, otp string) error {
+		c, err := newClient(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = c.Close() }()
+		return tuiAuthError(c.DeleteStorageKey(ctx, name, otp))
+	}
 }
 
 func addTUIClusterOptions(options *browserUI.Options, deps tuiAdapterDeps) {

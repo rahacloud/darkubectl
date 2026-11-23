@@ -30,6 +30,7 @@ type MockProfile struct {
 	AppData    map[string]MockAppData
 	Registries []MockRegistry
 	Databases  []client.Database
+	Storages   []client.Storage
 }
 
 // MockAppData contains offline application fixture data.
@@ -59,6 +60,7 @@ type MockTenant struct {
 	AppData    map[string]MockAppData
 	Registries []MockRegistry
 	Databases  []client.Database
+	Storages   []client.Storage
 }
 
 // MockRegistry contains an offline registry fixture.
@@ -82,6 +84,7 @@ type mockProfileFile struct {
 	Tenants    []mockProfileTenant    `yaml:"tenants"`
 	Registries []mockProfileRegistry  `yaml:"registries"`
 	Databases  []client.Database      `yaml:"databases"`
+	Storages   []client.Storage       `yaml:"storages"`
 }
 
 type mockProfileTenant struct {
@@ -91,6 +94,7 @@ type mockProfileTenant struct {
 	Namespaces []mockProfileNamespace `yaml:"namespaces"`
 	Registries []mockProfileRegistry  `yaml:"registries"`
 	Databases  []client.Database      `yaml:"databases"`
+	Storages   []client.Storage       `yaml:"storages"`
 }
 
 //nolint:tagliatelle // YAML keys are part of the versioned mock profile format.
@@ -431,7 +435,7 @@ func decodeMockProfile(data []byte) (mockProfileFile, error) {
 
 func mockProfileMixesTopLevelTenants(input mockProfileFile) bool {
 	return strings.TrimSpace(input.Tenant) != "" || len(input.Apps) > 0 || len(input.Alerts) > 0 ||
-		len(input.Namespaces) > 0 || len(input.Registries) > 0
+		len(input.Namespaces) > 0 || len(input.Registries) > 0 || len(input.Storages) > 0
 }
 
 func parseMockTenants(input []mockProfileTenant) (MockProfile, error) {
@@ -460,8 +464,11 @@ func parseMockTenants(input []mockProfileTenant) (MockProfile, error) {
 		}
 		tenants = append(tenants, tenant)
 	}
-	return MockProfile{Tenant: tenants[0].Name, Apps: tenants[0].Apps, Alerts: tenants[0].Alerts,
-		Namespaces: tenants[0].Namespaces, Registries: tenants[0].Registries, Databases: tenants[0].Databases, Tenants: tenants}, nil
+	return MockProfile{
+		Tenant: tenants[0].Name, Apps: tenants[0].Apps, Alerts: tenants[0].Alerts,
+		Namespaces: tenants[0].Namespaces, Registries: tenants[0].Registries,
+		Databases: tenants[0].Databases, Storages: tenants[0].Storages, Tenants: tenants,
+	}, nil
 }
 
 func convertMockTenant(raw mockProfileTenant, name string) (MockTenant, error) {
@@ -486,7 +493,7 @@ func convertMockTenant(raw mockProfileTenant, name string) (MockTenant, error) {
 	}
 	return MockTenant{Name: name, Apps: apps, Alerts: alerts, Namespaces: mergeNamespaces(namespaces,
 		namespacesFromApps(apps)), AppData: convertMockAppData(raw.Apps), Registries: registries,
-		Databases: append([]client.Database(nil), raw.Databases...)}, nil
+		Databases: append([]client.Database(nil), raw.Databases...), Storages: append([]client.Storage(nil), raw.Storages...)}, nil
 }
 
 func parseTopLevelMockProfile(input mockProfileFile) (MockProfile, error) {
@@ -518,7 +525,7 @@ func parseTopLevelMockProfile(input mockProfileFile) (MockProfile, error) {
 	}
 	return MockProfile{Tenant: input.Tenant, Apps: apps, Alerts: alerts, Namespaces: mergeNamespaces(namespaces,
 		namespacesFromApps(apps)), AppData: appData, Registries: registries, Databases: append([]client.Database(nil),
-		input.Databases...)}, nil
+		input.Databases...), Storages: append([]client.Storage(nil), input.Storages...)}, nil
 }
 
 func convertMockAppData(input []mockProfileApp) map[string]MockAppData {

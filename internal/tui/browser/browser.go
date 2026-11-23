@@ -42,6 +42,16 @@ type Options struct {
 	LocalTenants             []string
 	AllowWrites              bool
 	AllowSecrets             bool
+	ListStorages             func(context.Context, string) ([]client.Storage, error)
+	GetStoragePlans          func(context.Context, string) (map[string]client.StoragePlanAllowance, error)
+	GetStorageTraffic        func(context.Context, string, string) ([]client.StorageTrafficSample, error)
+	CreateStorageBucket      func(context.Context, string, string, string) (string, error)
+	DeleteStorageBucket      func(context.Context, string, string, string) error
+	SetStorageBucketPublic   func(context.Context, string, string, bool, string) error
+	CreateStorageKey         func(context.Context, string, string, []string, []string, string) (*client.StorageKeySecret, error)
+	UpdateStorageKey         func(context.Context, string, string, []string, []string, string) error
+	RotateStorageKey         func(context.Context, string, string, string) (*client.StorageKeySecret, error)
+	DeleteStorageKey         func(context.Context, string, string, string) error
 	ListTickets              func(context.Context, string, string, bool) (client.TicketList, error)
 	GetTicket                func(context.Context, string, string) (client.Ticket, error)
 	GetTicketComments        func(context.Context, string, string) ([]client.TicketComment, error)
@@ -140,6 +150,13 @@ func RunBrowser(ctx context.Context, options Options) error {
 		options.ListRegistryRepositories, options.ListRegistryDigests
 	m.deleteRegistryRepository, m.deleteRegistryDigests, m.deleteRegistryTags = options.DeleteRegistryRepository,
 		options.DeleteRegistryDigests, options.DeleteRegistryTags
+	m.listStorages = options.ListStorages
+	m.getStoragePlans = options.GetStoragePlans
+	m.getStorageTraffic = options.GetStorageTraffic
+	m.createStorageBucket, m.deleteStorageBucket, m.setStorageBucketPublic = options.CreateStorageBucket,
+		options.DeleteStorageBucket, options.SetStorageBucketPublic
+	m.createStorageKey, m.updateStorageKey, m.rotateStorageKey, m.deleteStorageKey = options.CreateStorageKey,
+		options.UpdateStorageKey, options.RotateStorageKey, options.DeleteStorageKey
 	if options.RestartApp != nil {
 		m.restartApp = func(tenant, id string) error { return options.RestartApp(ctx, tenant, id) }
 	}

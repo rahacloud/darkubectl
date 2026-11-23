@@ -103,6 +103,10 @@ func (m *browser) breadcrumb() string {
 		parts = append(parts, "Registry")
 		return m.contextBreadcrumb(parts)
 	}
+	if m.page == pageStorage {
+		parts = append(parts, "Object Storage")
+		return m.contextBreadcrumb(parts)
+	}
 	if m.page == pageDB {
 		parts = append(parts, "DB")
 		return m.contextBreadcrumb(parts)

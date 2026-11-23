@@ -112,6 +112,7 @@ const (
 	hintHorizontalTabs = "h/l"
 	hintScroll         = "scroll"
 	hintSave           = "save"
+	hintContinue       = "continue"
 	hintOpen           = "open"
 	hintSelectSetting  = "select setting"
 	hintPanes          = "panes"

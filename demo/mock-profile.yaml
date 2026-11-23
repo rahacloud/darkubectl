@@ -1,6 +1,41 @@
 version: 1
 tenants:
   - name: hamravesh
+    storages:
+      - id: storage-mock-1
+        name: Tehran - Asiatech
+        storageClass: HICap
+        isShared: true
+        buckets:
+          - id: bucket-mock-media
+            name: media-prod
+            status: active
+            size: "13314398617"
+            isPublic: false
+            createTime: '2026-11-01T10:00:00Z'
+          - id: bucket-mock-backups
+            name: backups
+            status: active
+            size: "536870912"
+            isPublic: false
+            createTime: '2026-11-03T10:00:00Z'
+        keys:
+          - name: app-reader
+            actions: [Read, List]
+            buckets: [media-prod]
+        domains:
+          - url: s3.example.invalid
+            custom: false
+            isDnsChallenged: true
+      - id: storage-mock-2
+        name: Empty HIOps
+        storageClass: HIOps
+        isShared: false
+        planDiskGB: 100
+        planTrafficGB: 400
+        buckets: []
+        keys: []
+        domains: []
     databases:
       - id: db-orders
         name: orders-db

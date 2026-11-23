@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // The object-storage API is its own tree under /storage/v2, not part of
@@ -50,14 +53,124 @@ type StorageDomain struct {
 
 // Storage is one object-storage cluster the tenant can use.
 type Storage struct {
-	ID             string          `json:"id"              yaml:"id"`
-	Name           string          `json:"name"            yaml:"name"`
-	StorageClass   string          `json:"storage_class"   yaml:"storageClass"`
-	IsShared       bool            `json:"is_shared"       yaml:"isShared"`
-	TraefikAddress string          `json:"traefik_address" yaml:"traefikAddress"`
-	Buckets        []Bucket        `json:"buckets"         yaml:"buckets"`
-	Keys           []StorageKey    `json:"keys"            yaml:"keys"`
-	Domains        []StorageDomain `json:"domains"         yaml:"domains"`
+	ID             string          `json:"id"                        yaml:"id"`
+	Name           string          `json:"name"                      yaml:"name"`
+	StorageClass   string          `json:"storage_class"             yaml:"storageClass"`
+	IsShared       bool            `json:"is_shared"                 yaml:"isShared"`
+	TraefikAddress string          `json:"traefik_address"           yaml:"traefikAddress"`
+	Buckets        []Bucket        `json:"buckets"                   yaml:"buckets"`
+	Keys           []StorageKey    `json:"keys"                      yaml:"keys"`
+	Domains        []StorageDomain `json:"domains"                   yaml:"domains"`
+	PlanDiskGB     *float64        `json:"plan_disk_gb,omitempty"    yaml:"planDiskGB,omitempty"`
+	PlanTrafficGB  *float64        `json:"plan_traffic_gb,omitempty" yaml:"planTrafficGB,omitempty"`
+}
+
+// StoragePlanAllowance holds billing-plan allowances in GB, not usage or hard quotas.
+type StoragePlanAllowance struct {
+	DiskGB    *float64
+	TrafficGB *float64
+}
+
+// StoragePlanAllowances joins storage assignments to their current billing plans.
+// Shared storages may have no assignment.
+func (c *Client) StoragePlanAllowances(ctx context.Context) (map[string]StoragePlanAllowance, error) {
+	var assignments []struct {
+		ID            string `json:"id"`
+		CurrentPlanID *int   `json:"current_plan_id"`
+	}
+	if err := c.getJSON(ctx, "/storage/v2/storage/plans/", nil, &assignments); err != nil {
+		return nil, err
+	}
+	if len(assignments) == 0 {
+		return map[string]StoragePlanAllowance{}, nil
+	}
+	var plans []struct {
+		ID              int      `json:"id"`
+		DiskCapacity    *float64 `json:"disk_capacity"`
+		TrafficCapacity *float64 `json:"traffic_capacity"`
+	}
+	if err := c.getJSON(ctx, "/storage/v2/billing/plans/", nil, &plans); err != nil {
+		return nil, err
+	}
+	byID := make(map[int]StoragePlanAllowance, len(plans))
+	for _, plan := range plans {
+		byID[plan.ID] = StoragePlanAllowance{DiskGB: plan.DiskCapacity, TrafficGB: plan.TrafficCapacity}
+	}
+	capacities := make(map[string]StoragePlanAllowance, len(assignments))
+	for _, assignment := range assignments {
+		if assignment.CurrentPlanID != nil {
+			if capacity, ok := byID[*assignment.CurrentPlanID]; ok {
+				capacities[assignment.ID] = capacity
+			}
+		}
+	}
+	return capacities, nil
+}
+
+// StorageTrafficSample is the latest reported traffic rate for one domain.
+type StorageTrafficSample struct {
+	Domain         string
+	BytesPerSecond float64
+	ObservedAt     time.Time
+}
+
+// StorageTrafficRates reads the console's traffic chart for the given time window.
+// The API reports rates, not the amount consumed against the traffic plan.
+func (c *Client) StorageTrafficRates(ctx context.Context, storageID string, start, end time.Time) ([]StorageTrafficSample, error) {
+	query := url.Values{"storage_id": {storageID}, "start_time": {start.UTC().Format(time.RFC3339)},
+		"end_time": {end.UTC().Format(time.RFC3339)}}
+	var rows []struct {
+		ID      string `json:"id"`
+		Domains []struct {
+			URL          string `json:"url"`
+			TrafficUsage []struct {
+				Values [][]json.RawMessage `json:"values"`
+			} `json:"traffic_usage"`
+		} `json:"domains"`
+	}
+	if err := c.getJSON(ctx, "/storage/v2/metrics/traffic", query, &rows); err != nil {
+		return nil, err
+	}
+	var samples []StorageTrafficSample
+	for _, row := range rows {
+		if row.ID != storageID {
+			continue
+		}
+		for _, domain := range row.Domains {
+			if len(domain.TrafficUsage) == 0 {
+				continue
+			}
+			if latest, ok := latestStorageTrafficSample(domain.URL, domain.TrafficUsage[0].Values); ok {
+				samples = append(samples, latest)
+			}
+		}
+	}
+	return samples, nil
+}
+
+func latestStorageTrafficSample(domain string, points [][]json.RawMessage) (StorageTrafficSample, bool) {
+	const pointFields = 2
+	var latest StorageTrafficSample
+	for _, point := range points {
+		if len(point) != pointFields {
+			continue
+		}
+		var timestamp float64
+		var raw string
+		if json.Unmarshal(point[0], &timestamp) != nil || json.Unmarshal(point[1], &raw) != nil {
+			continue
+		}
+		rate, err := strconv.ParseFloat(raw, 64)
+		if err != nil || rate < 0 || math.IsNaN(rate) || math.IsInf(rate, 0) ||
+			timestamp <= 0 || math.IsNaN(timestamp) || math.IsInf(timestamp, 0) {
+			continue
+		}
+		observed := time.Unix(int64(timestamp), 0)
+		if observed.After(latest.ObservedAt) {
+			latest = StorageTrafficSample{Domain: domain, BytesPerSecond: rate, ObservedAt: observed}
+		}
+	}
+	return latest, !latest.ObservedAt.IsZero()
 }
 
 // Endpoint returns the S3 endpoint URL to configure a client with, or "" when

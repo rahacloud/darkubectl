@@ -28,6 +28,7 @@ const (
 	contextPaneHeightDivisor      = 2
 )
 
+//nolint:gocyclo,cyclop // Page-specific mouse routing stays with shared pane hit geometry.
 func (m *browser) handleBrowserMouse(msg tea.MouseClickMsg) tea.Cmd {
 	if msg.Button != tea.MouseLeft || m.help || m.selectingTenant || m.selectingNamespace || m.filterEditing {
 		return nil
@@ -43,6 +44,9 @@ func (m *browser) handleBrowserMouse(msg tea.MouseClickMsg) tea.Cmd {
 	}
 	if m.page == pageRegistry {
 		return m.handleRegistryMouse(msg)
+	}
+	if m.page == pageStorage {
+		return m.handleStorageMouse(msg)
 	}
 	if m.detail && m.appViewMaximized() && !m.writeDisabledNotice() {
 		return nil
@@ -394,6 +398,7 @@ func (m *browser) browserBodyY() int {
 	return y
 }
 
+//nolint:gocyclo,cyclop // Page-specific wheel routing stays with shared pane scrolling.
 func (m *browser) handleBrowserWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	if m.help || m.selectingTenant || m.selectingNamespace || m.filterEditing {
 		return nil
@@ -435,6 +440,18 @@ func (m *browser) handleBrowserWheel(msg tea.MouseWheelMsg) tea.Cmd {
 		return m.handleDatabaseWheel(msg, delta, bodyY, appsWidth, contextWidth)
 	case pageRegistry:
 		return m.handleRegistryWheel(msg, delta, appsWidth, contextWidth)
+	case pageStorage:
+		if m.storageBusy || m.storageDialog != "" || m.storageSecret != nil {
+			return nil
+		}
+		listLeft, listRight := browserWheelListBounds(appsWidth, contextWidth)
+		if msg.X >= listLeft && msg.X < listRight {
+			m.moveStorageWheel(delta)
+			return m.loadStorageTraffic(false)
+		} else if msg.X >= listRight+1 {
+			m.storageDetailScroll = max(0, m.storageDetailScroll+delta*3)
+		}
+		return nil
 	default:
 		return m.handleAppsWheel(msg, delta, bodyY, appsWidth, summaryWidth, contextWidth)
 	}

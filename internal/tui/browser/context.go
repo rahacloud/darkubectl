@@ -76,6 +76,7 @@ func (m *browser) pagesPaneLines(height int) []string {
 		{"▱", "Tickets"},
 		{"▤", "DB"},
 		{"◇", "Registry"},
+		{storageIconBucket, "Storage"},
 	}
 	lines := make([]string, 0, 1+len(pages))
 	lines = append(lines, m.contextRowLine("▦ Apps", width, m.contextFocused && m.contextRow == 1))
@@ -117,8 +118,11 @@ func (m *browser) contextRowLine(value string, width int, selected bool) string 
 	if strings.HasPrefix(value, "▤ DB") && m.page == pageDB {
 		return paint(line, browserSuccess, true)
 	}
+	if strings.HasPrefix(value, storageIconBucket+" Storage") && m.page == pageStorage {
+		return paint(line, browserSuccess, true)
+	}
 	if strings.HasPrefix(value, "∿ ") || strings.HasPrefix(value, "▱ ") || strings.HasPrefix(value, "▤ ") ||
-		strings.HasPrefix(value, "◇ ") {
+		strings.HasPrefix(value, "◇ ") || strings.HasPrefix(value, "▣ ") {
 		return paint(line, browserMuted, false)
 	}
 	return line
