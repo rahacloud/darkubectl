@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	activatePageRowValue2 = 2
-	activatePageRowValue4 = 4
-	activatePageRowValue5 = 5
-	focusPaneValue2       = 2
-	focusPaneValue3       = 3
-	pageTicketsContextRow = 3
+	activatePageRowValue2  = 2
+	activatePageRowValue4  = 4
+	activatePageRowValue5  = 5
+	activatePageRowStorage = 6
+	focusPaneValue2        = 2
+	focusPaneValue3        = 3
+	pageTicketsContextRow  = 3
 )
 
 func (m *browser) cycleFocus(reverse bool) tea.Cmd {
@@ -46,6 +47,9 @@ func (m *browser) cycleFocus(reverse bool) tea.Cmd {
 			case pageRegistry:
 				m.contextFocused = true
 				m.contextRow = 5
+			case pageStorage:
+				m.contextFocused = true
+				m.contextRow = 6
 			default:
 				m.contextFocused = true
 				m.contextRow = 1
@@ -96,6 +100,8 @@ func (m *browser) focusPane(index int) tea.Cmd {
 			m.contextRow = 4
 		case pageRegistry:
 			m.contextRow = 5
+		case pageStorage:
+			m.contextRow = 6
 		default:
 			m.contextRow = 1
 		}
@@ -112,7 +118,7 @@ func (m *browser) focusPane(index int) tea.Cmd {
 }
 
 func (m *browser) loadFocusedSummary() tea.Cmd {
-	if m.page == pageActivity || m.page == pageTickets || m.page == pageDB || m.page == pageRegistry {
+	if m.page == pageActivity || m.page == pageTickets || m.page == pageDB || m.page == pageRegistry || m.page == pageStorage {
 		return nil
 	}
 	return m.loadSelectedSummary()
@@ -166,6 +172,14 @@ func (m *browser) activatePageRow(row int) tea.Cmd {
 		m.detail = false
 		m.registryNotice = ""
 		return m.loadRegistry(false)
+	case activatePageRowStorage:
+		m.page = pageStorage
+		m.contextFocused = true
+		m.contextRow = activatePageRowStorage
+		m.selectingTenant = false
+		m.detail = false
+		m.storageKind = "buckets"
+		return m.loadStorages(false)
 	default:
 		return nil
 	}
@@ -231,6 +245,7 @@ func (m *browser) chooseTenant(name string) tea.Cmd {
 func (m *browser) resetTenantContext() {
 	m.cancelRequests(true)
 	m.registryState.reset()
+	m.resetStorageContext()
 	m.registries = nil
 	m.registryRepos = nil
 	m.registryDigests = nil
@@ -292,6 +307,9 @@ func (m *browser) loadTenantPage(cmd tea.Cmd) tea.Cmd {
 	}
 	if m.page == pageRegistry {
 		return tea.Batch(cmd, m.loadRegistry(true))
+	}
+	if m.page == pageStorage {
+		return tea.Batch(cmd, m.loadStorages(true))
 	}
 	if m.page == pageDB {
 		return tea.Batch(cmd, m.loadDatabases(true))

@@ -130,6 +130,12 @@ func (m *browser) viewBodyLines(bodyHeight int) []string {
 		left = m.registryPaneLines(paneHeight)
 		right = m.registryDetailLines(paneHeight)
 		return m.splitPanes(left, right, bodyHeight)
+	case pageStorage:
+		left, right = m.storagePaneLines(paneHeight), m.storageDetailViewport(m.storageDetailLines(paneHeight), paneHeight)
+		if m.width < viewValue100 {
+			return m.splitDatabaseCompact(left, right, bodyHeight)
+		}
+		return m.splitPanes(left, right, bodyHeight)
 	case pageDB:
 		left = m.databasePaneLines(paneHeight)
 		right = m.databaseDetailLines(paneHeight)
@@ -140,6 +146,26 @@ func (m *browser) viewBodyLines(bodyHeight int) []string {
 	default:
 		return m.appViewBodyLines(left, right, paneHeight, bodyHeight)
 	}
+}
+
+func (m *browser) storageDetailViewport(lines []string, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	if m.storageDialog == storageDialogKeyForm {
+		row := storageFormFieldRow(m.storageDraft.field)
+		if row < m.storageDetailScroll {
+			m.storageDetailScroll = row
+		}
+		if row >= m.storageDetailScroll+height {
+			m.storageDetailScroll = row - height + 1
+		}
+	}
+	maxScroll := max(0, len(lines)-height)
+	m.storageDetailScroll = min(max(0, m.storageDetailScroll), maxScroll)
+	start := m.storageDetailScroll
+	end := min(len(lines), start+height)
+	return fitPaneLines(lines[start:end], height)
 }
 
 func (m *browser) appViewBodyLines(left, right []string, paneHeight, bodyHeight int) []string {
@@ -188,6 +214,7 @@ func (m *browser) viewOverlayLines(lines []string) []string {
 		{m.help, m.helpModal},
 		{m.registryTagMode, m.registryTagOverlay},
 		{m.registryConfirm, m.registryConfirmation},
+		{m.page == pageStorage && m.storageIsModal(), m.storageActionModal},
 	} {
 		if overlay.active {
 			return overlay.render(lines)
@@ -398,8 +425,17 @@ func (m *browser) splitPanes(apps, summary []string, height int) []string {
 	if m.page == pageApps && m.writeDisabledNotice() {
 		appsFooter = "Use --allow-writes"
 	}
+	viewFooter := m.paneMessage
+	if m.page == pageStorage {
+		viewFooter = ""
+		if m.detail || m.storageSecret != nil {
+			viewFooter = m.storagePaneStatus()
+		} else {
+			appsFooter = m.storagePaneStatus()
+		}
+	}
 	appsPane := renderPaneWithFooter(apps, appsWidth, height-splitPanesValue2, appTitle, !m.contextFocused && !m.detail, appsFooter)
-	viewPane := renderPaneWithFooter(summary, summaryWidth, height-splitPanesValue2, viewTitle, m.detail, m.paneMessage)
+	viewPane := renderPaneWithFooter(summary, summaryWidth, height-splitPanesValue2, viewTitle, m.detail, viewFooter)
 	lines := make([]string, height)
 	for i := range lines {
 		left, center, right := contextPane[i], appsPane[i], viewPane[i]
@@ -424,6 +460,10 @@ func (m *browser) paneTitles(appsWidth, summaryWidth int) (string, string) {
 			viewTitle = "[4] MANIFEST DETAILS"
 		}
 	}
+	if m.page == pageStorage {
+		appTitle = "[3] STORAGE TREE"
+		viewTitle = "[4] STORAGE DETAILS"
+	}
 	if m.page == pageDB {
 		appTitle = "[3] DATABASES"
 		viewTitle = "[4] DATABASE DETAILS"
@@ -447,9 +487,15 @@ func (m *browser) paneTitles(appsWidth, summaryWidth int) (string, string) {
 	return appTitle, viewTitle
 }
 
+func (m *browser) compactContentWidth() int {
+	const horizontalBordersAndGap = 5
+	_, _, contextWidth := m.paneWidths()
+	return max(1, m.width-contextWidth-horizontalBordersAndGap)
+}
+
 func (m *browser) splitDatabaseCompact(list, details []string, height int) []string {
 	_, _, contextWidth := m.paneWidths()
-	contentWidth := max(1, m.width-contextWidth-splitDatabaseCompactValue4)
+	contentWidth := m.compactContentWidth()
 	tenantHeight := max(splitDatabaseCompactValue4, (height-1)/layoutContextHeightDivisor)
 	pagesHeight := max(splitDatabaseCompactValue4, height-1-tenantHeight)
 	tenant := renderPane(m.tenantPaneLines(max(1, tenantHeight-renderPaneValue2)), contextWidth, tenantHeight-renderPaneValue2,
@@ -460,15 +506,25 @@ func (m *browser) splitDatabaseCompact(list, details []string, height int) []str
 	context = append(context, strings.Repeat(" ", contextWidth+renderPaneValue2))
 	context = append(context, pages...)
 	content, title := list, "[3] DATABASES"
+	if m.page == pageStorage {
+		title = "[3] STORAGE TREE"
+	}
 	focused := !m.contextFocused && !m.detail
 	if m.detail {
 		content, title, focused = details, "[4] DATABASE DETAILS", true
+		if m.page == pageStorage {
+			title = "[4] STORAGE DETAILS"
+		}
 	}
-	if !m.detail {
+	if !m.detail && m.page != pageStorage {
 		title = borderTitleWithControls(title, m.databaseFilterLine(), m.databaseSortLine(),
 			compactSortIndicator(m.databaseSortDescending), contentWidth)
 	}
-	pane := renderPane(content, contentWidth, height-splitDatabaseCompactValue2, title, focused)
+	footer := ""
+	if m.page == pageStorage {
+		footer = m.storagePaneStatus()
+	}
+	pane := renderPaneWithFooter(content, contentWidth, height-splitDatabaseCompactValue2, title, focused, footer)
 	lines := make([]string, height)
 	for i := range lines {
 		lines[i] = context[i] + " " + pane[i]
@@ -634,6 +690,8 @@ func (m *browser) footerLine() string {
 		return m.ticketFooterLine(left)
 	case pageRegistry:
 		return m.registryFooterLine(left)
+	case pageStorage:
+		return m.storageFooterLine(left)
 	case pageDB:
 		return m.databaseFooterLine(left)
 	default:
@@ -761,7 +819,7 @@ func (m *browser) modalFooterHintStates() []modalFooterHintState {
 		{m.actionBusy, []keyHint{{"…", "action in progress"}}},
 		{m.actionMenu, []keyHint{{hintEscape, hintClose}}},
 		{m.buildActionMenu, []keyHint{{"↑↓", hintChoose}, {hintEnter, hintSelect}, {hintClick, hintSelect}, {hintEscape, hintClose}}},
-		{m.buildConfirm != buildActionNone, []keyHint{{"←→", "cancel / confirm"}, {"↵", "continue"}, {hintEscape, hintCancel}}},
+		{m.buildConfirm != buildActionNone, []keyHint{{"←→", "cancel / confirm"}, {"↵", hintContinue}, {hintEscape, hintCancel}}},
 		{m.confirmAction == appActionRestart, []keyHint{{"y", "restart"}, {"n", hintCancel}, {"↵", "confirm"}, {hintEscape, hintCancel}}},
 		{m.confirmAction == appActionDelete, []keyHint{{hintTextType, "app name"}, {hintTab, actionDelete}, {hintClick, actionDelete},
 			{hintEscape, hintCancel}}},
@@ -784,7 +842,7 @@ func (m *browser) modalFooterHintStates() []modalFooterHintState {
 			{hintEscape, hintBack}}},
 		{m.detail && m.activeAppView == appViewPorts && m.portEditing, []keyHint{{hintTextType, labelValue}, {hintEnter, "stage cell"},
 			{hintCtrlU, hintClear}, {hintEscape, hintCancel}}},
-		{m.detail && m.activeAppView == appViewUsage && m.resourceReview, []keyHint{{hintEnterOrY, "save"}, {hintEscOrNo, hintBack}}},
+		{m.detail && m.activeAppView == appViewUsage && m.resourceReview, []keyHint{{hintEnterOrY, hintSave}, {hintEscOrNo, hintBack}}},
 		{m.detail && m.activeAppView == appViewUsage && m.resourceEditing, []keyHint{{hintTextType, labelValue}, {hintEnter, hintStage},
 			{hintCtrlU, hintClear}, {hintEscape, hintCancel}}},
 		{m.detail && m.activeAppView == appViewUsage && m.resourcePlanPicker, []keyHint{{hintVerticalSelect, hintChoosePlan}, {hintEnter,
@@ -994,6 +1052,9 @@ func (m *browser) keyHints(forHelp bool) []keyHint {
 }
 
 func (m *browser) contextKeyHints(forHelp bool) []keyHint {
+	if m.page == pageStorage {
+		return m.storageHints(forHelp)
+	}
 	for _, state := range m.contextKeyHintStates(forHelp) {
 		if state.active {
 			return state.hints

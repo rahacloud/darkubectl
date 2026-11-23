@@ -5,11 +5,14 @@ import tea "charm.land/bubbletea/v2"
 const (
 	handleKeyPressValue2 = 2
 	handleKeyPressValue3 = 3
-	lastPageRow          = 5
+	lastPageRow          = 6
 	handleKeyPressValue8 = 8
 )
 
 func (m *browser) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.page == pageStorage && (m.storageBusy || m.storageDialog != "" || m.storageSecret != nil) {
+		return m, m.handleStorageKey(msg)
+	}
 	if model, cmd, handled := m.handleKeyPriorityMode(msg); handled {
 		return model, cmd
 	}
@@ -156,6 +159,9 @@ func (m *browser) handleKeyPageMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 	}
 	if m.page == pageRegistry && !m.contextFocused && !m.selectingTenant {
 		return m, m.handleRegistryKey(msg.String()), true
+	}
+	if m.page == pageStorage && !m.contextFocused && !m.selectingTenant {
+		return m, m.handleStorageKey(msg), true
 	}
 	return nil, nil, false
 }

@@ -152,3 +152,21 @@ func TestFooterHidesActionsHintWhenNoActionsAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageFooterUsesSharedRightAlignedHints(t *testing.T) {
+	t.Parallel()
+	for _, width := range []int{60, 80, 120, 160} {
+		for _, detail := range []bool{false, true} {
+			m := &browser{page: pageStorage, width: width, detail: detail, storageKind: storageViewBuckets}
+			footer := ansi.Strip(m.footerLine())
+			if ansi.StringWidth(footer) != width {
+				t.Errorf("width %d detail %t: footer width %d: %q", width, detail, ansi.StringWidth(footer), footer)
+			}
+			if !strings.HasPrefix(footer, "q quit · ? help") ||
+				(!detail && !strings.HasSuffix(footer, "b/t buckets / keys")) ||
+				(detail && !strings.HasSuffix(footer, "Esc list")) {
+				t.Errorf("width %d detail %t: unexpected alignment %q", width, detail, footer)
+			}
+		}
+	}
+}

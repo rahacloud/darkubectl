@@ -60,6 +60,7 @@ const (
 	pageTickets
 	pageDB
 	pageRegistry
+	pageStorage
 )
 
 type dbSort int
@@ -136,6 +137,9 @@ const (
 	requestTickets
 	requestTicketThread
 	requestRegistry
+	requestStorage
+	requestStorageTraffic
+	requestStoragePlans
 )
 
 type requestKey struct {
@@ -166,77 +170,129 @@ type treeNode struct {
 }
 
 type browser struct {
-	listTickets                         func(context.Context, string, string, bool) (client.TicketList, error)
-	getTicket                           func(context.Context, string, string) (client.Ticket, error)
-	getTicketComments                   func(context.Context, string, string) ([]client.TicketComment, error)
-	getTicketCategories                 func(context.Context, string) ([]client.TicketCategory, error)
-	getTicketPriorities                 func(context.Context, string) ([]client.TicketPriority, error)
-	createTicket                        func(context.Context, string, client.NewTicket) (string, error)
-	replyTicket                         func(context.Context, string, string, string) error
-	ticketRows                          []client.Ticket
-	ticketComments                      []client.TicketComment
-	ticketCategories                    []client.TicketCategory
-	ticketPriorities                    []client.TicketPriority
-	ticketState                         requestState
-	ticketDetailState                   requestState
-	ticketSelection                     string
-	ticketCursor                        int
-	ticketDetail                        *client.Ticket
-	ticketStatus                        string
-	ticketMine                          bool
-	ticketCompose                       string
-	ticketComposeBeforeDiscard          string
-	ticketDraft                         string
-	ticketSummary                       string
-	ticketCategory                      string
-	ticketPriority                      string
-	ticketComposeField                  int
-	ticketSubmitting                    bool
-	ticketNotice                        string
-	ticketFilter                        string
-	ticketScroll                        int
-	paneMessage                         string
-	paneMessageID                       uint64
-	page                                browserPage
-	listDatabases                       func(context.Context, string) ([]client.Database, error)
-	databases                           []client.Database
-	databaseState                       requestState
-	getDatabase                         func(context.Context, string, string) (*client.DatabaseDetail, error)
-	databaseDetail                      *client.DatabaseDetail
-	databaseDetailState                 requestState
-	databaseDetailTarget                string
-	databaseConnectionRole              dbConnectionRole
-	databaseNotice                      string
-	databaseCursor                      int
-	databaseSelected                    string
-	databaseFilter                      string
-	databaseFilterBefore                string
-	databaseFilterEditing               bool
-	databaseSortBy                      dbSort
-	databaseSortDescending              bool
-	databaseScroll                      int
-	listRegistries                      func(context.Context, string) ([]client.Registry, error)
-	listRegistryRepositories            func(context.Context, string, client.FlexID) ([]client.Repository, error)
-	listRegistryDigests                 func(context.Context, string, client.FlexID, string) ([]client.Digest, error)
-	deleteRegistryRepository            func(context.Context, string, client.FlexID, string) error
-	deleteRegistryDigests               func(context.Context, string, client.FlexID, string, []string) error
-	deleteRegistryTags                  func(context.Context, string, client.FlexID, string, string, []string) error
-	registryState                       requestState
-	registries                          []client.Registry
-	registryRepos                       map[string][]client.Repository
-	registryDigests                     map[string][]client.Digest
-	registryDigestErrors                map[string]error
-	registryCursor                      int
-	registryRows                        []registryTreeRow
-	registryConfirm                     bool
-	registryConfirmText                 string
-	registryNotice                      string
-	registryBusy                        bool
-	registryTagMode                     bool
-	registryTagCursor                   int
-	registryDeleteTag                   bool
-	registryTagCopy                     bool
-	registryCollapsed                   map[string]bool
+	listTickets                func(context.Context, string, string, bool) (client.TicketList, error)
+	getTicket                  func(context.Context, string, string) (client.Ticket, error)
+	getTicketComments          func(context.Context, string, string) ([]client.TicketComment, error)
+	getTicketCategories        func(context.Context, string) ([]client.TicketCategory, error)
+	getTicketPriorities        func(context.Context, string) ([]client.TicketPriority, error)
+	createTicket               func(context.Context, string, client.NewTicket) (string, error)
+	replyTicket                func(context.Context, string, string, string) error
+	ticketRows                 []client.Ticket
+	ticketComments             []client.TicketComment
+	ticketCategories           []client.TicketCategory
+	ticketPriorities           []client.TicketPriority
+	ticketState                requestState
+	ticketDetailState          requestState
+	ticketSelection            string
+	ticketCursor               int
+	ticketDetail               *client.Ticket
+	ticketStatus               string
+	ticketMine                 bool
+	ticketCompose              string
+	ticketComposeBeforeDiscard string
+	ticketDraft                string
+	ticketSummary              string
+	ticketCategory             string
+	ticketPriority             string
+	ticketComposeField         int
+	ticketSubmitting           bool
+	ticketNotice               string
+	ticketFilter               string
+	ticketScroll               int
+	paneMessage                string
+	paneMessageID              uint64
+	page                       browserPage
+	listDatabases              func(context.Context, string) ([]client.Database, error)
+	databases                  []client.Database
+	databaseState              requestState
+	getDatabase                func(context.Context, string, string) (*client.DatabaseDetail, error)
+	databaseDetail             *client.DatabaseDetail
+	databaseDetailState        requestState
+	databaseDetailTarget       string
+	databaseConnectionRole     dbConnectionRole
+	databaseNotice             string
+	databaseCursor             int
+	databaseSelected           string
+	databaseFilter             string
+	databaseFilterBefore       string
+	databaseFilterEditing      bool
+	databaseSortBy             dbSort
+	databaseSortDescending     bool
+	databaseScroll             int
+	listRegistries             func(context.Context, string) ([]client.Registry, error)
+	listRegistryRepositories   func(context.Context, string, client.FlexID) ([]client.Repository, error)
+	listRegistryDigests        func(context.Context, string, client.FlexID, string) ([]client.Digest, error)
+	deleteRegistryRepository   func(context.Context, string, client.FlexID, string) error
+	deleteRegistryDigests      func(context.Context, string, client.FlexID, string, []string) error
+	deleteRegistryTags         func(context.Context, string, client.FlexID, string, string, []string) error
+	registryState              requestState
+	registries                 []client.Registry
+	registryRepos              map[string][]client.Repository
+	registryDigests            map[string][]client.Digest
+	registryDigestErrors       map[string]error
+	registryCursor             int
+	registryRows               []registryTreeRow
+	registryConfirm            bool
+	registryConfirmText        string
+	registryNotice             string
+	registryBusy               bool
+	registryTagMode            bool
+	registryTagCursor          int
+	registryDeleteTag          bool
+	registryTagCopy            bool
+	registryCollapsed          map[string]bool
+	listStorages               func(context.Context, string) ([]client.Storage, error)
+	saveMockStorages           func(string, []client.Storage)
+	getStoragePlans            func(context.Context, string) (map[string]client.StoragePlanAllowance, error)
+	storagePlansState          requestState
+	getStorageTraffic          func(context.Context, string, string) ([]client.StorageTrafficSample, error)
+	storageTrafficState        requestState
+	storageTrafficID           string
+	storageTraffic             []client.StorageTrafficSample
+	createStorageBucket        func(context.Context, string, string, string) (string, error)
+	deleteStorageBucket        func(context.Context, string, string, string) error
+	setStorageBucketPublic     func(context.Context, string, string, bool, string) error
+	createStorageKey           func(context.Context, string, string, []string, []string, string) (*client.StorageKeySecret, error)
+	updateStorageKey           func(context.Context, string, string, []string, []string, string) error
+	rotateStorageKey           func(context.Context, string, string, string) (*client.StorageKeySecret, error)
+	deleteStorageKey           func(context.Context, string, string, string) error
+	storageState               requestState
+	storageRows                []client.Storage
+	storageSelectedID          string
+	storageExpanded            bool
+	storageSelectionLost       bool
+	storageSelectedChild       string
+	storageCursor              int
+	storageKind                string
+	storageNotice              string
+	storageBusy                bool
+	storageDialog              string
+	storagePendingAction       string
+	storagePendingStorage      string
+	storagePendingResource     string
+	storagePendingPublic       bool
+	storagePendingActions      []string
+	storagePendingBuckets      []string
+
+	storageSecret         *client.StorageKeySecret
+	storageSecretEndpoint string
+	storageSecretVisible  bool
+
+	storageDraft                        storageActionDraft
+	storageFeedback                     string
+	storageFeedbackID                   uint64
+	storageVerifyID                     uint64
+	storageVerifyAttempts               int
+	storageOutcome                      storageOutcome
+	storageVerifyAction                 string
+	storageVerifyStorage                string
+	storageVerifyResource               string
+	storageVerifyName                   string
+	storageVerifyPublic                 bool
+	storageVerifyActions                []string
+	storageVerifyBuckets                []string
+	storageScroll                       int
+	storageDetailScroll                 int
 	tenant                              string
 	version                             string
 	mode                                string

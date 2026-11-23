@@ -102,6 +102,10 @@ func (m *browser) handleUpdateInput(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *browser) handlePaste(content string) {
+	if m.page == pageStorage {
+		m.handleStorageText(content)
+		return
+	}
 	if m.detail && m.activeAppView == appViewUsage && m.resourceEditing {
 		if resourceDigits(content) {
 			m.resourceEditValue += content
@@ -115,6 +119,9 @@ func (m *browser) handlePaste(content string) {
 
 func (m *browser) handleDataResult(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if model, command, handled := m.handleTicketResult(msg); handled {
+		return model, command, true
+	}
+	if model, command, handled := m.handleStorageDataResult(msg); handled {
 		return model, command, true
 	}
 	switch msg := msg.(type) {
@@ -179,7 +186,7 @@ func (m *browser) handleRemainingDataResult(message tea.Msg) (tea.Model, tea.Cmd
 	case cicdCopyResult:
 		if msg.tenant == m.tenant && msg.appID == m.selectedDetailTarget() {
 			if msg.err != nil {
-				m.cicdNotice = "Clipboard unavailable"
+				m.cicdNotice = messageClipboardUnavailable
 			} else {
 				m.cicdNotice = "Copied to clipboard"
 			}
@@ -240,7 +247,7 @@ func (m *browser) handleConfigResult(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case clipboardResult:
 		if msg.err != nil {
-			m.portMessage = "Clipboard unavailable"
+			m.portMessage = messageClipboardUnavailable
 		} else {
 			m.portMessage = "Copied to clipboard"
 		}

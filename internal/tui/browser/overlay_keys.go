@@ -70,7 +70,7 @@ func (m *browser) handleSortKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !m.sorting {
 			m.sortChoice = int(m.databaseSortBy)
 		}
-	case pageApps, pageRegistry, pageTickets:
+	case pageApps, pageRegistry, pageTickets, pageStorage:
 		break
 	}
 	switch msg.String() {
