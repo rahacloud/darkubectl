@@ -3,7 +3,7 @@ module github.com/rahacloud/darkubectl
 go 1.27
 
 require (
-	charm.land/bubbles/v2 v2.2.1
+	charm.land/bubbles/v2 v2.2.2
 	charm.land/bubbletea/v2 v2.1.2
 	charm.land/lipgloss/v2 v2.1.0
 	github.com/atotto/clipboard v0.1.4
@@ -47,7 +47,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/rivo/uniseg v0.4.8-0.20261110175422-3a370411ca06 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce // indirect
