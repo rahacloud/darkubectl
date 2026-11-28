@@ -125,6 +125,7 @@ func newGetCommand() *cli.Command {
 			newGetInvoicesCommand(),
 			newGetAPIKeysCommand(),
 			newGetMembersCommand(),
+			newGetInvitationsCommand(),
 			{
 				Name:      "deploy-token",
 				Aliases:   []string{"deploy-tokens", "deploytoken"},

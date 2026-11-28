@@ -99,7 +99,7 @@ func getPermissionsAction(ctx context.Context, cmd *cli.Command) error {
 			yesNo(p.Has(client.PermView)), yesNo(p.Has(client.PermChange)), yesNo(p.Has(client.PermDelete)),
 		})
 	}
-	return output.StyledTable(os.Stdout, []string{"EMAIL", colName, "VIEW", "CHANGE", "DELETE"}, table,
+	return output.StyledTable(os.Stdout, []string{colEmail, colName, "VIEW", "CHANGE", "DELETE"}, table,
 		output.StatusCells(noStateCol, permViewCol, permChangeCol, permDeleteCol))
 }
 

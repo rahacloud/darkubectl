@@ -105,7 +105,7 @@ func pRegistry() mcpParam {
 	return mcpParam{kind: mcpString, usage: "registry name (default hamdocker)", flag: flagRegistry}
 }
 
-//nolint:funlen // a table, one entry per tool
+//nolint:funlen,maintidx // a table, one entry per tool; its size is not complexity
 func mcpToolSpecs() []mcpToolSpec {
 	return []mcpToolSpec{
 		// Account and tenant.
@@ -115,6 +115,13 @@ func mcpToolSpecs() []mcpToolSpec {
 			description: "List the tenant's namespaces (projects) and the cluster each runs on."},
 		{name: "list_members", command: "get members",
 			description: "List the tenant's members and their roles."},
+		{name: "list_invitations", command: "get invitations",
+			description: "List pending member invitations: sent by the tenant (all: by every tenant of the account), " +
+				"or with received those other tenants sent to this account.",
+			params: []mcpParam{
+				{kind: mcpBoolean, usage: "every tenant, not just the current one", flag: flagAll},
+				{kind: mcpBoolean, usage: "invitations this account received instead", flag: flagReceived},
+			}},
 		{name: "list_plans", command: "get plans",
 			description: "List the app plans (sizes) an app can be created with or moved to.",
 			params:      []mcpParam{{kind: mcpBoolean, usage: "every plan, not just create-eligible app plans", flag: flagAll}}},
