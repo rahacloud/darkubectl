@@ -109,7 +109,7 @@ func newCreateCommand() *cli.Command {
 	return &cli.Command{
 		Name:     "create",
 		Usage:    "Create resources",
-		Commands: []*cli.Command{newCreateAppCommand(), newCreateNamespaceCommand(), newCreateAPIKeyCommand()},
+		Commands: []*cli.Command{newCreateAppCommand(), newCreateNamespaceCommand(), newCreateAPIKeyCommand(), newCreateInvitationCommand()},
 	}
 }
 

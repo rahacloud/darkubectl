@@ -47,5 +47,5 @@ func getMembersAction(ctx context.Context, cmd *cli.Command) error {
 			dash(strings.Join(m.Roles, ",")), yesNo(m.Verified),
 		})
 	}
-	return output.StyledTable(os.Stdout, []string{"EMAIL", colName, "ROLES", "VERIFIED"}, rows, nil)
+	return output.StyledTable(os.Stdout, []string{colEmail, colName, "ROLES", "VERIFIED"}, rows, nil)
 }

@@ -17,10 +17,17 @@ const profilePathV2 = "/api/v2/users/profile"
 //
 // ID is the numeric primary key the app create/update payload calls
 // "organization"; Name is the slug sent as the X-Organization header.
+//
+// PendingInvitations are the addresses invited and not yet joined, which is
+// what the console's team page lists. The profile also carries
+// invitation_emails; its meaning is not known, so it is kept alongside but
+// not shown as pending.
 type Organization struct {
-	ID    int      `json:"id"`
-	Name  string   `json:"name"`
-	Roles []string `json:"current_user_roles"`
+	ID                 int      `json:"id"`
+	Name               string   `json:"name"`
+	Roles              []string `json:"current_user_roles"`
+	PendingInvitations []string `json:"pending_invitation_emails"`
+	InvitationEmails   []string `json:"invitation_emails"`
 }
 
 // Profile is the signed-in user's account.
